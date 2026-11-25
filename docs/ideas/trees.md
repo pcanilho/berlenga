@@ -4227,3 +4227,9 @@ from vertex() as a varying.
 - Triangles, near mesh of one open-grown tree (bench `--view=leaf`): oak 24.3M drawn lobed leaves before, 6.8M flat
   cards, 15.7M curved cards; white willow 14.1M, 10.1M, 18.6M; hazel 1.16M before, 1.88M curved cards; sycamore 5.4M,
   6.9M. A first cut with a row every 1.2 cm made willow 37M and ran the cloud out of memory.
+- Docs review (25 Nov): leaves "flat, uniformly pale". Leaf to leaf colour was a brightness jitter only (0.85-1.15);
+  each leaf now also takes a hue between yellow-green (sun leaves: thicker, more carotenoid, higher chlorophyll a/b)
+  and blue-green (shade leaves), red +-22%, blue -+20%, by a hash of where it grows (Lichtenthaler et al. 1981, 2007;
+  Niinemets 2010). Translucency was already there (5bj, backlight 0.55/0.85/0.35 of the albedo): the docs frame is
+  lit from behind the camera, so it shows the leaves' undersides in reflected light; with the sun behind the crown the
+  leaves glow. The big leaf is 10-14 cm (real oak 7-14 cm), about 1 m from the camera.

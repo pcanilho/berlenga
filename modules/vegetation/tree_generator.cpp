@@ -4931,7 +4931,22 @@ float TreeGenerator::_twin_area_scale() {
 // A leaf: a short petiole, then the species' blade turned to face mostly upward (leaves orient
 // to the light). Lobed, palmate and compound leaves keep a simple lens of the same area as a twin
 // for the coarser LODs.
-void TreeGenerator::_add_leaf(Builder &r_b, const Vector3 &p_base, const Vector3 &p_out, const Vector3 &p_up, float p_size, const Color &p_color) {
+void TreeGenerator::_add_leaf(Builder &r_b, const Vector3 &p_base, const Vector3 &p_out, const Vector3 &p_up, float p_size, const Color &p_color_in) {
+	// Leaf to leaf colour (trees.md 5bn): leaves of one crown differ in hue, not only in brightness. Sun leaves are
+	// thicker, with more carotenoid for their chlorophyll and a higher chlorophyll a/b ratio, and read
+	// yellower; shade leaves are thinner and bluer green (Lichtenthaler et al. 1981, 2007; Niinemets 2010); age and
+	// small damage add to it. A hue between yellow-green and blue-green and a little lightness, by a hash of where the
+	// leaf grows (the random stream is untouched), over the callers' brightness jitter.
+	Color p_color = p_color_in;
+	{
+		const Vector3i q = Vector3i((p_base * 613.0f).floor());
+		const uint32_t h = hash_murmur3_one_32(uint32_t(q.x) * 73856093u ^ uint32_t(q.y) * 19349663u ^ uint32_t(q.z) * 83492791u, 0x6c74u);
+		const float hue = float(h & 0xffffu) / 65535.0f * 2.0f - 1.0f; // -1 blue-green, +1 yellow-green.
+		const float light = float(h >> 16) / 65535.0f * 2.0f - 1.0f;
+		p_color.r *= 1.0f + 0.22f * hue + 0.06f * light;
+		p_color.g *= 1.0f + 0.04f * hue + 0.08f * light;
+		p_color.b *= 1.0f - 0.2f * hue + 0.04f * light;
+	}
 	Vector3 n = p_up;
 	Vector3 along = (p_out - n * p_out.dot(n));
 	if (along.length_squared() < 1e-6f) {
