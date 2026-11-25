@@ -4568,10 +4568,48 @@ func _build_camera() -> void:
 			var pr := float(args.get("ped-search", "600"))
 			var pbest := 0.0
 			var pp := Vector3.INF
+			var prect := Rect2(-pr, -pr, 2.0 * pr, 2.0 * pr)
+			if args.has("ped-burn") and gen != null:
+				# --ped-burn=r,years: a fresh burn scar (WorldBurnScar3D) of radius r centred on the soil slope in the
+				# --ped-min-slope..--ped-max-slope band (steady 10 m round) nearest the middle, and the pedestal spots
+				# searched under it (a recent fire leaves the soil bare: the pedestals' wet-climate case).
+				var pb := String(args["ped-burn"]).split_floats(",")
+				var br := pb[0] if pb.size() > 0 else 30.0
+				var smin := float(args.get("ped-min-slope", "15"))
+				var smax2 := float(args.get("ped-max-slope", "25"))
+				var bc := Vector3.INF
+				var bd := INF
+				for zz in range(-int(pr), int(pr) + 1, 8):
+					for xx in range(-int(pr), int(pr) + 1, 8):
+						var p := Vector3(xx, 0, zz)
+						if gen.get_height(p) < gen.sea_level + 8.0 or Vector2(xx, zz).length() >= bd:
+							continue
+						var ok := true
+						for o in [Vector3.ZERO, Vector3(10, 0, 0), Vector3(-10, 0, 0), Vector3(0, 0, 10), Vector3(0, 0, -10)]:
+							var q: Vector3 = p + o
+							var qs := rad_to_deg(data_map.get_slope_at(Vector3(q.x, gen.get_height(q), q.z)))
+							var g := gen.get_material_geology_at(q)
+							if qs < smin or qs > smax2 or g.g > 0.0 or absf(g.b) > 0.0:
+								ok = false
+								break
+						if ok:
+							bc = p
+							bd = Vector2(xx, zz).length()
+				if bc == Vector3.INF:
+					_log("pedestal burn: no soil slope of %.0f..%.0f deg within %.0f m" % [smin, smax2, pr])
+				else:
+					var scar = ClassDB.instantiate("WorldBurnScar3D")
+					scar.name = "PedestalBurn"
+					add_child(scar)
+					scar.global_position = Vector3(bc.x, gen.get_height(bc), bc.z)
+					scar.size = Vector2(br, br) * 2.0
+					scar.age_years = pb[1] if pb.size() > 1 else 0.4
+					prect = Rect2(bc.x - br * 0.7, bc.z - br * 0.7, br * 1.4, br * 1.4)
+					_log("pedestal burn: scar at %s, %.0f m, %.1f years" % [str(scar.global_position.round()), br, scar.age_years])
 			if rocks != null and rocks.has_method("get_pedestal_spots"):
 				# Rocks 3589ba9f: the pedestals' own spots (bare patches only), deepest splash first; the first on
 				# gentle ground.
-				var spots: PackedVector4Array = rocks.get_pedestal_spots(Rect2(-pr, -pr, 2.0 * pr, 2.0 * pr), float(args.get("ped-step", "2")), int(args.get("ped-count", "1024")))
+				var spots: PackedVector4Array = rocks.get_pedestal_spots(prect, float(args.get("ped-step", "2")), int(args.get("ped-count", "1024")))
 				var smax := 0.0
 				for sp4 in spots:
 					var q := Vector3(sp4.x, sp4.y, sp4.z)
