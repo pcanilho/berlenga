@@ -4289,6 +4289,16 @@ func _build_camera() -> void:
 			var tspot := Vector3.ZERO
 			var tdown := Vector2(0, 1)
 			var tr := int(args.get("tc-search", "700"))
+			if args.has("tc-spot"):
+				# --tc-spot=x,z: this spot, not a search (the same camera across runs whose sun differs).
+				var ts := String(args["tc-spot"]).split_floats(",")
+				var sp := Vector3(ts[0], 0, ts[1])
+				var sgx := gen.get_height(sp + Vector3(3, 0, 0)) - gen.get_height(sp - Vector3(3, 0, 0))
+				var sgz := gen.get_height(sp + Vector3(0, 0, 3)) - gen.get_height(sp - Vector3(0, 0, 3))
+				tspot = Vector3(sp.x, gen.get_height(sp), sp.z)
+				tdown = Vector2(-sgx, -sgz).normalized()
+				best_tc = 0.0
+				tr = -1
 			for zz in range(-tr, tr + 1, 6):
 				for xx in range(-tr, tr + 1, 6):
 					var p := Vector3(xx, 0, zz)
