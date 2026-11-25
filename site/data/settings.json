@@ -307,10 +307,16 @@
    "title": "Hair"
   },
   {
+   "name": "rendering/pathtracing/max_dispatch_time_ms",
+   "type": "float",
+   "default": "100.0",
+   "about": "The time one path tracing dispatch may take."
+  },
+  {
    "name": "rendering/pathtracing/max_samples_per_dispatch",
    "type": "int",
    "default": "4194304",
-   "about": "The most pixel samples (pixels times `Environment.pathtracing_samples_per_pixel`) one path tracing dispatch traces.",
+   "about": "The most pixel samples (pixels times `Environment.pathtracing_samples_per_pixel`) one path tracing dispatch traces, an upper bound on what `rendering/pathtracing/max_dispatch_time_ms` allows.",
    "page": "other",
    "title": "Other"
   },
@@ -1934,13 +1940,14 @@
     "shore_",
     "cliff_",
     "layer_enabled",
+    "cliff_block_max_slope",
     "far_thinning",
     "far_radius",
     "far_min_size",
     "far_widen"
    ],
    "note": "",
-   "what": "rocks placed by the processes that put them there: rockfall, scree, glacial till, river beds, shores and cliff courses, streamed round the camera with colliders near it; past the near field, only the larger rocks carry on out to the horizon, grown so the slope keeps its stone cover.",
+   "what": "rocks placed by the processes that put them there: rockfall, scree, glacial till, river beds, shores and cliff courses, the coursed wall blocks covering even sheer faces, streamed round the camera with colliders near it; past the near field, only the larger rocks carry on out to the horizon, grown so the slope keeps its stone cover.",
    "page": "rocks",
    "title": "Rocks",
    "topic": "Placement"
