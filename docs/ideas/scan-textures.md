@@ -125,8 +125,11 @@ Credits: one line per scan in the README References and CREDIT.txt beside the fi
   where it is wet mud, wallows of muddy water, laid mud), not by `ground_deform_exposed()`; the mud's own darkening,
   film and water stay over it. Raster and PT checked on the ground bench's ruts view (docs/ideas/mud.md).
 
-Next on the terrain side: burn scars (WorldBurnScar3D draws its own char), waterline band on banks. Then the owning threads: forest floor and moss (vegetation), stones and caves
-(rocks), snow detail (snow), bark, deadwood and leaves (trees), mud weights from its own maps (mud).
+Hand-offs (25 Nov): burn scars done (terrain, 23fb8f8c: OVERLAY_BURN, burned_ground_01, char tint fading over one to
+three years; raster and PT agree). Stones and cave rock done (rocks, ca70039d; rock_wall_02 refused, p98/mean 2.5).
+Forest floor (vegetation, 81e3fda4), bark and wood (trees, 4deb04c9). Open: leaf atlases (trees), snow detail (snow),
+mud weights (mud), waterline band on banks (terrain). Follow-up from terrain: PhysXFireSpread3D's char Decal could
+retire once fires report through WorldFire burn_changed / burn_age_at.
 
 ## Built (25 Nov, vegetation side)
 
