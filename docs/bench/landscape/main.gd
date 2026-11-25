@@ -2413,6 +2413,8 @@ func _generate() -> void:
 			rocks.name = "Rocks"
 			rocks.streaming = false
 			add_child(rocks)
+			if args.get("stone-scans", "1") != "0": # --stone-scans=0: the stones without scan detail (A/B)
+				_log("stone scans: %d" % rocks.load_scan_set(ProjectSettings.globalize_path("res://art/terrain_layers")))
 			rocks.generator = rocks.get_path_to(gen)
 			if "close_up_enabled" in rocks:
 				rocks.close_up_enabled = args.get("rock-closeup", "1") != "0" # real close-up detail near the camera

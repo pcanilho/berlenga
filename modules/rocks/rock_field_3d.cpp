@@ -8652,6 +8652,21 @@ void RockField3D::_apply_ground(const Ref<ShaderMaterial> &p_material) const {
 	static const Color defaults[5] = { Color(0.36, 0.35, 0.33), Color(0.41, 0.40, 0.37), Color(0.2, 0.22, 0.1), Color(0.28, 0.27, 0.16), Color(0.7, 0.62, 0.46) };
 	p_material->set_shader_parameter("ground_blend", ground_blend);
 	p_material->set_shader_parameter("mineral_glints", mineral_glints);
+	// The stone scans (load_scan_set); not on the ground detail grains (a scan's metre-scale detail on a 2 cm grain
+	// is a flat tint).
+	const bool scans = stone_scans[0].is_valid() && !bool(p_material->get_shader_parameter("small_linear"));
+	p_material->set_shader_parameter("stone_scan", scans);
+	if (scans) {
+		static const char *sfx[2] = { "a", "b" };
+		for (int i = 0; i < 2; i++) {
+			const RockScan &sc = stone_scans[i];
+			p_material->set_shader_parameter(StringName(String("stone_scan_albedo_") + sfx[i]), sc.albedo);
+			p_material->set_shader_parameter(StringName(String("stone_scan_mean_") + sfx[i]), sc.mean);
+			p_material->set_shader_parameter(StringName(String("stone_scan_scale_") + sfx[i]), 1.0f / sc.tile);
+			p_material->set_shader_parameter(StringName(String("stone_scan_normal_") + sfx[i]), sc.normal);
+			p_material->set_shader_parameter(StringName(String("stone_scan_normal_strength_") + sfx[i]), sc.normal.is_valid() ? sc.normal_strength : 0.0f);
+		}
+	}
 	p_material->set_shader_parameter("ground_blend_height", ground_blend_height);
 	const Ref<ShaderMaterial> ground = _ground_source();
 	for (int i = 0; i < 5; i++) {
@@ -8770,6 +8785,27 @@ void RockField3D::set_coast_collision(bool p_enabled) {
 void RockField3D::set_cave_mouths(bool p_enabled) {
 	cave_mouths = p_enabled;
 	rebuild();
+}
+
+// Scanned detail on the stones (docs/ideas/scan-textures.md): the art folder's scans.cfg sections [stone] and
+// [stone_variant] (system="rocks"), half the stones taking each, triplanar in the stone's own frame at the scan's real
+// size, divided by the scan's mean so the rock type keeps its colour. Returns how many loaded.
+int RockField3D::load_scan_set(const String &p_dir) {
+	scan_dir = p_dir;
+	int n = 0;
+	n += rock_scan_load(p_dir, "stone", stone_scans[0]) ? 1 : 0;
+	n += rock_scan_load(p_dir, "stone_variant", stone_scans[1]) ? 1 : 0;
+	if (n == 0) {
+		WARN_PRINT(vformat("RockField3D: no [stone] scans in '%s' (fetch the art first): the stones keep their procedural surface only.", p_dir.path_join("scans.cfg")));
+	} else if (!stone_scans[1].is_valid()) {
+		stone_scans[1] = stone_scans[0];
+	} else if (!stone_scans[0].is_valid()) {
+		stone_scans[0] = stone_scans[1];
+	}
+	for (KeyValue<int, Ref<ShaderMaterial>> &kv : materials) {
+		_apply_ground(kv.value);
+	}
+	return n;
 }
 
 void RockField3D::set_ground_blend(bool p_enabled) {
@@ -10041,6 +10077,8 @@ void RockField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_ground_blend_height", "height"), &RockField3D::set_ground_blend_height);
 	ClassDB::bind_method(D_METHOD("get_ground_blend_height"), &RockField3D::get_ground_blend_height);
 	ClassDB::bind_method(D_METHOD("set_ground_material", "material"), &RockField3D::set_ground_material);
+	ClassDB::bind_method(D_METHOD("load_scan_set", "dir"), &RockField3D::load_scan_set);
+	ClassDB::bind_method(D_METHOD("get_scan_dir"), &RockField3D::get_scan_dir);
 	ClassDB::bind_method(D_METHOD("get_ground_material"), &RockField3D::get_ground_material);
 	ClassDB::bind_method(D_METHOD("set_lichen_cover", "cover"), &RockField3D::set_lichen_cover);
 	ClassDB::bind_method(D_METHOD("get_lichen_cover"), &RockField3D::get_lichen_cover);

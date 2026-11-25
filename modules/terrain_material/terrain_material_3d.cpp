@@ -3255,6 +3255,9 @@ int TerrainMaterial3D::load_scan_set(const String &p_dir, const PackedStringArra
 				overlay = i;
 			}
 		}
+		if (cfg->has_section_key(sec, "system")) {
+			continue; // another system's scan (system="rocks": stones and caves), read by that system's own loader
+		}
 		if (layer < 0 && overlay < 0) {
 			WARN_PRINT(vformat("TerrainMaterial3D: unknown slot [%s] in %s.", sec, cfg_path));
 			continue;

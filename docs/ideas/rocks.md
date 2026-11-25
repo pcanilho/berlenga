@@ -1434,3 +1434,15 @@ stacks) under cliff_match, and cliff_match also takes the landscape rock layer's
 tm_rock_albedo_tex and tm_rock_normal_tex at the layer's tile size, triplanar in world space with the UDN normal blend
 (Golus 2017), the colour over the texture's mean so it keeps the face's mean colour. The stone keeps its own light
 and dark (beds, marks, rind) on top. Without a scan on the ground material nothing changes.
+
+## Scanned detail on stones and caves (25 Nov)
+
+Under the scan rule (docs/ideas/scan-textures.md): stones take a scan as detail only, triplanar in the stone's own
+frame (it moves with a loosed or broken stone) at the scan's real size, its colour divided by its linear mean so the
+rock type and its mottling, beds and rind keep the colour, and its normal on the surface's (UDN blend, Golus 2017).
+Two scans, half the stones each, so neighbours of one shape do not carry one texture: rock_boulder_dry (1.8 m, p98/mean
+1.68) and rock_surface (2 m, 1.73). Not on ground detail grains (a metre-scale scan on a 2 cm grain is a tint) nor on
+the wall's own blocks (cliff_match takes the landscape's rock scan). Cave walls take rock_face_03 (2.7 m, 1.88) in world
+space on the rock, not the fill, flowstone or stream bed. rock_wall_02 was turned down (p98/mean 2.5, wet moss tones).
+Loaded by RockField3D.load_scan_set and CaveNetwork3D.load_scan_set from the art folder's scans.cfg sections marked
+system="rocks" (TerrainMaterial3D.load_scan_set skips them); benches: --stone-scans=0 for the A/B.

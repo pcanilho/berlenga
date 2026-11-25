@@ -3046,6 +3046,20 @@ uniform bool cliff_scan_has_normal = false;
 uniform vec3 cliff_scan_mean = vec3(1.0);
 uniform float cliff_scan_scale = 0.25;
 uniform float cliff_scan_normal_strength = 1.0;
+// Scanned detail on the stones (RockField3D.load_scan_set, docs/ideas/scan-textures.md): two scans, half the stones
+// each, triplanar in the stone's own frame (it moves with the stone) at the scan's real size, the colour divided by
+// the scan's mean (the rock type keeps its colour) and its normal on the surface's.
+uniform bool stone_scan = false;
+uniform sampler2D stone_scan_albedo_a : source_color, filter_linear_mipmap_anisotropic, repeat_enable;
+uniform sampler2D stone_scan_normal_a : hint_normal, filter_linear_mipmap_anisotropic, repeat_enable;
+uniform vec3 stone_scan_mean_a = vec3(1.0);
+uniform float stone_scan_scale_a = 0.5;
+uniform float stone_scan_normal_strength_a = 0.0;
+uniform sampler2D stone_scan_albedo_b : source_color, filter_linear_mipmap_anisotropic, repeat_enable;
+uniform sampler2D stone_scan_normal_b : hint_normal, filter_linear_mipmap_anisotropic, repeat_enable;
+uniform vec3 stone_scan_mean_b = vec3(1.0);
+uniform float stone_scan_scale_b = 0.5;
+uniform float stone_scan_normal_strength_b = 0.0;
 uniform vec3 ground_rock = vec3(0.107, 0.1, 0.089);
 uniform vec3 ground_scree = vec3(0.141, 0.133, 0.114);
 uniform vec3 ground_soil = vec3(0.033, 0.04, 0.01);
@@ -3076,6 +3090,10 @@ varying float v_scale;
 varying vec3 v_origin;
 varying vec2 v_slope;
 varying float v_random;
+varying vec3 v_lnrm; // the mesh's own normal (the stone's frame, as UV/UV2's position)
+varying vec3 v_ax;
+varying vec3 v_ay;
+varying vec3 v_az;
 
 // Glints of crystals smaller than the pixel, counted per cell of the pixel's footprint (Zirr and Kaplanyan 2016;
 // Deliot and Belcour 2023, reduced to one facet per cell, as snow_glint() does for ice): a cell holding n crystals
@@ -3233,6 +3251,10 @@ void vertex() {
 	v_custom = INSTANCE_CUSTOM.z > 0.0 ? INSTANCE_CUSTOM : rock_instance;
 	v_scale = v_custom.z > 0.0 ? v_custom.z : length(MODEL_MATRIX[0].xyz);
 	v_origin = MODEL_MATRIX[3].xyz;
+	v_lnrm = NORMAL;
+	v_ax = normalize(MODEL_MATRIX[0].xyz);
+	v_ay = normalize(MODEL_MATRIX[1].xyz);
+	v_az = normalize(MODEL_MATRIX[2].xyz);
 	float packed = v_custom.w;
 	v_random = packed < 1.0 ? packed : mod(packed, 64.0) / 64.0;
 	float q = floor(packed / 64.0);
@@ -3360,6 +3382,36 @@ void fragment() {
 				wn = normalize(wn + vec3(0.0, nx.y, nx.x * sg.x) * tw.x + vec3(ny.x * sg.y, 0.0, ny.y) * tw.y + vec3(-nz.x * sg.z, nz.y, 0.0) * tw.z);
 			}
 		}
+	}
+	if (stone_scan && !cliff_match) {
+		// Triplanar in the stone's frame, sharpened weights, UDN normal blend (Golus 2017); the second scan on half
+		// the stones, so neighbours of one shape do not carry one texture.
+		bool second = fract(v_random * 7.31) > 0.5;
+		float sc = second ? stone_scan_scale_b : stone_scan_scale_a;
+		vec3 ln = normalize(v_lnrm);
+		vec3 tw = pow(abs(ln), vec3(4.0));
+		tw /= max(tw.x + tw.y + tw.z, 1e-4);
+		vec3 sg = sign(ln) + vec3(equal(sign(ln), vec3(0.0)));
+		vec3 sp = lp * v_scale + vec3(seed * 0.37, seed * 0.11, seed * 0.23);
+		vec2 ux = sp.zy * sc * vec2(sg.x, 1.0);
+		vec2 uy = sp.xz * sc * vec2(sg.y, 1.0);
+		vec2 uz = sp.xy * sc * vec2(-sg.z, 1.0);
+		vec3 scan;
+		vec2 nx, ny, nz;
+		if (second) {
+			scan = (texture(stone_scan_albedo_b, ux).rgb * tw.x + texture(stone_scan_albedo_b, uy).rgb * tw.y + texture(stone_scan_albedo_b, uz).rgb * tw.z) / stone_scan_mean_b;
+			nx = (texture(stone_scan_normal_b, ux).xy * 2.0 - 1.0) * stone_scan_normal_strength_b;
+			ny = (texture(stone_scan_normal_b, uy).xy * 2.0 - 1.0) * stone_scan_normal_strength_b;
+			nz = (texture(stone_scan_normal_b, uz).xy * 2.0 - 1.0) * stone_scan_normal_strength_b;
+		} else {
+			scan = (texture(stone_scan_albedo_a, ux).rgb * tw.x + texture(stone_scan_albedo_a, uy).rgb * tw.y + texture(stone_scan_albedo_a, uz).rgb * tw.z) / stone_scan_mean_a;
+			nx = (texture(stone_scan_normal_a, ux).xy * 2.0 - 1.0) * stone_scan_normal_strength_a;
+			ny = (texture(stone_scan_normal_a, uy).xy * 2.0 - 1.0) * stone_scan_normal_strength_a;
+			nz = (texture(stone_scan_normal_a, uz).xy * 2.0 - 1.0) * stone_scan_normal_strength_a;
+		}
+		col *= scan;
+		vec3 dl = vec3(0.0, nx.y, nx.x * sg.x) * tw.x + vec3(ny.x * sg.y, 0.0, ny.y) * tw.y + vec3(-nz.x * sg.z, nz.y, 0.0) * tw.z;
+		wn = normalize(wn + v_ax * dl.x + v_ay * dl.y + v_az * dl.z);
 	}
 	// Cleavage faces (a third of the feldspars) and glassy quartz are near mirrors, each at its own facet tilt: under a
 	// low sun a few of them flash (cleavage glints, the crystal-scale case of a discrete microfacet glint model).
