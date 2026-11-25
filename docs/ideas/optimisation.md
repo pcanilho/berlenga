@@ -638,3 +638,6 @@ sites of each callee's size); the remedy is one call site per heavy function.
   face weights, fold scale and the two relief scale bounds (`_cliff_scale_limit`, `_bank_scale_limit`) once, shared
   by the displaced point and the CUSTOM channels (`ReliefFrame`). All 611 chunk meshes of the view hash the same
   (positions, normals, CUSTOM0-2, indices) and the frame is byte-identical; their build time fell by a third.
+  Each chunk's build then keeps the grid normals it reads (`LandscapeNormalCache`, over the chunk and the face
+  weights' reach, filled as read): the relief read the same grid normal tens of times. Again every mesh and the frame
+  are the same, and the build time fell by another fifth (981 s summed over the view's chunks, then 648 s, now 511 s).

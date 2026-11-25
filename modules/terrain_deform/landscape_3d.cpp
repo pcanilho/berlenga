@@ -86,7 +86,34 @@ static _FORCE_INLINE_ real_t _eno_slope(float a2, float a1, float c, float b1, f
 	return Math::lerp(central, eno, t * t * (3.0f - 2.0f * t));
 }
 
+// The grid normals around the cliff chunk this thread is building (_build_cliff_surface): its relief reads the same
+// grid normals tens of times over (each bilinear normal four, the weights' tent nine of those, the fold scale four),
+// so each is worked out once per chunk. Filled as read; points outside fall through to _normal_eval.
+struct LandscapeNormalCache {
+	const Landscape3D *owner = nullptr;
+	int x0 = 0, z0 = 0, w = 0, h = 0;
+	LocalVector<Vector3> normals;
+	LocalVector<uint8_t> has;
+};
+static thread_local LandscapeNormalCache *landscape_normal_cache = nullptr;
+
 Vector3 Landscape3D::_normal(int p_x, int p_z) const {
+	LandscapeNormalCache *nc = landscape_normal_cache;
+	if (nc && nc->owner == this) {
+		const int u = p_x - nc->x0, v = p_z - nc->z0;
+		if (u >= 0 && v >= 0 && u < nc->w && v < nc->h) {
+			const int i = v * nc->w + u;
+			if (!nc->has[i]) {
+				nc->normals[i] = _normal_eval(p_x, p_z);
+				nc->has[i] = 1;
+			}
+			return nc->normals[i];
+		}
+	}
+	return _normal_eval(p_x, p_z);
+}
+
+Vector3 Landscape3D::_normal_eval(int p_x, int p_z) const {
 	const float c = _h(p_x, p_z);
 	const real_t sx = _eno_slope(_h(p_x - 2, p_z), _h(p_x - 1, p_z), c, _h(p_x + 1, p_z), _h(p_x + 2, p_z), spacing);
 	const real_t sz = _eno_slope(_h(p_x, p_z - 2), _h(p_x, p_z - 1), c, _h(p_x, p_z + 1), _h(p_x, p_z + 2), spacing);
@@ -720,6 +747,28 @@ void Landscape3D::_build_cliff_surface(MeshJob &r_job) const {
 	const int n = chunk_quads;
 	const int row = n + 1;
 	const Vector3 corner(origin.x + cx * chunk_quads * spacing, 0.0, origin.y + cz * chunk_quads * spacing);
+	// The grid normals the relief reads (LandscapeNormalCache), over the chunk and the reach of the face weights' tent
+	// (two taps of 1.5 times the relief's reach either way) and the fold scale's and bilinear reads past it.
+	LandscapeNormalCache normal_cache;
+	{
+		const int margin = int(Math::ceil(2.0 * 1.5f * 3.5f * MAX(cliff_relief, bank_relief) / spacing * 0.5f)) + 4;
+		normal_cache.owner = this;
+		normal_cache.x0 = cx * chunk_quads - margin;
+		normal_cache.z0 = cz * chunk_quads - margin;
+		normal_cache.w = chunk_quads + 1 + 2 * margin;
+		normal_cache.h = chunk_quads + 1 + 2 * margin;
+		normal_cache.normals.resize(normal_cache.w * normal_cache.h);
+		normal_cache.has.resize(normal_cache.w * normal_cache.h);
+		memset(normal_cache.has.ptr(), 0, normal_cache.has.size());
+	}
+	struct NormalCacheScope {
+		LandscapeNormalCache *prev;
+		explicit NormalCacheScope(LandscapeNormalCache *p_cache) {
+			prev = landscape_normal_cache;
+			landscape_normal_cache = p_cache;
+		}
+		~NormalCacheScope() { landscape_normal_cache = prev; }
+	} normal_cache_scope(&normal_cache);
 	LocalVector<Vector3> base; // landscape space
 	LocalVector<real_t> keep; // 1 = free to move, 0 = on a side stitched to a coarser neighbour
 	base.resize(row * row);

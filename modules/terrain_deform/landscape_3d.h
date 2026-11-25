@@ -238,6 +238,7 @@ class Landscape3D : public Node3D, public WorldReliefProvider {
 
 	float _h(int p_x, int p_z) const;
 	Vector3 _normal(int p_x, int p_z) const;
+	Vector3 _normal_eval(int p_x, int p_z) const; // _normal without the cliff build's cache
 	Vector3 _normal_central(int p_x, int p_z) const;
 	Vector3 _normal_central_at(real_t p_x, real_t p_z) const;
 	Vector3 _normal_at(real_t p_x, real_t p_z) const; // bilinear, in grid units
