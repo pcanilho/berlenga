@@ -774,45 +774,19 @@ vec3 tm_cured_cover(vec3 p, float fp, vec3 soil) {
 	return mix(c, soil, gap * 0.95);
 }
 )";
-	// Terracettes as relief (Landscape3D::terracette_offset, which this mirrors; the layout is the shared contract's).
+	// Terracettes as relief: the shared step (WorldContracts::terracette_step, which Landscape3D and the plants' roots
+	// read too), gated to open soil by the generator's geology.
 	c += WorldContracts::terracette_shader_code();
 	c += R"(
-const float TM_TC_T = 0.185; // the tread's share of each step
-float tm_tc_o(float x) {
-	float ph = fract(x);
-	return (ph < TM_TC_T ? -ph : -TM_TC_T * (1.0 - ph) / (1.0 - TM_TC_T)) + 0.5 * TM_TC_T;
-}
-float tm_tc_int(float x) {
-	float ph = fract(x);
-	float t = TM_TC_T;
-	return ph < t ? -0.5 * ph * ph + 0.5 * t * ph : t / (2.0 * (1.0 - t)) * ((1.0 - ph) * (1.0 - ph) - (1.0 - t) * (1.0 - t)) + 0.5 * t * (ph - t);
-}
 // At p (world, the undisplaced ground's height in y) on ground of gradient grad: x the steps' height over the ground
-// (m), y the change of the slope's steepness (the surface's gradient is grad times 1 + y), both box-filtered over
-// width metres along the fall line. Its share is terrain_bank_relief.y (Landscape3D.terracette_relief).
+// (m), y the change of the slope's steepness, box-filtered over width metres along the fall line. Its share is
+// terrain_bank_relief.y (Landscape3D.terracette_relief).
 vec2 tm_terracette(vec3 p, vec2 grad, float width) {
-	if (terrain_bank_relief.y <= 0.0) {
-		return vec2(0.0);
+	float share = terrain_bank_relief.y;
+	if (share > 0.0 && tm_geology && terrain_geology_rect.z > 0.0) {
+		share *= wc_terracette_soil(terrain_geology(p));
 	}
-	vec3 t = wc_terracette(p, grad);
-	if (t.z <= 0.0) {
-		return vec2(0.0);
-	}
-	float steep = length(grad);
-	float rise = 2.0; // WorldContracts::TERRACETTE_RISE
-	float k = wc_terracette(vec3(p.x, p.y - (t.y - 0.1) * rise, p.z), grad).x * terrain_bank_relief.y;
-	// On open soil only, as the layer mix's steep slopes: none on sand, thin soil, or in a cell with any rock, talus or
-	// till (a steep slope beside them is bare debris there; the generator's geology; Landscape3D gates the same).
-	if (k > 0.0 && tm_geology && terrain_geology_rect.z > 0.0) {
-		vec4 g = terrain_geology(p);
-		k *= smoothstep(0.05, 0.2, g.x) * (1.0 - smoothstep(0.02, 0.2, max(clamp(g.y, 0.0, 1.0), abs(g.z))));
-	}
-	float d = max(0.5 * width * steep / max(rise, 1e-3), 0.004);
-	if (k <= 0.0 || d >= 0.5) {
-		return vec2(0.0);
-	}
-	float f = 1.0 - smoothstep(0.3, 0.5, d); // the last of it fades rather than stops
-	return vec2(rise * k * (tm_tc_int(t.y + d) - tm_tc_int(t.y - d)) / (2.0 * d), k * (tm_tc_o(t.y + d) - tm_tc_o(t.y - d)) / (2.0 * d)) * f;
+	return wc_terracette_step(p, grad, width, share);
 }
 )";
 	// Godot passes a sampler to a function only with one filter/repeat/hint setting per function, so the hex sampler

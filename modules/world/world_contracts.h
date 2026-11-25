@@ -987,15 +987,29 @@ public:
 	// a grazing model: bands parallel to the contours, regular by 40 degrees, about 3.4 m apart). One layout for the
 	// sward (GrassField3D.terracettes) and the ground's step relief: at p (world, its height in y) on ground of
 	// gradient p_gradient (dh/dx, dh/dz), x the tread (0..1: 1 on a tread's middle), y the phase up the step (0..1,
-	// the tread from 0 to about 0.2, then the riser), z how strongly the slope forms them (0 under about 25 degrees,
+	// the tread from 0 to TERRACETTE_TREAD, then the riser), z how strongly the slope forms them (0 under about 25 degrees,
 	// 1 from 35 to 45, 0 past about 51). Bands follow the height, wandering a few decimetres, and fade out in places.
 	// The phase goes by height over a fixed rise (TERRACETTE_RISE), so a band keeps to one contour: a rise taken from the
 	// local slope (spacing times its sine) moved the phase by a whole step for a few hundredths of a metre's change in
 	// rise 100 m up, the bands a scribble of short dashes wherever the slope varied.
 	static constexpr float TERRACETTE_SPACING = 3.4f; // Along a 36 degree slope, m (closer on steeper ground).
 	static constexpr float TERRACETTE_RISE = 2.0f; // Height from one tread to the next, m.
+	// The tread's share of each step's phase: level treads of about a metre and risers some 10 degrees steeper than the
+	// slope at 35 degrees (0.6 m steps); at 0.185 the risers stood only 4 degrees steeper and the steps barely read.
+	static constexpr float TERRACETTE_TREAD = 0.3f;
 	static Vector3 terracette_at(const Vector3 &p_position, const Vector2 &p_gradient);
-	// GLSL of the same: vec3 wc_terracette(vec3 p, vec2 gradient). Needs climate_bare_shader_code() (wc_vn) first.
+	// The ground's steps (the relief every reader draws): the profile is level over the tread and climbs over the
+	// riser, less its mean, so the ground keeps its height on average; box-filtered over p_width metres along the fall
+	// line (the profile's integral is closed form), so a grid or pixel coarser than a tread gets the steps' mean, and
+	// faded out once the width nears a step. x the height to add to the smooth ground (m), y the change of its
+	// steepness (the surface's gradient is p_gradient times 1 + y). p_share scales them: the producer's setting
+	// (Landscape3D.terracette_relief, published in terrain_bank_relief.y) times terracette_soil_share.
+	static Vector2 terracette_step(const Vector3 &p_position, const Vector2 &p_gradient, float p_width, float p_share);
+	// Where the steps form, from the generator's geology (TerrainGenerator3D.get_material_geology_at: soil depth, rock,
+	// talus): open soil only, none on sand, thin soil or in a cell with any rock, talus or till.
+	static float terracette_soil_share(const Color &p_geology);
+	// GLSL of the same: vec3 wc_terracette(vec3 p, vec2 gradient), vec2 wc_terracette_step(vec3 p, vec2 gradient,
+	// float width, float share), float wc_terracette_soil(vec4 geology). Needs climate_bare_shader_code() (wc_vn) first.
 	static String terracette_shader_code();
 	static void register_ground_color(WorldGroundColorProvider *p_provider); // any number: the first that knows the point answers
 	static void unregister_ground_color(WorldGroundColorProvider *p_provider);

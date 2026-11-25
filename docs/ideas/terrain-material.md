@@ -468,8 +468,13 @@ few metres apart, a level tread and a riser grazed between (Seleb, Chatterjee an
 draws them from the shared layout (`WorldContracts::terracette_at`: tread, phase up the step, strength); the ground now
 builds them as relief.
 - Profile in units of the step's rise (`TERRACETTE_RISE`, 2 m of height: 3.4 m apart along a 36 degree slope): flat
-  over the tread (the first 0.185 of the phase, where the layout's tread ends), the riser taking the rest, less its
-  mean, so the ground keeps its height on average. Steps of about 0.37 m, times the layout's strength at the step.
+  over the tread (the first `TERRACETTE_TREAD`, 0.3, of the phase, where the layout's tread ends), the riser taking the
+  rest, less its mean, so the ground keeps its height on average. Steps of about 0.6 m, treads of about a metre,
+  risers some 10 degrees steeper than the slope, times the layout's strength at the step. At a tread of 0.185 the
+  risers stood only 4 degrees steeper and the docs review saw one faint step.
+- The step is the shared contract's (`WorldContracts::terracette_step`, GLSL `wc_terracette_step`, gate
+  `wc_terracette_soil`), so plants and stones add it at their own roots: the GPU relief map leaves it out (sampled at
+  its texels a 3 m pattern aliases; blades stood up to 0.37 m off the drawn ground). `WorldGround.relief_at` keeps it.
 - The layout's phase goes by height over that fixed rise. It first took the rise from the local slope (3.4 m times its
   sine), and 100 m up a few centimetres' change of rise moved the phase by a whole step: the bands broke into a
   scribble of short dashes wherever the slope varied (the sward's too). A fixed rise keeps each band on one contour.

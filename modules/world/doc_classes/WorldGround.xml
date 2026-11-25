@@ -259,7 +259,7 @@
 			<return type="Vector2" />
 			<param index="0" name="position" type="Vector3" />
 			<description>
-				The drawn ground's relief over the heightfield at [param position]'s xz: x the height to add to the heightfield's (m; Landscape3D's cliff and bank relief push the surface out along the slope's horizontal normal, so about the push times the slope's tangent here), y its share (0..1). Plants, rocks and ground detail placed on the heightfield add x so they sit on the ground as drawn. GPU placers read the global [code]terrain_relief_map[/code] (R height m, G share) over [code]terrain_relief_rect[/code]. (0, 0) with no relief producer.
+				The drawn ground's relief over the heightfield at [param position]'s xz: x the height to add to the heightfield's (m; Landscape3D's cliff and bank relief push the surface out along the slope's horizontal normal, so about the push times the slope's tangent here), y its share (0..1). Plants, rocks and ground detail placed on the heightfield add x so they sit on the ground as drawn. GPU placers read the global [code]terrain_relief_map[/code] (R height m, G share) over [code]terrain_relief_rect[/code]; the map leaves out the terracettes' steps (3 m apart, finer than its texels), which a placer adds at each root with [code]wc_terracette_step[/code] ([method WorldContracts.terracette_shader_code]; share [code]terrain_bank_relief.y[/code] times [code]wc_terracette_soil[/code] of the geology). (0, 0) with no relief producer.
 			</description>
 		</method>
 		<method name="rim_at" qualifiers="const">

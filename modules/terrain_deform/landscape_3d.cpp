@@ -1969,42 +1969,6 @@ void Landscape3D::set_terracette_relief(real_t p_share) {
 	_relief_changed(Rect2());
 }
 
-// Terracettes (docs/ideas/terrain-generation.md, "Terracette steps"): the shared layout (WorldContracts::terracette_at)
-// gives the phase up each step; the ground takes a flat tread over its first TC_TREAD and a riser through the rest.
-// The profile o (in units of the step's rise R, WorldContracts::TERRACETTE_RISE) is -ph on the tread and climbs back to
-// 0 over the riser, less its mean, so the ground keeps its height on average and its treads stand level: steps of T R
-// (0.37 m) scaled by the layout's strength. Box-filtered over the given width (the integral of o
-// is closed form), so a mesh or pixel coarser than a tread gets the steps' mean, not an alias of them.
-static constexpr real_t TC_TREAD = 0.185;
-static real_t _tc_o(real_t p_ph) {
-	const real_t ph = p_ph - Math::floor(p_ph);
-	return (ph < TC_TREAD ? -ph : -TC_TREAD * (1.0 - ph) / (1.0 - TC_TREAD)) + 0.5 * TC_TREAD;
-}
-static real_t _tc_int(real_t p_x) {
-	const real_t ph = p_x - Math::floor(p_x);
-	const real_t t = TC_TREAD;
-	return ph < t ? -0.5 * ph * ph + 0.5 * t * ph : t / (2.0 * (1.0 - t)) * ((1.0 - ph) * (1.0 - ph) - (1.0 - t) * (1.0 - t)) + 0.5 * t * (ph - t);
-}
-
-real_t Landscape3D::terracette_offset(const Vector3 &p_position, const Vector2 &p_gradient, real_t p_width, real_t p_share) {
-	if (p_share <= 0.0) {
-		return 0.0;
-	}
-	const Vector3 t = WorldContracts::terracette_at(p_position, p_gradient);
-	if (t.z <= 0.0f) {
-		return 0.0;
-	}
-	const real_t steep = p_gradient.length();
-	const real_t rise = WorldContracts::TERRACETTE_RISE;
-	// The step's strength: the layout's tread at the middle of this step's tread (its fade along the slope included).
-	const real_t k = WorldContracts::terracette_at(Vector3(p_position.x, p_position.y - (t.y - 0.1f) * rise, p_position.z), p_gradient).x * p_share;
-	const real_t d = MAX(0.5 * p_width * steep / MAX(rise, real_t(1e-3)), real_t(0.004));
-	if (k <= 0.0 || d >= 0.5) {
-		return 0.0;
-	}
-	return rise * k * (_tc_int(t.y + d) - _tc_int(t.y - d)) / (2.0 * d);
-}
-
 // The relief over a rect (landscape space; empty: all of it) changed: WorldGround.relief_changed in world space.
 void Landscape3D::_relief_changed(const Rect2 &p_area) {
 	if (!is_inside_tree() || heights.is_empty()) {
@@ -2585,7 +2549,7 @@ void Landscape3D::_clear_stand_map() {
 // bank relief push a surface point out along the slope's horizontal normal m by d, so at a fixed xz the surface stands
 // d tan(slope) higher (outward is downhill). The full field: the stitch weight on sides next to coarser chunks and the
 // finest-chunk-only drawing are left out (both are under a pixel by design).
-Vector2 Landscape3D::_relief_at_local(const Vector3 &p) const {
+Vector2 Landscape3D::_relief_at_local(const Vector3 &p, bool p_steps) const {
 	if (heights.is_empty() || (cliff_relief <= 0.0 && bank_relief <= 0.0 && terracette_relief <= 0.0)) {
 		return Vector2(0.0, 0.0);
 	}
@@ -2602,16 +2566,15 @@ Vector2 Landscape3D::_relief_at_local(const Vector3 &p) const {
 	const real_t u = fx - ix, v = fz - iz;
 	const real_t h = Math::lerp(Math::lerp(real_t(_h(ix, iz)), real_t(_h(ix + 1, iz)), u), Math::lerp(real_t(_h(ix, iz + 1)), real_t(_h(ix + 1, iz + 1)), u), v);
 	// The terracettes' steps as the near ground draws them (half a metre's filter, twice the near patch's grid).
-	real_t tc_share = terracette_relief;
+	real_t tc_share = p_steps ? terracette_relief : real_t(0.0);
 	if (tc_share > 0.0) {
-		// On open soil only, as TerrainMaterial3D's: none on sand, thin soil, or near rock, talus or till.
+		// On open soil only, as TerrainMaterial3D's (WorldContracts::terracette_soil_share).
 		const TerrainGenerator3D *gen = _stream_generator();
 		if (gen) {
-			const Color g = gen->get_material_geology_at(Vector3(p.x, h, p.z));
-			tc_share *= Math::is_nan(g.r) ? 0.0f : Math::smoothstep(0.05f, 0.2f, g.r) * (1.0f - Math::smoothstep(0.02f, 0.2f, MAX(CLAMP(g.g, 0.0f, 1.0f), Math::abs(g.b))));
+			tc_share *= WorldContracts::terracette_soil_share(gen->get_material_geology_at(Vector3(p.x, h, p.z)));
 		}
 	}
-	const real_t tc = terracette_offset(Vector3(p.x, h, p.z), Vector2(-n.x, -n.z) / n.y, 0.5, tc_share);
+	const real_t tc = p_steps ? real_t(WorldContracts::terracette_step(Vector3(p.x, h, p.z), Vector2(-n.x, -n.z) / n.y, 0.5f, float(tc_share)).x) : real_t(0.0);
 	const Vector2 w = _relief_weights_at(fx, fz);
 	if (w.x <= 0.0 && w.y <= 0.0) {
 		return Vector2(tc, 0.0);
@@ -2642,7 +2605,7 @@ void Landscape3D::contract_relief_state(void (*p_add)(void *p_user, const void *
 	RWLockRead hl(heights_lock);
 	const Transform3D xf = is_inside_tree() ? get_global_transform() : Transform3D();
 	p_add(p_user, &xf, sizeof(xf));
-	const real_t grid[] = { origin.x, origin.y, spacing, cliff_relief, bank_relief };
+	const real_t grid[] = { origin.x, origin.y, spacing, cliff_relief, bank_relief, terracette_relief };
 	p_add(p_user, grid, sizeof(grid));
 	const int32_t dims[] = { gw, gh };
 	p_add(p_user, dims, sizeof(dims));
@@ -2678,7 +2641,9 @@ void Landscape3D::_update_relief_map(const Vector3 &p_camera) {
 	bool any = false;
 	for (int z = 0; z < R; z++) {
 		for (int x = 0; x < R; x++) {
-			Vector2 r = _relief_at_local(Vector3(org.x + (x + 0.5) * texel, 0.0, org.y + (z + 0.5) * texel));
+			// Without the terracettes' steps: a 3 m step pattern sampled at texel centres aliases, and placers on the
+			// GPU add the steps at their own roots (wc_terracette_step).
+			Vector2 r = _relief_at_local(Vector3(org.x + (x + 0.5) * texel, 0.0, org.y + (z + 0.5) * texel), false);
 			if (Math::is_nan(r.x)) {
 				r = Vector2(0.0, 0.0);
 			}

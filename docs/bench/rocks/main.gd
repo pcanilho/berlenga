@@ -877,6 +877,14 @@ func _world() -> void:
 				var down := Vector2(-gx, -gz).normalized()
 				if down.y < 0.5:
 					continue
+				# Where the layout's bands are strong (its patch fade): the most tread over one step's height.
+				var grad := Vector2(fx, fz) / 2.0
+				var hp := gen.get_height(p)
+				var band := 0.0
+				for k in 10:
+					band = maxf(band, GrassField3D.get_terracette_at(Vector3(xx, hp - float(k) * 0.2, zz), grad).x)
+				if band < 0.8:
+					continue
 				var score := -absf(fsl - 35.0) / 10.0 + down.y * 0.5 - Vector2(xx, zz).length() / 4000.0
 				if score > best_t:
 					best_t = score

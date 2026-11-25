@@ -1388,9 +1388,47 @@ Vector3 WorldContracts::terracette_at(const Vector3 &p_position, const Vector2 &
 	const float wander = (wc_vn(Vector3(x * 0.09f + 41.0f, 5.3f, z * 0.09f)) - 0.5f) * 0.9f + (wc_vn(Vector3(x * 0.37f + 7.0f, 9.1f, z * 0.37f)) - 0.5f) * 0.25f;
 	const float v = float(p_position.y) / rise + wander * sin_s / rise;
 	const float ph = v - Math::floor(v);
-	float tread = Math::smoothstep(0.0f, 0.05f, ph) * (1.0f - Math::smoothstep(0.15f, 0.22f, ph));
+	float tread = Math::smoothstep(0.0f, 0.05f, ph) * (1.0f - Math::smoothstep(TERRACETTE_TREAD - 0.04f, TERRACETTE_TREAD + 0.03f, ph));
 	tread *= form * Math::smoothstep(0.25f, 0.45f, wc_vn(Vector3(x * 0.05f + 13.0f, 2.9f, z * 0.05f)));
 	return Vector3(tread, ph, form);
+}
+
+// The step profile in units of the rise: -ph over the tread, back to 0 over the riser, less its mean; and its integral.
+static float wc_tc_o(float p_ph) {
+	const float t = WorldContracts::TERRACETTE_TREAD;
+	const float ph = p_ph - Math::floor(p_ph);
+	return (ph < t ? -ph : -t * (1.0f - ph) / (1.0f - t)) + 0.5f * t;
+}
+static float wc_tc_int(float p_x) {
+	const float t = WorldContracts::TERRACETTE_TREAD;
+	const float ph = p_x - Math::floor(p_x);
+	return ph < t ? -0.5f * ph * ph + 0.5f * t * ph : t / (2.0f * (1.0f - t)) * ((1.0f - ph) * (1.0f - ph) - (1.0f - t) * (1.0f - t)) + 0.5f * t * (ph - t);
+}
+
+Vector2 WorldContracts::terracette_step(const Vector3 &p_position, const Vector2 &p_gradient, float p_width, float p_share) {
+	if (p_share <= 0.0f) {
+		return Vector2();
+	}
+	const Vector3 t = terracette_at(p_position, p_gradient);
+	if (t.z <= 0.0f) {
+		return Vector2();
+	}
+	const float steep = p_gradient.length();
+	// The step's strength: the layout's tread at the middle of this step's tread (its fade along the slope included).
+	const float k = terracette_at(Vector3(p_position.x, p_position.y - (t.y - 0.5f * TERRACETTE_TREAD) * TERRACETTE_RISE, p_position.z), p_gradient).x * p_share;
+	const float d = MAX(0.5f * p_width * steep / TERRACETTE_RISE, 0.004f);
+	if (k <= 0.0f || d >= 0.5f) {
+		return Vector2();
+	}
+	const float f = 1.0f - Math::smoothstep(0.3f, 0.5f, d); // the last of it fades rather than stops
+	return Vector2(TERRACETTE_RISE * k * (wc_tc_int(t.y + d) - wc_tc_int(t.y - d)), k * (wc_tc_o(t.y + d) - wc_tc_o(t.y - d))) * (f / (2.0f * d));
+}
+
+float WorldContracts::terracette_soil_share(const Color &p_geology) {
+	if (Math::is_nan(p_geology.r)) {
+		return 0.0f;
+	}
+	return Math::smoothstep(0.05f, 0.2f, p_geology.r) * (1.0f - Math::smoothstep(0.02f, 0.2f, MAX(CLAMP(p_geology.g, 0.0f, 1.0f), Math::abs(p_geology.b))));
 }
 
 String WorldContracts::terracette_shader_code() {
@@ -1406,9 +1444,42 @@ vec3 wc_terracette(vec3 p, vec2 grad) {
 	float rise = 2.0; // WorldContracts::TERRACETTE_RISE
 	float wander = (wc_vn(vec3(p.x * 0.09 + 41.0, 5.3, p.z * 0.09)) - 0.5) * 0.9 + (wc_vn(vec3(p.x * 0.37 + 7.0, 9.1, p.z * 0.37)) - 0.5) * 0.25;
 	float ph = fract(p.y / rise + wander * sin_s / rise);
-	float tread = smoothstep(0.0, 0.05, ph) * (1.0 - smoothstep(0.15, 0.22, ph));
+	float tread = smoothstep(0.0, 0.05, ph) * (1.0 - smoothstep(0.26, 0.33, ph)); // WorldContracts::TERRACETTE_TREAD 0.3
 	tread *= form * smoothstep(0.25, 0.45, wc_vn(vec3(p.x * 0.05 + 13.0, 2.9, p.z * 0.05)));
 	return vec3(tread, ph, form);
+}
+// WorldContracts::terracette_step's profile (the tread's share 0.3) and its integral.
+float wc_tc_o(float x) {
+	float ph = fract(x);
+	return (ph < 0.3 ? -ph : -0.3 * (1.0 - ph) / 0.7) + 0.15;
+}
+float wc_tc_int(float x) {
+	float ph = fract(x);
+	return ph < 0.3 ? -0.5 * ph * ph + 0.15 * ph : 0.3 / 1.4 * ((1.0 - ph) * (1.0 - ph) - 0.49) + 0.15 * (ph - 0.3);
+}
+// WorldContracts::terracette_step: x the steps' height over the smooth ground (m), y the change of its steepness,
+// box-filtered over width metres along the fall line; share the producer's (terrain_bank_relief.y) times
+// wc_terracette_soil. Blades, stones and decals call it at their roots to stand on the steps the ground draws.
+vec2 wc_terracette_step(vec3 p, vec2 grad, float width, float share) {
+	if (share <= 0.0) {
+		return vec2(0.0);
+	}
+	vec3 t = wc_terracette(p, grad);
+	if (t.z <= 0.0) {
+		return vec2(0.0);
+	}
+	float steep = length(grad);
+	float k = wc_terracette(vec3(p.x, p.y - (t.y - 0.15) * 2.0, p.z), grad).x * share;
+	float d = max(0.5 * width * steep / 2.0, 0.004);
+	if (k <= 0.0 || d >= 0.5) {
+		return vec2(0.0);
+	}
+	float f = 1.0 - smoothstep(0.3, 0.5, d);
+	return vec2(2.0 * k * (wc_tc_int(t.y + d) - wc_tc_int(t.y - d)), k * (wc_tc_o(t.y + d) - wc_tc_o(t.y - d))) * (f / (2.0 * d));
+}
+// WorldContracts::terracette_soil_share from the generator's geology (soil depth, rock, talus).
+float wc_terracette_soil(vec4 g) {
+	return smoothstep(0.05, 0.2, g.x) * (1.0 - smoothstep(0.02, 0.2, max(clamp(g.y, 0.0, 1.0), abs(g.z))));
 }
 )";
 }

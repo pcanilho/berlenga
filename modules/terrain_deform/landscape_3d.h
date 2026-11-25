@@ -175,7 +175,7 @@ class Landscape3D : public Node3D, public WorldReliefProvider {
 	bool relief_registered = false;
 	void _update_relief_map(const Vector3 &p_camera);
 	void _clear_relief_map();
-	Vector2 _relief_at_local(const Vector3 &p_local) const;
+	Vector2 _relief_at_local(const Vector3 &p_local, bool p_steps = true) const; // p_steps: the terracettes' too
 	// The cliff relief's share (its face weight, 0..1) over a wider square for the terrain material (no soil on a
 	// shelf between walls): terrain_cliff_map (R8) over terrain_cliff_rect, CLIFF_MAP_SIZE round the camera at
 	// CLIFF_MAP_RES texels, rebuilt with the relief map.
@@ -290,9 +290,6 @@ public:
 	real_t get_bank_relief() const { return bank_relief; }
 	void set_terracette_relief(real_t p_share);
 	real_t get_terracette_relief() const { return terracette_relief; }
-	// The terracettes' step relief at p (world height in y) on ground of gradient p_gradient: metres over the
-	// heightfield, box-filtered over p_width metres along the fall line (TerrainMaterial3D's tm_terracette mirrors it).
-	static real_t terracette_offset(const Vector3 &p_position, const Vector2 &p_gradient, real_t p_width, real_t p_share);
 	Vector2 contract_relief_at(const Vector3 &p_position) const override;
 	const Object *contract_relief_object() const override { return this; }
 	void contract_relief_state(void (*p_add)(void *p_user, const void *p_data, size_t p_size), void *p_user) const override;
