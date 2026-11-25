@@ -596,6 +596,7 @@ void BaseMaterial3D::init_shaders() {
 	shader_names->hair_crown = "hair_crown";
 	shader_names->hair_mask_texture_channel = "hair_mask_texture_channel";
 	shader_names->wetness_porosity = "wetness_porosity";
+	shader_names->wetness_standing_relief = "wetness_standing_relief";
 	shader_names->wetness_amount = "wetness_amount";
 	shader_names->snow_amount = "snow_amount";
 	shader_names->snow_max_slope = "snow_max_slope";
@@ -631,6 +632,12 @@ void BaseMaterial3D::init_shaders() {
 		}
 		// Its 10 m wind (get_surface_rain_functions_code(); the weather module declares it too).
 		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/weather_wind_map", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), state_map);
+		// Footsteps and splashes in the ground's standing water (GroundSurface3D): a row of impacts (x, z, age,
+		// amplitude) and their count in x of the info.
+		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/water_impacts", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), state_map);
+		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/water_impact_info", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), map_rect);
+		// The rain RainFall3D falls with no weather map (x: mm/h liquid), for the rain readers then.
+		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/weather_rain_fallback", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), map_rect);
 		// Its hoarfrost (R, mm of water) and the surface's cooling below the air (G, K), over weather_map_rect.
 		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/weather_frost_map", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), state_map);
 		// Its sea spray square (R: the spray's wetness, G: salt on surfaces as 1 - exp(-g/m2 / 10)).
@@ -970,6 +977,7 @@ global uniform sampler2D weather_rain_map; // precipitation mm/h, canopy wetness
 global uniform vec4 weather_rain_rect; // x, z, size; size 0 = no weather
 global uniform vec4 weather_precip_phase; // ground air temperature (C), lapse (K/m), humidity, ground height (m)
 global uniform vec4 weather_warm_nose; // warm layer aloft: peak (C, 0 none), base (m above the ground)
+global uniform vec4 weather_rain_fallback; // with no weather map: x the rain RainFall3D falls (mm/h liquid)
 
 vec4 weather_rain_sample(vec3 p_world_pos) {
 	if (weather_rain_rect.z <= 0.0) {
@@ -985,6 +993,9 @@ float weather_air_temperature_at(vec3 p_world_pos) {
 	return weather_precip_phase.x - weather_precip_phase.y * (p_world_pos.y - weather_precip_phase.w);
 }
 float weather_rainfall_at(vec3 p_world_pos) {
+	if (weather_rain_rect.z <= 0.0) {
+		return max(weather_rain_fallback.x, 0.0); // no weather map: the rain RainFall3D falls, already liquid
+	}
 	float r = weather_rain_sample(p_world_pos).r;
 	return r > 0.0 ? r * rain_liquid_share_nose(weather_air_temperature_at(p_world_pos), weather_precip_phase.z, p_world_pos.y - weather_precip_phase.w, weather_warm_nose.x, weather_warm_nose.y) : 0.0;
 }
@@ -1037,6 +1048,24 @@ float weather_surface_puddle(vec3 p_world_pos, vec3 p_world_normal) {
 }
 )";
 	return code;
+}
+
+// Footsteps and splashes in standing water (water_impact_ripple(), docs/ideas/rain.md step 7): the impacts
+// GroundSurface3D publishes, live ones first (the path tracer reads the same row).
+String BaseMaterial3D::get_water_impact_functions_code() {
+	return R"(
+global uniform sampler2D water_impacts; // x, z, age (s), amplitude; one texel per impact
+global uniform vec4 water_impact_info; // x: live impacts (the first x texels)
+
+vec2 water_impacts_slope(vec2 p_xz, float p_footprint) {
+	vec2 s = vec2(0.0);
+	int n = min(int(water_impact_info.x), textureSize(water_impacts, 0).x);
+	for (int i = 0; i < n; i++) {
+		s += water_impact_ripple(p_xz, texelFetch(water_impacts, ivec2(i, 0), 0), p_footprint);
+	}
+	return s;
+}
+)";
 }
 
 // Glaze (docs/ideas/trees.md 5be): the clear ice freezing rain leaves over everything it wets, p_mm of radial ice
@@ -1896,6 +1925,7 @@ void BaseMaterial3D::_update_shader() {
 		rt.wetness_from_weather = wetness_from_weather;
 		rt.wetness_canopy = features[FEATURE_WETNESS] && wetness_from_weather && wetness_canopy;
 		rt.wetness_moving = features[FEATURE_WETNESS] && wetness_from_weather && !wetness_canopy && wetness_moving;
+		rt.wetness_standing_water = features[FEATURE_WETNESS] && wetness_from_weather && !wetness_canopy && wetness_standing_water;
 		rt.glaze = glaze;
 		rt.snow = features[FEATURE_SNOW];
 		rt.snow_from_weather = snow_from_weather;
@@ -2358,6 +2388,9 @@ varying vec2 hair_flow;
 uniform float wetness_porosity : hint_range(0.0, 1.0, 0.01);
 uniform float wetness_amount : hint_range(0.0, 1.0, 0.01);
 )";
+		if (wetness_from_weather && !wetness_canopy && wetness_standing_water) {
+			code += "uniform float wetness_standing_relief : hint_range(0.0, 50.0, 0.1);\n";
+		}
 		code += get_wetness_functions_code(wetness_from_weather);
 	}
 
@@ -2526,6 +2559,9 @@ uniform vec3 uv2_offset;
 	}
 	if (glaze) {
 		code += get_glaze_functions_code();
+	}
+	if (features[FEATURE_GROUND_DEFORM] && ground_deform_patch) {
+		code += get_water_impact_functions_code();
 	}
 
 	if (flags[FLAG_USE_FOV_OVERRIDE]) {
@@ -3646,6 +3682,64 @@ void fragment() {)";
 		}
 		code += R"(	weather_wetness_apply(wet, (INV_VIEW_MATRIX * vec4(NORMAL, 0.0)).y, METALLIC, wetness_porosity, ALBEDO, ROUGHNESS);
 )";
+		if (wetness_from_weather && !wetness_canopy && wetness_standing_water && transparency == TRANSPARENCY_DISABLED && !features[FEATURE_TRANSMISSION]) {
+			// Standing water (Lagarde 2013, "Water drop 3b", accumulated water): the weather's pooled water on a level
+			// enough face (weather_surface_puddle(), mm above the lowest point) fills the face's relief from the lowest
+			// up (rain_standing_relief()); under it the surface is water's: smooth, F0 0.02, its own texture's relief
+			// drowned, with the raindrop rings on it. The path tracer has the same lines (scene_raytracing_raygen.glsl).
+			code += R"(	{
+		vec3 sw_wp = (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz;
+		vec3 sw_n = normalize((INV_VIEW_MATRIX * vec4(NORMAL, 0.0)).xyz);
+		float sw_mm = weather_surface_puddle(sw_wp, sw_n) * wetness_amount;
+		if (sw_mm > 0.0) {
+			vec3 sw_fw = fwidth(sw_wp);
+			float sw_fp = max(max(sw_fw.x, sw_fw.y), sw_fw.z);
+			float sw_c = rain_standing_cover(sw_mm, rain_standing_relief(sw_wp.xz), wetness_standing_relief, sw_fp);
+			if (sw_c > 0.0) {
+				ROUGHNESS = mix(ROUGHNESS, 0.02, sw_c);
+				SPECULAR = mix(SPECULAR, 0.25, sw_c);
+				ALBEDO *= mix(1.0, 0.85, sw_c); // the water's own absorption over the soaked surface
+)";
+			if (features[FEATURE_NORMAL_MAPPING]) {
+				code += "\t\t\t\tNORMAL_MAP_DEPTH *= 1.0 - sw_c;\n";
+			}
+			code += R"(				vec3 sw_rr = rain_ripples(sw_wp.xz, TIME, weather_rainfall_at(sw_wp), sw_fp);
+				NORMAL = normalize(NORMAL - (VIEW_MATRIX * vec4(sw_rr.x, 0.0, sw_rr.y, 0.0)).xyz * sw_c);
+				ROUGHNESS = mix(ROUGHNESS, rain_ripple_roughness(ROUGHNESS, sw_rr.z), sw_c);
+			}
+		}
+	}
+)";
+		}
+		if (wetness_from_weather && !wetness_canopy && (transparency != TRANSPARENCY_DISABLED || features[FEATURE_TRANSMISSION] || features[FEATURE_REFRACTION])) {
+			// Rain on glass (rain_glass(), docs/ideas/rain.md step 7): drops and runners from the rain the pane
+			// catches; their curved surfaces bend the refraction and the reflections. The path tracer refracts
+			// through each drop (rain_drop_refract()). With no weather map, RainFall3D's rain (weather_rain_fallback).
+			code += R"(	{
+		vec3 rg_wp = (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz;
+		vec3 rg_n = normalize((INV_VIEW_MATRIX * vec4(NORMAL, 0.0)).xyz);
+)";
+			code += wetness_moving ? "\t\tvec3 rg_air = -rain_slipstream;\n\t\tfloat rg_wipe = clamp(rain_wipe, 0.0, 1.0);\n" : "\t\tvec3 rg_air = vec3(0.0);\n\t\tfloat rg_wipe = 0.0;\n";
+			code += R"(		// The pane catches rain on its outer side; a single sheet seen from inside shows the same drops.
+		vec4 rg_rain = weather_rain_rect.z > 0.0 ? weather_surface_rain(rg_wp, rg_n, rg_air) : rain_surface_catch(rg_n, weather_rain_fallback.x, 0.0, -rg_air.xz, 0.0);
+		vec4 rg_back = weather_rain_rect.z > 0.0 ? weather_surface_rain(rg_wp, -rg_n, rg_air) : rain_surface_catch(-rg_n, weather_rain_fallback.x, 0.0, -rg_air.xz, 0.0);
+		vec3 rg_face = rg_n;
+		if (rg_back.x > rg_rain.x) {
+			rg_rain = rg_back;
+			rg_face = -rg_n;
+		}
+		rg_rain.x *= wetness_amount;
+		vec3 rg_fw = fwidth(rg_wp);
+		float rg_mist;
+		vec4 rg = rain_glass(rg_wp, rg_face, rg_rain, TIME, rg_wipe, max(max(rg_fw.x, rg_fw.y), rg_fw.z), rg_mist);
+		ROUGHNESS = mix(ROUGHNESS, max(ROUGHNESS, 0.35), rg_mist * (1.0 - rg.w));
+		if (rg.w > 0.0) {
+			NORMAL = normalize(NORMAL - (VIEW_MATRIX * vec4(rg.xyz * sign(dot(rg_face, rg_n)), 0.0)).xyz);
+			ROUGHNESS = mix(ROUGHNESS, 0.03, rg.w);
+		}
+	}
+)";
+		}
 		if (wetness_from_weather && wetness_canopy) {
 			// Water beaded on a waxy leaf (rain_surface_beads(), docs/ideas/rain.md step 5): upward faces hold the
 			// drops, undersides shed them. The path tracer draws the same beads at full detail (scene_raytracing_raygen.glsl;
@@ -3714,6 +3808,8 @@ void fragment() {)";
 				float grs = max(gwl.y, gwl.w) * (1.0 - gil.y);
 				vec3 grr = grs > 0.0 ? rain_ripples(gwp.xz, TIME, weather_rainfall_at(gwp), ground_fp) : vec3(0.0);
 				gfs += grr.xy * grs;
+				// Footsteps and splashes in it (water_impacts_slope()).
+				gfs += grs > 0.0 ? water_impacts_slope(gwp.xz, ground_fp) * grs : vec2(0.0);
 				ROUGHNESS = mix(ROUGHNESS, rain_ripple_roughness(ROUGHNESS, grr.z), grs);
 			}
 			if (gfs != vec2(0.0)) {
@@ -5090,6 +5186,27 @@ void BaseMaterial3D::set_camera_cutout(bool p_enable) {
 
 bool BaseMaterial3D::is_camera_cutout() const {
 	return camera_cutout;
+}
+
+void BaseMaterial3D::set_wetness_standing_water(bool p_enable) {
+	if (wetness_standing_water == p_enable) {
+		return;
+	}
+	wetness_standing_water = p_enable;
+	_queue_shader_change();
+}
+
+bool BaseMaterial3D::is_wetness_standing_water() const {
+	return wetness_standing_water;
+}
+
+void BaseMaterial3D::set_wetness_standing_relief(float p_mm) {
+	wetness_standing_relief = CLAMP(p_mm, 0.0f, 50.0f);
+	_material_set_param(shader_names->wetness_standing_relief, wetness_standing_relief);
+}
+
+float BaseMaterial3D::get_wetness_standing_relief() const {
+	return wetness_standing_relief;
 }
 
 void BaseMaterial3D::set_wetness_moving(bool p_enable) {
@@ -6954,6 +7071,10 @@ void BaseMaterial3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_camera_cutout", "enable"), &BaseMaterial3D::set_camera_cutout);
 	ClassDB::bind_method(D_METHOD("is_camera_cutout"), &BaseMaterial3D::is_camera_cutout);
 	ClassDB::bind_method(D_METHOD("set_wetness_moving", "enable"), &BaseMaterial3D::set_wetness_moving);
+	ClassDB::bind_method(D_METHOD("set_wetness_standing_water", "enable"), &BaseMaterial3D::set_wetness_standing_water);
+	ClassDB::bind_method(D_METHOD("is_wetness_standing_water"), &BaseMaterial3D::is_wetness_standing_water);
+	ClassDB::bind_method(D_METHOD("set_wetness_standing_relief", "mm"), &BaseMaterial3D::set_wetness_standing_relief);
+	ClassDB::bind_method(D_METHOD("get_wetness_standing_relief"), &BaseMaterial3D::get_wetness_standing_relief);
 	ClassDB::bind_method(D_METHOD("is_wetness_moving"), &BaseMaterial3D::is_wetness_moving);
 	ClassDB::bind_method(D_METHOD("set_glaze", "enable"), &BaseMaterial3D::set_glaze);
 	ClassDB::bind_method(D_METHOD("is_glaze"), &BaseMaterial3D::is_glaze);
@@ -7285,6 +7406,8 @@ void BaseMaterial3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "wetness_from_weather"), "set_wetness_from_weather", "is_wetness_from_weather");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "wetness_canopy"), "set_wetness_canopy", "is_wetness_canopy");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "wetness_moving"), "set_wetness_moving", "is_wetness_moving");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "wetness_standing_water"), "set_wetness_standing_water", "is_wetness_standing_water");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "wetness_standing_relief", PROPERTY_HINT_RANGE, "0,50,0.1,suffix:mm"), "set_wetness_standing_relief", "get_wetness_standing_relief");
 
 	ADD_GROUP("Glaze", "");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "glaze"), "set_glaze", "is_glaze");
@@ -7592,6 +7715,7 @@ BaseMaterial3D::BaseMaterial3D(bool p_orm) :
 	set_hair_mask_texture_channel(TEXTURE_CHANNEL_RED);
 	set_wetness_porosity(0.5);
 	set_wetness_amount(1.0);
+	set_wetness_standing_relief(8.0);
 	set_snow_amount(1.0);
 	set_snow_max_slope(60.0);
 	set_point_size(1);

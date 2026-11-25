@@ -511,6 +511,11 @@ private:
 		if (!camera_cutout) {
 			mk.flags |= (1u << 29);
 		}
+		// And wetness_standing_water under that.
+		static_assert(FLAG_MAX < 28);
+		if (wetness_standing_water) {
+			mk.flags |= (1u << 28);
+		}
 		// And glaze in the features' top bit.
 		static_assert(FEATURE_MAX < 31);
 		if (glaze) {
@@ -557,6 +562,7 @@ private:
 		StringName hair_crown;
 		StringName hair_mask_texture_channel;
 		StringName wetness_porosity;
+		StringName wetness_standing_relief;
 		StringName wetness_amount;
 		StringName snow_amount;
 		StringName snow_max_slope;
@@ -664,6 +670,8 @@ private:
 	bool wetness_canopy = false;
 	bool wetness_moving = false;
 	bool camera_cutout = true;
+	bool wetness_standing_water = true; // puddles in the face's relief from the weather's pooled water
+	float wetness_standing_relief = 8.0f; // mm, lowest to highest point of the relief the water fills
 	bool glaze = false;
 	float snow_amount = 1.0f;
 	float snow_max_slope = 60.0f;
@@ -925,6 +933,10 @@ public:
 	bool is_wetness_canopy() const;
 	void set_wetness_moving(bool p_enable);
 	bool is_wetness_moving() const;
+	void set_wetness_standing_water(bool p_enable);
+	bool is_wetness_standing_water() const;
+	void set_wetness_standing_relief(float p_mm);
+	float get_wetness_standing_relief() const;
 
 	void set_camera_cutout(bool p_enable);
 	bool is_camera_cutout() const;
@@ -933,6 +945,7 @@ public:
 	void set_glaze(bool p_enable);
 	bool is_glaze() const;
 	static String get_glaze_functions_code();
+	static String get_water_impact_functions_code();
 
 	void set_snow_amount(float p_amount);
 	float get_snow_amount() const;

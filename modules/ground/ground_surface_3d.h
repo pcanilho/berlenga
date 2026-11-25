@@ -36,6 +36,7 @@
 #include "ground_deform_gpu.h"
 #include "ground_height_query.h"
 #include "ground_ripples.h"
+#include "ground_water_impacts.h"
 #include "ground_rut_store.h"
 #include "ground_terramechanics.h"
 
@@ -572,6 +573,10 @@ private:
 	float ripple_time_scale = 1.0f;
 	float ripple_extent = 4.0f; // m, the square of real ripple geometry round the follow point
 	GroundRipples ripples;
+	// Footsteps and splashes in the standing water (docs/ideas/rain.md step 7): water_impacts / water_impact_info.
+	GroundWaterImpacts water_impacts;
+	LocalVector<GroundDeformField::WaterImpact> water_impact_events;
+	void _water_impacts_update(double p_delta);
 	double ripple_q_accum = 0.0;
 	bool ripple_dirty = false;
 	bool ripple_published = false;
@@ -1280,8 +1285,12 @@ public:
 	void set_standing_water(bool p_enabled);
 	bool is_standing_water() const { return standing_water; }
 	float get_standing_water_at(Vector3 p_position) const;
+	PackedVector4Array get_water_impacts() const; // the live footsteps and splashes (x, z, age s, amplitude)
 	// The water contract (WorldWater): standing water on the ground, -INF where there is none.
 	float contract_water_height_at(const Vector3 &p_position) const override;
+	void contract_water_disturb(uint64_t p_owner, const Vector3 &p_position, float p_radius, float p_strength) override;
+	void contract_water_clear(uint64_t p_owner) override;
+	void contract_water_impulse(const Vector3 &p_position, float p_radius, float p_strength) override;
 	// The ground contract (WorldGround, docs/ideas/world-contracts.md).
 	float contract_ground_height_at(const Vector3 &p_position) const override { return get_surface_height_at(p_position); }
 	WorldGroundSoil contract_ground_soil_at(const Vector3 &p_position) const override;

@@ -155,6 +155,14 @@ public:
 		return MAX(base, p_reach * width);
 	}
 	StampSink *stamp_sink = nullptr;
+	// Where bodies strike or move this step (press_bodies()), for the standing water's ripples (GroundWaterImpacts):
+	// owner 0 a walker's footfall, otherwise a body moving (its instance id), strength 1 a step.
+	struct WaterImpact {
+		Vector3 position;
+		float strength = 1.0f;
+		uint64_t owner = 0;
+	};
+	LocalVector<WaterImpact> *impact_sink = nullptr;
 	// The finest texel the stamps land on (a near field fed through stamp_sink), 0 for this field's own: a
 	// moving body is pressed at least once per such texel, or each press leaves its own tooth in the rim.
 	float stamp_step = 0.0f;

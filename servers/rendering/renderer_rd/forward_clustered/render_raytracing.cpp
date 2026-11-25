@@ -4009,6 +4009,8 @@ RTMaterialData *RenderRaytracing::process_material(RID p_material_rid, uint16_t 
 		mat.subsurface.wetness_from_weather = rt_state.wetness_from_weather;
 		mat.subsurface_texture.wetness_canopy = rt_state.wetness_canopy;
 		mat.subsurface_texture.wetness_moving = rt_state.wetness_moving;
+		mat.hair.standing_water = rt_state.wetness_standing_water;
+		mat.hair.standing_relief = uint32_t(CLAMP(int(Math::round(get_float("wetness_standing_relief", 8.0f) / 4.0f)) - 1, 0, 7));
 	}
 	if (rt_state.snow) {
 		mat.subsurface.snow = 1;
@@ -7916,6 +7918,29 @@ RID RenderRaytracing::update_uniform_set(RTViewportState *p_state, const RenderD
 				const Vector4 nose = nose_var.get_type() == Variant::VECTOR4 ? Vector4(nose_var) : Vector4();
 				rt_ubo.params[SceneShaderRaytracing::RT_PARAM_PRECIP_NOSE] = nose.x;
 				rt_ubo.params[SceneShaderRaytracing::RT_PARAM_PRECIP_NOSE_BASE] = nose.y;
+				static const StringName rain_fallback_name = "weather_rain_fallback";
+				const Variant fallback_var = ms->global_shader_parameter_get_internal(rain_fallback_name);
+				rt_ubo.params[SceneShaderRaytracing::RT_PARAM_RAIN_FALLBACK] = fallback_var.get_type() == Variant::VECTOR4 ? MAX(Vector4(fallback_var).x, 0.0f) : 0.0f;
+				// Footsteps and splashes in the ground's standing water (GroundSurface3D's water_impacts row).
+				static const StringName impact_info_name = "water_impact_info";
+				static const StringName impacts_name = "water_impacts";
+				const Variant info_var = ms->global_shader_parameter_get_internal(impact_info_name);
+				const int impact_count = info_var.get_type() == Variant::VECTOR4 ? int(Vector4(info_var).x) : 0;
+				RID impacts_rd;
+				if (impact_count > 0) {
+					const Variant imp_var = ms->global_shader_parameter_get_internal(impacts_name);
+					RID imp_tex;
+					if (imp_var.get_type() == Variant::RID) {
+						imp_tex = imp_var;
+					} else if (imp_var.get_type() == Variant::OBJECT) {
+						Object *t = imp_var;
+						if (t) {
+							imp_tex = t->call(SNAME("get_rid"));
+						}
+					}
+					impacts_rd = imp_tex.is_valid() ? RendererRD::TextureStorage::get_singleton()->texture_get_rd_texture(imp_tex) : RID();
+				}
+				rt_ubo.params[SceneShaderRaytracing::RT_PARAM_WATER_IMPACTS] = impacts_rd.is_valid() ? float((bindless_block->add_texture(impacts_rd) + 1u) * 32u + uint32_t(MIN(impact_count, 31))) : 0.0f;
 				// Its rain map (weather_rain_map, same rect as the state map): the canopy's held water in green.
 				static const StringName rain_map_name = "weather_rain_map";
 				const Variant rain_var = ms->global_shader_parameter_get_internal(rain_map_name);
