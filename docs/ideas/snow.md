@@ -2150,6 +2150,12 @@ cell (0.01 m), since the cell's spread of depths is now drawn by `snow_subgrid`:
 two thirds of a pixel's facets, not a third. The terrain material holds and sheds its snow by its projection
 normal (`tm_pn`, the heightfield's central difference), so a one-cell wall sheds it too.
 
+Bench fresh fall (25 Nov, asked by vegetation): `--snow-fall=CM` used a fixed 200 kg/m3 to turn CM into water.
+Fresh snow lands at 50-150 kg/m3, so it now uses the model's own new-snow density (`new_snow_density`, Hedstrom and
+Pomeroy 1998, about 80 kg/m3 at -4 C), and `--snow-fall-density` still overrides it. The pack settles during the
+fall and the weather lets only part of the rate through, so a fall short of CM at the camera is topped up by
+further falls scaled to the shortfall (up to three), and the frame shows about CM of fresh snow.
+
 ## Next round (proposed 19 Nov 2026, round 3): powder cloud, triggers, sharper flow
 
 **Triggers from people and vehicles.**

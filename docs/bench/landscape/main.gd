@@ -3307,14 +3307,32 @@ func _docs_links_setup() -> void:
 		weather.air_follows_climate = false
 		weather.cloud_cover = 1.0 # the rain (snow) falls where the cover is
 		weather.temperature = minf(weather.temperature, -4.0)
-		weather.rain_rate = float(args["snow-fall"]) * float(args.get("snow-fall-density", "200")) / 100.0 / hrs # cm x kg/m3 / 100 = mm of water
-		weather.snap_to_settings()
+		# The water in CM of fresh snow: at the fall's own new-snow density (Hedstrom and Pomeroy 1998, about 80 kg/m3 at
+		# -4 C), as the snowpack lays it down, unless --snow-fall-density=KG_M3 says otherwise.
+		var fall_rho := float(args["snow-fall-density"]) if args.has("snow-fall-density") else SnowCover3D.new_snow_density(weather.temperature)
+		weather.rain_rate = float(args["snow-fall"]) * fall_rho / 100.0 / hrs # cm x kg/m3 / 100 = mm of water
+		var cq0: Camera3D = get_viewport().get_camera_3d()
+		var fq0 := cq0.global_position if cq0 != null else Vector3.ZERO
+		var want := float(args["snow-fall"]) / 100.0
+		var d0 := snow.get_depth_at(fq0)
 		var tf := Time.get_ticks_msec()
-		snow.advance(hrs * 3600.0)
-		var wf := 0
-		while snow.is_updating() and wf < 600:
-			await get_tree().process_frame
-			wf += 1
+		# The pack settles and the weather lets part of the rate through, so a fall short of CM at the camera is topped
+		# up by a further fall scaled to the shortfall (at most three), which keeps CM the depth the frame shows.
+		var pass_n := 0
+		var got := 0.0
+		while pass_n < 4:
+			weather.snap_to_settings()
+			snow.advance(hrs * 3600.0)
+			var wf := 0
+			while snow.is_updating() and wf < 600:
+				await get_tree().process_frame
+				wf += 1
+			var step := snow.get_depth_at(fq0) - d0 - got # this pass's own gain at the camera
+			got += step
+			pass_n += 1
+			if got >= want * 0.9 or pass_n >= 4:
+				break
+			weather.rain_rate *= clampf((want - got) / maxf(step, want * 0.05), 0.1, 10.0)
 		weather.rain_rate = keep[0]
 		weather.temperature = keep[1]
 		weather.air_follows_climate = keep[2]
@@ -3322,7 +3340,7 @@ func _docs_links_setup() -> void:
 		weather.snap_to_settings()
 		var cq: Camera3D = get_viewport().get_camera_3d()
 		var fq := cq.global_position if cq != null else Vector3.ZERO
-		_log("snow fall: %.3f m deep at the camera after %.1f h (%d ms)" % [snow.get_depth_at(fq), hrs, Time.get_ticks_msec() - tf])
+		_log("snow fall: %.3f m deep at the camera after %d x %.1f h (%d ms)" % [snow.get_depth_at(fq), pass_n, hrs, Time.get_ticks_msec() - tf])
 		if args.has("probe-at"):
 			# --probe-at=X,Z: water and ice reads at a point after the fall (a bare patch under fresh snow).
 			var pz := _vec2_arg(args["probe-at"])

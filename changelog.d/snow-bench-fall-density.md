@@ -1,0 +1,1 @@
+- Landscape bench: `--snow-fall=CM` lays its fresh snow at the model's own new-snow density and tops the fall up until about CM lies at the camera.
