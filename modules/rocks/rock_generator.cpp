@@ -3363,7 +3363,8 @@ void fragment() {
 	// slivers on a grey cliff. Only the stone's own light and dark is kept.
 	if (cliff_match) {
 		const vec3 lw = vec3(0.2126, 0.7152, 0.0722);
-		col = ground_rock * clamp(dot(col, lw) / max(dot(base_color, lw), 1e-3), 0.6, instance_tint > 0.0 ? 1.0 : 1.3); // (a hoodoo never paler than its slope)
+		// Never paler than the wall: a block a shade lighter than the face round it reads as a pale plate stuck on.
+		col = ground_rock * clamp(dot(col, lw) / max(dot(base_color, lw), 1e-3), 0.6, 1.0);
 		if (cliff_scan) {
 			// Triplanar (sharpened weights) with the UDN normal blend (Golus 2017, "Normal Mapping for a Triplanar
 			// Shader"): the scan's colour over its mean, so the block keeps the cliff's colour and gains its grain.

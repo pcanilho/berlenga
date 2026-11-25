@@ -1446,3 +1446,7 @@ the wall's own blocks (cliff_match takes the landscape's rock scan). Cave walls 
 space on the rock, not the fill, flowstone or stream bed. rock_wall_02 was turned down (p98/mean 2.5, wet moss tones).
 Loaded by RockField3D.load_scan_set and CaveNetwork3D.load_scan_set from the art folder's scans.cfg sections marked
 system="rocks" (TerrainMaterial3D.load_scan_set skips them); benches: --stone-scans=0 for the A/B.
+Follow-up (25 Nov): the wall's blocks take the cliff overlay's face scan where the ground has one (what the face past
+about 45 degrees shows, rock_face_03), not the rock layer's, divided so their mean is the face's own (the face's
+albedo_mean when detail_only, times the rock texture's mean that ground_rock already holds); and their light and dark
+is capped at the wall's colour (it ran to 1.3 times: a block paler than the face round it reads as a plate stuck on).
