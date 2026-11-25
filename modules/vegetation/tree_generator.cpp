@@ -4480,6 +4480,11 @@ Ref<ArrayMesh> TreeGenerator::make_leaf_mesh(Preset p_preset, const Dictionary &
 			m->set_albedo(Color(1.28f, 1.28f, 1.28f));
 		} else {
 			m->set_texture(BaseMaterial3D::TEXTURE_ALBEDO, g->_leaf_albedo());
+			if (leaf_scan_aspect[p_preset] > 0.0f && leaf_scan_image[p_preset].is_valid()) {
+				m->set_transparency(BaseMaterial3D::TRANSPARENCY_ALPHA_SCISSOR);
+				m->set_alpha_scissor_threshold(0.5f);
+				m->set_alpha_antialiasing(BaseMaterial3D::ALPHA_ANTIALIASING_ALPHA_TO_COVERAGE);
+			}
 			m->set_albedo(Color(1.17f, 1.17f, 1.17f));
 		}
 	}
@@ -4690,11 +4695,16 @@ void TreeGenerator::_add_blade(Builder &r_b, const Vector3 &p_start, const Vecto
 	LocalVector<int> row;
 	row.resize(p_steps + 1);
 	// A scanned leaf atlas (_leaf_albedo): u into the leaf's column, inside the gutter leaf_atlas.py leaves round it.
-	const int cols = blade_col >= 0 && preset >= 0 && preset < PRESET_MAX ? leaf_scan_cols[preset] : 1;
+	// The atlas has its scanned leaves and, for cut cards, one solid column after them (twins sample it).
+	const int cols = blade_col >= 0 && preset >= 0 && preset < PRESET_MAX ? leaf_scan_cols[preset] + (leaf_scan_aspect[preset] > 0.0f ? 1 : 0) : 1;
 	auto bu = [&](float p_u) {
 		return cols > 1 ? (float(blade_col % cols) + 0.03f + 0.94f * p_u) / float(cols) : p_u;
 	};
-	for (int i = 0; i <= p_steps; i++) {
+	// The row's half-width: the lens, with lobes as sinus and shoulder rows.
+	auto row_width = [&](int i) {
+		if (blade_card) {
+			return p_half_width; // A leaf card: the scan's alpha cuts the outline.
+		}
 		const float t = float(i) / p_steps;
 		float w = p_half_width * Math::sin(Math::PI * Math::pow(t, p_shape));
 		if (p_lobes > 0 && i > 0 && i < p_steps) {
@@ -4705,6 +4715,94 @@ void TreeGenerator::_add_blade(Builder &r_b, const Vector3 &p_start, const Vecto
 				w *= 1.0f - 0.08f * p_depth; // Shoulders: a lobe with a broad, round end.
 			}
 		}
+		return w;
+	};
+	if ((blade_detail || blade_card) && p_steps >= 2) {
+		// Close to the camera (trees.md 5bn): the same outline on a curved surface. Rows and columns
+		// (below) split the blade, the half-widths run linearly between the coarse rows (the
+		// silhouette is the coarse blade's, so the switch at its LOD level shows no outline change), and the surface
+		// is the leaf's own shape: a smooth droop down the midrib (the coarse rows' chords of it), a cup across it
+		// (margins lifted 0.12 of the half-width, as the coarse fold, on a parabola), and a twist about the midrib
+		// growing to the tip, either hand by a hash of the blade's place (leaf blades in the shade of the crown roll
+		// and twist to face the light: Niinemets 2010, Fleck et al. 2003). After SpeedTree's leaf mesh fold, curl and
+		// twist, on real geometry so the path tracer sees it too.
+		// Five columns on a blade over 2.5 cm wide, else three. A flat card (blade_card without blade_detail) has one
+		// row and three columns (the lens's four triangles), without the twist: the coarse fold, full-width ends.
+		// A card's rows are free of the coarse steps (its width is constant, the alpha cuts the outline): a row every
+		// 3.5 cm, two to five, enough for the droop's parabola. A drawn blade keeps its coarse rows (lobes and sinuses
+		// sit on them), split in two on a blade over 7 cm a step.
+		const int steps = blade_card ? (blade_detail ? CLAMP(int(Math::ceil(p_length / 0.035f)), 2, 5) : 1) : p_steps;
+		const int sub = blade_detail && !blade_card ? CLAMP(int(Math::ceil(p_length / (0.035f * p_steps))), 1, 2) : 1;
+		const int rows_n = steps * sub;
+		const int across = blade_detail && p_half_width > 0.025f ? 5 : 3;
+		const Vector3i hq = Vector3i((p_start * 1777.0f).floor());
+		const uint32_t hh = hash_murmur3_one_32(uint32_t(hq.x) * 73856093u ^ uint32_t(hq.y) * 19349663u ^ uint32_t(hq.z) * 83492791u, 0x7457u);
+		const float twist = blade_detail ? (float(hh & 0xffff) / 65535.0f * 2.0f - 1.0f) * 0.26f : 0.0f;
+		LocalVector<Vector3> grid;
+		grid.resize((rows_n + 1) * across);
+		for (int j = 0; j <= rows_n; j++) {
+			const float t = float(j) / rows_n;
+			const int ci = MIN(j / sub, steps - 1);
+			const float a = float(j - ci * sub) / sub;
+			const float w = Math::lerp(row_width(ci), row_width(ci + 1), a);
+			const Vector3 mid = p_start + p_along * (t * p_length) + p_n * (-0.25f * p_length * t * t);
+			const float th = twist * t * t;
+			const Vector3 sd = p_side * Math::cos(th) + p_n * Math::sin(th);
+			const Vector3 nn = p_n * Math::cos(th) - p_side * Math::sin(th);
+			for (int k = 0; k < across; k++) {
+				const float d = float(k) / (across - 1) * 2.0f - 1.0f;
+				grid[j * across + k] = mid + sd * (d * w) + nn * (0.12f * w * d * d);
+			}
+		}
+		// Normals of the surface from its own slopes (the coarse blade's are a fixed tilt per margin).
+		auto normal_at = [&](int j, int k) {
+			const int ja = MAX(j - 1, 0), jb = MIN(j + 1, rows_n), ka = MAX(k - 1, 0), kb = MIN(k + 1, across - 1);
+			const Vector3 dt = grid[jb * across + k] - grid[ja * across + k];
+			const Vector3 du = grid[j * across + kb] - grid[j * across + ka];
+			Vector3 nrm = du.cross(dt);
+			if (nrm.length_squared() < 1e-14f) {
+				return p_n;
+			}
+			nrm.normalize();
+			return nrm.dot(p_n) < 0.0f ? -nrm : nrm;
+		};
+		LocalVector<int> start_of;
+		start_of.resize(rows_n + 1);
+		for (int j = 0; j <= rows_n; j++) {
+			const float t = float(j) / rows_n;
+			start_of[j] = r_b.verts.size();
+			const bool end = !blade_card && (j == 0 || j == rows_n);
+			for (int k = end ? across / 2 : 0; k < (end ? across / 2 + 1 : across); k++) {
+				r_b.verts.push_back(grid[j * across + k]);
+				r_b.normals.push_back(end ? p_n : normal_at(j, k));
+				r_b.uvs.push_back(Vector2(bu(float(k) / (across - 1)), t));
+				r_b.colors.push_back(p_color);
+			}
+		}
+		auto tri = [&](int a, int b, int c) {
+			r_b.indices.push_back(a);
+			r_b.indices.push_back(b);
+			r_b.indices.push_back(c);
+		};
+		// Wound as the coarse blade: (lower k, upper k, lower k+1), (lower k+1, upper k, upper k+1), u increasing.
+		for (int j = 0; j < rows_n; j++) {
+			const int a = start_of[j], b = start_of[j + 1];
+			for (int k = 0; k + 1 < across; k++) {
+				if (j == 0 && !blade_card) {
+					tri(a, b + k, b + k + 1);
+				} else if (j + 1 == rows_n && !blade_card) {
+					tri(a + k, b, a + k + 1);
+				} else {
+					tri(a + k, b + k, a + k + 1);
+					tri(a + k + 1, b + k, b + k + 1);
+				}
+			}
+		}
+		return;
+	}
+	for (int i = 0; i <= p_steps; i++) {
+		const float t = float(i) / p_steps;
+		const float w = row_width(i);
 		const float droop = -0.25f * p_length * t * t;
 		const Vector3 mid = p_start + p_along * (t * p_length) + p_n * droop;
 		const Vector3 fold = p_n * (0.12f * w);
@@ -4755,6 +4853,42 @@ void TreeGenerator::_add_blade(Builder &r_b, const Vector3 &p_start, const Vecto
 // (lobes cut into the blade, leaflets with gaps between them): measured once per species on
 // one unit leaf. Twins sized by the formula alone came out up to 16% larger than the leaflets of
 // ash or horse chestnut, and far crowns read darker than near ones.
+// A scanned leaf card's length over the leaf's size (trees.md 5bn): the cut leaf (fill of a card aspect x its length
+// wide each side) covers what the species' own blade did, measured once per species on one unit leaf (a palm's five
+// narrow lobes cover about half its lens; a card sized to the lens doubled the crown's leaf area and darkened it).
+float TreeGenerator::_card_scale() {
+	if (card_scale_preset == preset && card_scale_width == params[PARAM_LEAF_WIDTH]) {
+		return card_scale;
+	}
+	card_scale_preset = preset;
+	card_scale_width = params[PARAM_LEAF_WIDTH];
+	const int col = blade_col;
+	const bool was_card = blade_card, was_detail = blade_detail;
+	blade_col = -1;
+	blade_card = false;
+	blade_detail = false;
+	Builder b;
+	const Vector3 along(0, 0, 1), side(1, 0, 0), n(0, 1, 0);
+	const float hw = params[PARAM_LEAF_WIDTH];
+	const LeafFormSpec &form = LEAF_FORMS[preset];
+	if (form.kind == LEAF_SIMPLE || form.kind == LEAF_NEEDLE) {
+		_add_blade(b, Vector3(), along, side, n, 1.0f, hw, 3, 0, 0.0f, Color(1, 1, 1));
+	} else {
+		_add_species_blade(b, Vector3(), along, side, n, 1.0f, hw, 2.0f * 0.656f * hw, Color(1, 1, 1));
+	}
+	blade_col = col;
+	blade_card = was_card;
+	blade_detail = was_detail;
+	double a = 0.0;
+	for (int i = 0; i + 2 < b.indices.size(); i += 3) {
+		const Vector3 p0 = b.verts[b.indices[i]], p1 = b.verts[b.indices[i + 1]], p2 = b.verts[b.indices[i + 2]];
+		a += 0.5 * (p1 - p0).cross(p2 - p0).length();
+	}
+	const float k = 2.0f * MAX(leaf_scan_fill[preset], 0.1f) * MAX(leaf_scan_aspect[preset], 0.05f);
+	card_scale = a > 0.0 ? Math::sqrt(float(a) / k) : 1.0f;
+	return card_scale;
+}
+
 float TreeGenerator::_twin_area_scale() {
 	if (twin_scale_preset == preset && twin_scale_width == params[PARAM_LEAF_WIDTH]) {
 		return twin_scale;
@@ -4783,7 +4917,11 @@ float TreeGenerator::_twin_area_scale() {
 	const Vector3 along(0, 0, 1), side(1, 0, 0), n(0, 1, 0);
 	_add_species_blade(sb, Vector3(), along, side, n, 1.0f, hw, slot_area, Color(1, 1, 1));
 	_add_blade(lb, Vector3(), along, side, n, k, hw * k, 3, 0, 0.0f, Color(1, 1, 1));
-	const double sa = area(sb), la = area(lb);
+	double sa = area(sb);
+	const double la = area(lb);
+	if (blade_col >= 0 && blade_col < leaf_scan_cols[preset] && leaf_scan_aspect[preset] > 0.0f) {
+		sa *= leaf_scan_fill[preset]; // A card covers its leaf's fill of it; the rest is cut.
+	}
 	if (sa > 0.0 && la > 0.0) {
 		twin_scale = CLAMP(float(sa / la), 0.5f, 2.0f);
 	}
@@ -4810,14 +4948,38 @@ void TreeGenerator::_add_leaf(Builder &r_b, const Vector3 &p_base, const Vector3
 		int &c;
 		~BladeCol() { c = -1; }
 	} blade_col_reset{ blade_col };
-	if (species_leaf_forms && leaf_scan_cols[preset] > 1) {
+	if (species_leaf_forms && leaf_scan_cols[preset] >= 1 && leaf_scan_image[preset].is_valid()) {
 		const Vector3i q = Vector3i((p_base * 997.0f).floor());
 		blade_col = int(hash_murmur3_one_32(uint32_t(q.x) * 73856093u ^ uint32_t(q.y) * 19349663u ^ uint32_t(q.z) * 83492791u) % uint32_t(leaf_scan_cols[preset]));
 	}
+	// A scanned leaf card (trees.md 5bn): the scan's alpha cuts the real outline from a card `aspect` x its length
+	// wide each side, sized so the cut leaf (fill of the card) keeps the lens's area.
+	const bool card = species_leaf_forms && blade_col >= 0 && leaf_scan_aspect[preset] > 0.0f;
+	// Close to the camera (trees.md 5bn): the near mesh's own leaf cards are curved at LOD 0, and a flat copy of each
+	// is drawn from the first LOD level on, a few metres off. Drawn leaves (species without a scan) stay as they are:
+	// curving their lobed outlines doubled a cork oak's triangles for a fold its flat lobes already suggest.
+	const bool detail = card && near_leaf_detail && !far_leaves && detail_leaves == &r_b;
+	const int solid_col = card ? leaf_scan_cols[preset] : -1;
 	if (!species_leaf_forms || form.kind == LEAF_SIMPLE || form.kind == LEAF_NEEDLE) {
-		_add_blade(r_b, start, along, side, n, p_size, hw, 3, 0, 0.0f, p_color);
+		float bl = p_size, bw = hw;
+		if (card) {
+			bl = p_size * _card_scale();
+			bw = leaf_scan_aspect[preset] * bl;
+			blade_card = true;
+		}
+		if (detail) {
+			const int fi = leaf_flats.indices.size(), fv = leaf_flats.verts.size();
+			_add_blade(leaf_flats, start, along, side, n, bl, bw, 3, 0, 0.0f, p_color);
+			leaf_flat_of[int(r_b.parts.size())] = Vector4i(fi, leaf_flats.indices.size() - fi, fv, leaf_flats.verts.size() - fv);
+			blade_detail = true;
+		}
+		_add_blade(r_b, start, along, side, n, bl, bw, 3, 0, 0.0f, p_color);
+		blade_detail = false;
+		blade_card = false;
 		return;
 	}
+	// Twins (and far leaves) of a carded species: a plain lens on the atlas's solid column.
+	const int leaf_col = blade_col;
 	// Compound leaves are big: one fills the slots of several simple ones (n_eff), with the same
 	// leaf area (the crown's density, drag and mass stay those of the slots).
 	const bool compound = form.kind == LEAF_PINNATE || form.kind == LEAF_DIGITATE;
@@ -4831,21 +4993,44 @@ void TreeGenerator::_add_leaf(Builder &r_b, const Vector3 &p_base, const Vector3
 		// A far mesh (near_leaf_range): the twin is the leaf at every level. Lobes and leaflets
 		// are under a pixel beyond the near range; the near mesh keeps them.
 		const float k = Math::sqrt(float(n_eff) * _twin_area_scale());
+		if (card) {
+			blade_col = solid_col;
+		}
 		_add_blade(r_b, start, along, side, n, p_size * k, hw * k, 3, 0, 0.0f, p_color);
 		return;
 	}
 	{
 		const float k = Math::sqrt(float(n_eff) * _twin_area_scale());
 		const int ti = leaf_twins.indices.size(), tv = leaf_twins.verts.size();
+		if (card) {
+			blade_col = solid_col;
+		}
 		_add_blade(leaf_twins, start, along, side, n, p_size * k, hw * k, 3, 0, 0.0f, p_color);
+		blade_col = leaf_col;
 		leaf_twin_of[int(r_b.parts.size())] = Vector4i(ti, leaf_twins.indices.size() - ti, tv, leaf_twins.verts.size() - tv);
 	}
+	if (detail) {
+		const int fi = leaf_flats.indices.size(), fv = leaf_flats.verts.size();
+		_add_species_blade(leaf_flats, start, along, side, n, p_size, hw, slot_area, p_color);
+		leaf_flat_of[int(r_b.parts.size())] = Vector4i(fi, leaf_flats.indices.size() - fi, fv, leaf_flats.verts.size() - fv);
+		blade_detail = true;
+	}
 	_add_species_blade(r_b, start, along, side, n, p_size, hw, slot_area, p_color);
+	blade_detail = false;
 }
 
 // The species' own blade: lobes, a palm of lobes, or leaflets, on the slot area of the lens.
 void TreeGenerator::_add_species_blade(Builder &r_b, const Vector3 &start, const Vector3 &along, const Vector3 &side, const Vector3 &n, float p_size, float hw, float slot_area, const Color &p_color) {
 	const LeafFormSpec &form = LEAF_FORMS[preset];
+	if ((form.kind == LEAF_LOBED || form.kind == LEAF_PALMATE) && blade_col >= 0 && blade_col < leaf_scan_cols[preset] && leaf_scan_aspect[preset] > 0.0f) {
+		// A scanned leaf card (trees.md 5bn): the whole leaf, its lobes, sinuses and teeth cut by the scan's alpha, on
+		// one card whose cut leaf keeps the slots' area.
+		const float bl = p_size * _card_scale();
+		blade_card = true;
+		_add_blade(r_b, start, along, side, n, bl, leaf_scan_aspect[preset] * bl, 3, 0, 0.0f, p_color);
+		blade_card = false;
+		return;
+	}
 	switch (form.kind) {
 		case LEAF_LOBED: {
 			// Lobes widen the blade: the same area with lobes a little wider than the lens.
@@ -14858,6 +15043,8 @@ Ref<Image> TreeGenerator::leaf_scan_image[PRESET_MAX];
 Ref<Texture2D> TreeGenerator::leaf_scan_composite[PRESET_MAX];
 int TreeGenerator::leaf_scan_cols[PRESET_MAX] = {};
 float TreeGenerator::leaf_scan_strength[PRESET_MAX] = {};
+float TreeGenerator::leaf_scan_aspect[PRESET_MAX] = {};
+float TreeGenerator::leaf_scan_fill[PRESET_MAX] = {};
 
 // A bark scan as detail (docs/ideas/scan-textures.md; the detail-map technique of scanned material libraries over a
 // procedural base, and Barre-Brisebois and Hill 2012, "Blending in Detail", for the normal): the scan's luminance over
@@ -14995,12 +15182,15 @@ int TreeGenerator::load_scan_set(const String &p_dir, int p_max_size) {
 			const int cols = MAX(1, int(cfg->get_value(sec, "cols", 1)));
 			// The scan's share as an exponent of its ratio (1: all of its mottling; less keeps the drawn veins clear).
 			const float strength = cfg->get_value(sec, "strength", 0.6f);
+			// Leaf cards (leaf_atlas.py): the card's half-width over the leaf's length, and the share the leaf covers.
+			const float aspect = cfg->get_value(sec, "aspect", 0.0f);
+			const float fill = CLAMP(float(cfg->get_value(sec, "fill", 1.0f)), 0.1f, 1.0f);
 			Ref<Image> img = Image::load_from_file(file);
 			if (img.is_null() || img->is_empty()) {
 				WARN_PRINT(vformat("TreeGenerator: leaf atlas '%s' for [%s] not found.", file, sec));
 				continue;
 			}
-			img->convert(Image::FORMAT_RGB8);
+			img->convert(Image::FORMAT_RGBA8);
 			const PackedStringArray lp = cfg->get_value(sec, "presets", PackedStringArray());
 			for (const String &pn : lp) {
 				int found = -1;
@@ -15017,6 +15207,8 @@ int TreeGenerator::load_scan_set(const String &p_dir, int p_max_size) {
 				leaf_scan_composite[found].unref();
 				leaf_scan_cols[found] = cols;
 				leaf_scan_strength[found] = strength;
+				leaf_scan_aspect[found] = aspect;
+				leaf_scan_fill[found] = fill;
 				n++;
 			}
 			continue;
@@ -15569,17 +15761,22 @@ Ref<Texture2D> TreeGenerator::_leaf_albedo() {
 	}
 	const Ref<Image> scan = leaf_scan_image[preset];
 	const Ref<Image> vein = _leaf_venation_image();
-	const int w = scan->get_width(), h = scan->get_height();
+	const int sw = scan->get_width(), h = scan->get_height();
 	const int cols = MAX(1, leaf_scan_cols[preset]);
+	// Cards get one more column, solid, for the twins and far leaves (a plain lens): the venation, the scan's mean.
+	const bool card = leaf_scan_aspect[preset] > 0.0f;
+	const int col_w = sw / cols;
+	const int tcols = cols + (card ? 1 : 0);
+	const int w = col_w * tcols;
 	const int vw = vein->get_width(), vh = vein->get_height();
 	Vector<uint8_t> px;
-	px.resize(w * h * 3);
+	px.resize(w * h * 4);
 	uint8_t *o = px.ptrw();
 	for (int y = 0; y < h; y++) {
 		const float v = (y + 0.5f) / h;
 		for (int x = 0; x < w; x++) {
 			// u across this column's blade (inside the 3% gutter), as _add_blade maps it.
-			const float cx = (x + 0.5f) * cols / float(w);
+			const float cx = (x + 0.5f) * tcols / float(w);
 			const float u = CLAMP((cx - Math::floor(cx) - 0.03f) / 0.94f, 0.0f, 1.0f);
 			const float fx = u * vw - 0.5f, fy = v * vh - 0.5f;
 			const int x0 = CLAMP(int(Math::floor(fx)), 0, vw - 1), y0 = CLAMP(int(Math::floor(fy)), 0, vh - 1);
@@ -15587,12 +15784,19 @@ Ref<Texture2D> TreeGenerator::_leaf_albedo() {
 			const float ax = CLAMP(fx - x0, 0.0f, 1.0f), ay = CLAMP(fy - y0, 0.0f, 1.0f);
 			const float f = Math::lerp(Math::lerp(vein->get_pixel(x0, y0).r, vein->get_pixel(x1, y0).r, ax), Math::lerp(vein->get_pixel(x0, y1).r, vein->get_pixel(x1, y1).r, ax), ay);
 			const float vf = Color(f, f, f).srgb_to_linear().r;
-			const float sf = Math::pow(MAX(scan->get_pixel(x, y).srgb_to_linear().r / 0.85f, 0.01f), leaf_scan_strength[preset]);
+			float sf = 1.0f, a = 1.0f;
+			if (x < sw) {
+				const Color sc = scan->get_pixel(x, y);
+				sf = Math::pow(MAX(sc.srgb_to_linear().r / 0.85f, 0.01f), leaf_scan_strength[preset]);
+				a = sc.a;
+			}
 			const uint8_t b = uint8_t(Math::round(CLAMP(Color(vf * sf, 0, 0).linear_to_srgb().r, 0.0f, 1.0f) * 255.0f));
-			o[(y * w + x) * 3 + 0] = o[(y * w + x) * 3 + 1] = o[(y * w + x) * 3 + 2] = b;
+			uint8_t *q = o + (y * w + x) * 4;
+			q[0] = q[1] = q[2] = b;
+			q[3] = uint8_t(Math::round(CLAMP(a, 0.0f, 1.0f) * 255.0f));
 		}
 	}
-	Ref<Image> img = Image::create_from_data(w, h, false, Image::FORMAT_RGB8, px);
+	Ref<Image> img = Image::create_from_data(w, h, false, Image::FORMAT_RGBA8, px);
 	img->generate_mipmaps();
 	const Ref<Texture2D> tex = ImageTexture::create_from_image(img);
 	for (int i = 0; i < PRESET_MAX; i++) {
@@ -17102,6 +17306,7 @@ struct TreeLod {
 	float error;
 	float keep;
 	float min_radius;
+	bool flat_only = false; // Leaves (trees.md 5bn): every leaf, the curved close-up blades as their flat copies.
 };
 static const TreeLod TREE_LODS[] = {
 	{ 0.05f, 0.5f, 0.01f },
@@ -17851,6 +18056,12 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 	wood_b = Builder();
 	bark.use_tangents = true;
 	Builder leaves;
+	// The leaves _add_leaf may draw curved close up (with flat copies in leaf_flats); cleared when this build ends.
+	detail_leaves = &leaves;
+	struct DetailGuard {
+		Builder *&p;
+		~DetailGuard() { p = nullptr; }
+	} detail_guard{ detail_leaves };
 	Builder moss;
 	moss.use_tangents = true;
 	leaf_count = 0;
@@ -17859,6 +18070,8 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 	climber_leaves.clear();
 	leaf_twins = Builder();
 	leaf_twin_of.clear();
+	leaf_flats = Builder();
+	leaf_flat_of.clear();
 	compound_slot = 0;
 	const float moss_k = _moss_amount();
 	const float moss_ground = nodes.is_empty() ? 0.0f : nodes[0].start.y;
@@ -22296,6 +22509,12 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 					m->set_albedo(Color(1.28f, 1.28f, 1.28f));
 				} else {
 					m->set_texture(BaseMaterial3D::TEXTURE_ALBEDO, _leaf_albedo());
+					if (leaf_scan_aspect[preset] > 0.0f && leaf_scan_image[preset].is_valid()) {
+						// Scanned leaf cards (trees.md 5bn): the outline is the scan's alpha, cut as the leaflets are.
+						m->set_transparency(BaseMaterial3D::TRANSPARENCY_ALPHA_SCISSOR);
+						m->set_alpha_scissor_threshold(0.5f);
+						m->set_alpha_antialiasing(BaseMaterial3D::ALPHA_ANTIALIASING_ALPHA_TO_COVERAGE);
+					}
 					m->set_albedo(Color(1.17f, 1.17f, 1.17f));
 				}
 			}
@@ -22956,7 +23175,9 @@ PackedByteArray TreeGenerator::_crown_occlusion(const Builder &p_b) const {
 		f = 0.0f;
 	}
 	const int32_t *ix = p_b.indices.ptr();
-	const float inv_vol = 1.0f / (cell * cell * cell);
+	// Scanned leaf cards (trees.md 5bn) cover their fill of the card; the rest is cut.
+	const float leaf_k = leaf_scan_aspect[preset] > 0.0f && leaf_scan_image[preset].is_valid() ? leaf_scan_fill[preset] : 1.0f;
+	const float inv_vol = leaf_k / (cell * cell * cell);
 	for (int t = 0; t + 2 < ni; t += 3) {
 		const Vector3 &a = v[ix[t]], &bb = v[ix[t + 1]], &c = v[ix[t + 2]];
 		const float area = 0.5f * (bb - a).cross(c - a).length();
@@ -23329,8 +23550,8 @@ float fire_age_years(vec2 xz) {
 	const bool poplar = preset == PRESET_ASPEN || preset == PRESET_BLACK_POPLAR;
 	m->set_shader_parameter("flutter_amount", leaf_flutter * (poplar ? 2.5f : 1.0f));
 	m->set_shader_parameter("flutter_size", p_leaf_size);
-	if (preset >= 0 && preset < PRESET_MAX && leaf_scan_cols[preset] > 1 && leaf_scan_composite[preset].is_valid() && p_base->get_texture(BaseMaterial3D::TEXTURE_ALBEDO) == leaf_scan_composite[preset]) {
-		m->set_shader_parameter("leaf_cols", float(leaf_scan_cols[preset]));
+	if (preset >= 0 && preset < PRESET_MAX && leaf_scan_cols[preset] + (leaf_scan_aspect[preset] > 0.0f ? 1 : 0) > 1 && leaf_scan_composite[preset].is_valid() && p_base->get_texture(BaseMaterial3D::TEXTURE_ALBEDO) == leaf_scan_composite[preset]) {
+		m->set_shader_parameter("leaf_cols", float(leaf_scan_cols[preset] + (leaf_scan_aspect[preset] > 0.0f ? 1 : 0)));
 	}
 	m->set_shader_parameter("leaf_underside", leaf_underside);
 	m->set_shader_parameter("fire_crown_q", Vector4(fire_crown[0], fire_crown[1], fire_crown[2], fire_crown[3]));
@@ -23887,7 +24108,21 @@ Dictionary TreeGenerator::_leaf_lods(Builder &r_leaves, bool p_twins) const {
 	Dictionary lods;
 	const int s_full_count = r_leaves.indices.size();
 	const uint32_t count = r_leaves.parts.size();
+	// Close-up blades (trees.md 5bn): a first level with every leaf flat, at the curve's own error (the twist and cup
+	// move a margin about a tenth of the blade's half-width), a few metres off at 1080p.
+	LocalVector<TreeLod> levels;
+	if (p_twins && !leaf_flat_of.is_empty()) {
+		TreeLod flat;
+		flat.error = CLAMP(0.1f * params[PARAM_LEAF_WIDTH] * params[PARAM_LEAF_SIZE], 0.002f, 0.008f);
+		flat.keep = 1.0f;
+		flat.min_radius = 0.0f;
+		flat.flat_only = true;
+		levels.push_back(flat);
+	}
 	for (const TreeLod &level : tree_lods(is_shrub(preset) && !far_leaves)) {
+		levels.push_back(level);
+	}
+	for (const TreeLod &level : levels) {
 		// Survivors grow about their base by 1/sqrt(keep), so the kept leaf area matches.
 		const float grow = 1.0f / Math::sqrt(level.keep);
 		// The survivors first, then every array grown once and filled in order (it was a push_back per vertex and
@@ -23896,7 +24131,7 @@ Dictionary TreeGenerator::_leaf_lods(Builder &r_leaves, bool p_twins) const {
 			Vector4i pt;
 			Vector4i sp;
 			float g;
-			bool twin;
+			const Builder *src; // nullptr: the leaf's own geometry.
 			bool skinned;
 		};
 		LocalVector<Kept> kept;
@@ -23916,10 +24151,12 @@ Dictionary TreeGenerator::_leaf_lods(Builder &r_leaves, bool p_twins) const {
 			Kept k;
 			k.g = whole ? 1.0f : grow;
 			k.pt = r_leaves.parts[i];
-			// A species leaf (lobed, palmate, compound) is drawn as its simple twin here.
-			const Vector4i *twin = p_twins ? leaf_twin_of.getptr(int(i)) : nullptr;
-			k.twin = twin != nullptr;
-			k.sp = twin ? *twin : k.pt;
+			// A species leaf (lobed, palmate, compound) is drawn as its simple twin here; a curved close-up blade
+			// (trees.md 5bn) as its flat copy, at its own first level and wherever it has no twin.
+			const Vector4i *twin = p_twins && !level.flat_only ? leaf_twin_of.getptr(int(i)) : nullptr;
+			const Vector4i *flat = p_twins && !twin ? leaf_flat_of.getptr(int(i)) : nullptr;
+			k.src = twin ? &leaf_twins : (flat ? &leaf_flats : nullptr);
+			k.sp = twin ? *twin : (flat ? *flat : k.pt);
 			k.skinned = bones_size >= (k.pt.z + 1) * 4;
 			add_v += k.sp.w;
 			add_i += k.sp.y;
@@ -23957,11 +24194,11 @@ Dictionary TreeGenerator::_leaf_lods(Builder &r_leaves, bool p_twins) const {
 		for (const Kept &k : kept) {
 			const int v0 = vn;
 			const Vector3 pivot = own_v[k.pt.z];
-			const Vector3 *sv = k.twin ? leaf_twins.verts.ptr() : own_v;
-			const Vector3 *sn = k.twin ? leaf_twins.normals.ptr() : own_n;
-			const Vector2 *su = k.twin ? leaf_twins.uvs.ptr() : own_u;
-			const Color *sc = k.twin ? leaf_twins.colors.ptr() : own_c;
-			const int32_t *si = k.twin ? leaf_twins.indices.ptr() : own_i;
+			const Vector3 *sv = k.src ? k.src->verts.ptr() : own_v;
+			const Vector3 *sn = k.src ? k.src->normals.ptr() : own_n;
+			const Vector2 *su = k.src ? k.src->uvs.ptr() : own_u;
+			const Color *sc = k.src ? k.src->colors.ptr() : own_c;
+			const int32_t *si = k.src ? k.src->indices.ptr() : own_i;
 			for (int v = 0; v < k.sp.w; v++) {
 				vw[vn] = pivot + (sv[k.sp.z + v] - pivot) * k.g;
 				nw[an] = sn[k.sp.z + v];
@@ -25496,6 +25733,8 @@ void TreeGenerator::_near_task(void *p_self) {
 	self->supports.reset();
 	self->leaf_twins = Builder();
 	self->leaf_twin_of.clear();
+	self->leaf_flats = Builder();
+	self->leaf_flat_of.clear();
 	self->climber_leaf_b = Builder();
 	self->climber_adult_b = Builder();
 	near_building.decrement(); // The slot frees when the build ends, claimed or not.
@@ -28611,6 +28850,8 @@ void TreeGenerator::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_near_needle_range"), &TreeGenerator::get_near_needle_range);
 	ClassDB::bind_method(D_METHOD("set_near_leaf_range", "range"), &TreeGenerator::set_near_leaf_range);
 	ClassDB::bind_method(D_METHOD("get_near_leaf_range"), &TreeGenerator::get_near_leaf_range);
+	ClassDB::bind_method(D_METHOD("set_near_leaf_detail", "on"), &TreeGenerator::set_near_leaf_detail);
+	ClassDB::bind_method(D_METHOD("get_near_leaf_detail"), &TreeGenerator::get_near_leaf_detail);
 	ClassDB::bind_method(D_METHOD("set_far_lod1", "enabled"), &TreeGenerator::set_far_lod1);
 	ClassDB::bind_method(D_METHOD("get_far_lod1"), &TreeGenerator::get_far_lod1);
 	ClassDB::bind_method(D_METHOD("request_near_mesh", "key", "variant"), &TreeGenerator::request_near_mesh);
@@ -28725,6 +28966,7 @@ void TreeGenerator::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "collider_radius", PROPERTY_HINT_RANGE, "0,1,0.01,suffix:m"), "set_collider_radius", "get_collider_radius");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "near_needle_range", PROPERTY_HINT_RANGE, "0,100,0.5,suffix:m"), "set_near_needle_range", "get_near_needle_range");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "near_leaf_range", PROPERTY_HINT_RANGE, "0,200,0.5,suffix:m"), "set_near_leaf_range", "get_near_leaf_range");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "near_leaf_detail"), "set_near_leaf_detail", "get_near_leaf_detail");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "far_lod1"), "set_far_lod1", "get_far_lod1");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "light_far_meshes"), "set_light_far_meshes", "get_light_far_meshes");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "forest_spacing", PROPERTY_HINT_RANGE, "1,20,0.1,suffix:m"), "set_forest_spacing", "get_forest_spacing");

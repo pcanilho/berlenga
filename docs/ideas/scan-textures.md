@@ -69,7 +69,7 @@ if they should be augmented with shaders and or textures or more."
 | Cave walls and floors (rocks) | procedural | scan: wet limestone/rock face | rock_face_03, rock_wall_02 |
 | Bark (trees) | procedural bark textures + modelled relief, lichen, peel | scan per species as detail (relief stays geometry) | pine_bark, bark_brown_02, bark_platanus, bark_willow_02, ambientCG Bark001-016 |
 | Deadwood, logs, stumps, cut faces (trees) | procedural wood | scan: weathered wood and end grain | ambientCG Wood049-099 |
-| Leaves (trees, plants) | procedural leaf textures | scan atlases: real leaf colour and venation | ambientCG LeafSet009, LeafSet010 |
+| Leaves (trees, plants) | procedural leaf textures | leaf cards: scanned outline (alpha), colour and venation | ambientCG LeafSet001, 004, 005, 009, 010, 013, 014, 016, 022, 023, 024 |
 | Grass blades (vegetation) | geometry, procedural colour | keep: blades are geometry, colour from season | |
 | Clouds, sky, water surface, rain | physical models | nothing: no scan applies | |
 
@@ -182,5 +182,17 @@ retire once fires report through WorldFire burn_changed / burn_age_at.
   maple (palmate venation is shared across Acer).
 - Dead stubs: a kept dead branch's stub scales with its radius (a thin one 1.6 m long read as a wire).
 
-Next on the tree side: a leaf normal map from the scans (leaves carry no tangents yet), more species as CC0 leaf
-scans appear.
+- Leaf cards (25 Nov, trees.md 5bn): each scanned leaf now sits whole on a card in its true proportions, its alpha the
+  scan's opacity (teeth, lobes, sinuses and insect holes cut by alpha scissor), as SpeedTree and Megascans leaf atlases
+  do. Nine more ambientCG Leaf Sets, matched by shape (ambientCG names no species): 016 lobed oak (oak, white oak),
+  024 beech (beech, American beech), 014 hornbeam type (hornbeam, the three birches, green alder), 001 elliptic and
+  finely toothed (wild cherry, blackthorn), 004 cordate (lime), 005 long and bristle-toothed (sweet chestnut), 013
+  narrow lanceolate (white willow, wild olive), 023 deltoid (black poplar, aspen), 022 obovate and entire (black
+  alder, holm oak, mountain laurel). Torn leaves and a leafy twig were left out (`--leaves=`). With hazel and the four
+  maples that is 29 species.
+- No CC0 scan fits: the conifers' needles, holly, hawthorn, northern red oak, kermes and cork oak, the compound leaves
+  (ash, rowan, elder, horse chestnut, lentisk, carob, dog rose, broom), box, witch-hazel, gum rockrose, saltbush,
+  gorse, white broom, calligonum and the palms. They keep the drawn leaf.
+
+Next on the tree side: a leaf normal map from the scans (leaves carry no tangents yet), leaflet cards for the
+compound leaves, more species as CC0 leaf scans appear.

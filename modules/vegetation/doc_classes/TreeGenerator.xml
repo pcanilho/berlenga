@@ -423,6 +423,9 @@
 		</member>
 		<member name="moss_cover" type="float" setter="set_moss_cover" getter="get_moss_cover" default="1.0">
 		</member>
+		<member name="near_leaf_detail" type="bool" setter="set_near_leaf_detail" getter="get_near_leaf_detail" default="true">
+			Close-up leaves: the near mesh's leaves are curved blades at LOD 0 (a smooth droop down the midrib, a cup across it and a twist growing to the tip, on the same outline), and flat blades from the first LOD level, a few metres off. Off keeps every level flat.
+		</member>
 		<member name="near_leaf_range" type="float" setter="set_near_leaf_range" getter="get_near_leaf_range" default="60.0">
 			Metres. Above 0, placed trees and shrubs with lobed or compound leaves (oak, maples, ash, rowan, elder, hawthorn, horse chestnut) keep only simple leaves of the same area in their meshes, and their species get a [member PlantSpecies.near_mesh_source] that builds the full-leaf mesh of a variant when a tree first comes within this range, then frees it when none is near. Lobes and leaflets are under a pixel beyond about 60 m. Keep this generator or the species alive while the field draws them.
 		</member>
