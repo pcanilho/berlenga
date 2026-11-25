@@ -38,6 +38,7 @@
 #include "core/object/callable_mp.h"
 #include "core/object/class_db.h"
 #include "scene/resources/image_texture.h"
+#include "servers/rendering/rendering_server.h"
 
 #include "modules/terrain_deform/terrain_generator_3d.h"
 #include "modules/vegetation/grass_field_3d.h"
@@ -177,17 +178,17 @@ void TerrainMaterialLayer::_bind_methods() {
 // --- TerrainMaterial3D --------------------------------------------------------------------------------------------
 
 static const char *LAYER_NAMES[TerrainMaterial3D::LAYER_MAX] = { "rock", "scree", "soil", "alluvium", "sand" };
-static const char *OVERLAY_NAMES[TerrainMaterial3D::OVERLAY_MAX] = { "rock_variant", "cliff", "cured", "bare_soil", "bare_alluvium", "bank", "trail", "bed", "beach", "mud", "burn" };
+static const char *OVERLAY_NAMES[TerrainMaterial3D::OVERLAY_MAX] = { "rock_variant", "cliff", "cured", "bare_soil", "bare_alluvium", "bank", "trail", "bed", "beach", "mud", "burn", "snow" };
 // Which layers each overlay sits on and the mask (a component of the layer function's om or om2) that carries it.
 // Overlays apply in this order, so a later one wins where masks overlap (a cliff face over the rock variant, mud over a trail).
 #define TM_L(m_layer) (1 << TerrainMaterial3D::m_layer)
 static const int OVERLAY_PARENTS[TerrainMaterial3D::OVERLAY_MAX] = {
 	TM_L(LAYER_ROCK), TM_L(LAYER_ROCK), TM_L(LAYER_SOIL) | TM_L(LAYER_ALLUVIUM), TM_L(LAYER_SOIL), TM_L(LAYER_ALLUVIUM),
 	TM_L(LAYER_SOIL) | TM_L(LAYER_ALLUVIUM), TM_L(LAYER_SOIL) | TM_L(LAYER_ALLUVIUM), TM_L(LAYER_ALLUVIUM), TM_L(LAYER_SAND),
-	TM_L(LAYER_SOIL) | TM_L(LAYER_ALLUVIUM), TM_L(LAYER_SOIL) | TM_L(LAYER_ALLUVIUM)
+	TM_L(LAYER_SOIL) | TM_L(LAYER_ALLUVIUM), TM_L(LAYER_SOIL) | TM_L(LAYER_ALLUVIUM), 0
 };
 #undef TM_L
-static const char *OVERLAY_MASK[TerrainMaterial3D::OVERLAY_MAX] = { "om.y", "om.x", "om.x", "om.y", "om.y", "om.w", "om2.y", "om2.x", "om.x", "om.z", "om2.z" };
+static const char *OVERLAY_MASK[TerrainMaterial3D::OVERLAY_MAX] = { "om.y", "om.x", "om.x", "om.y", "om.y", "om.w", "om2.y", "om2.x", "om.x", "om.z", "om2.z", "" };
 static const Color LAYER_DEFAULT_COLORS[TerrainMaterial3D::LAYER_MAX] = {
 	Color(0.36, 0.35, 0.33), Color(0.41, 0.40, 0.37), Color(0.2, 0.22, 0.1), Color(0.28, 0.27, 0.16), Color(0.7, 0.62, 0.46)
 };
@@ -2942,9 +2943,25 @@ void fragment() {
 		snow = snow_cover_weight(snow_s.x * tm_snow, tm_snow_max_slope, tm_pn, snow_n, wp, snow_face);
 		snow_wet = snow_s.z;
 		snow_cover_apply(snow, snow_s.y, snow_wet, albedo, rough, metallic, specular);
-		sn = normalize(mix(sn, wn, snow));
-	}
 )";
+		if (overlays[OVERLAY_SNOW].is_valid()) {
+			// The pack's own grain and crust from a scan (snow_02, docs/ideas/scan-textures.md): its normal over the
+			// snow's smooth one and its roughness as a ratio round the pack's, both by the snow's share. Detail only:
+			// the colour, sparkle and wetness stay the snow model's.
+			c += R"(		vec3 snow_dn = vec3(0.0);
+		if (snow > 1e-3) {
+			vec3 sv_d;
+			float sv_r;
+			float sv_h;
+			tm_ov_snow(wp, tm_pn, cliff, tm_dpx, tm_dpy, sv_d, sv_r, snow_dn, sv_h);
+			rough = clamp(rough * mix(1.0, sv_r, snow * (1.0 - snow_wet)), 0.02, 1.0);
+		}
+		sn = normalize(mix(sn, normalize(wn + snow_dn), snow));
+)";
+		} else {
+			c += "\t\tsn = normalize(mix(sn, wn, snow));\n";
+		}
+		c += "\t}\n";
 	}
 	c += R"(	ALBEDO = albedo;
 	ROUGHNESS = rough;
@@ -3178,6 +3195,18 @@ void TerrainMaterial3D::_update_params() {
 		if (l->get_height_texture().is_valid()) {
 			set_shader_parameter(n + "_height_tex", l->get_height_texture());
 		}
+	}
+	// The snow scan for every snow drawer (SnowSurface3D reads these globals; one scan, no private copies): its normal,
+	// roughness and (1 / tile, normal strength, roughness mean, 1). A material without one leaves them as they are.
+	const Ref<TerrainMaterialLayer> &snow_scan = overlays[OVERLAY_SNOW];
+	if (snow_scan.is_valid() && snow_scan->get_normal_texture().is_valid()) {
+		RenderingServer *rs = RenderingServer::get_singleton();
+		rs->global_shader_parameter_set("snow_grain_normal", snow_scan->get_normal_texture()->get_rid());
+		if (snow_scan->get_roughness_texture().is_valid()) {
+			rs->global_shader_parameter_set("snow_grain_roughness", snow_scan->get_roughness_texture()->get_rid());
+		}
+		const float rm = snow_scan->get_roughness_texture().is_valid() ? snow_scan->get_roughness_mean() : 0.0f;
+		rs->global_shader_parameter_set("snow_grain_params", Vector4(1.0f / snow_scan->get_tile_size(), snow_scan->get_normal_strength(), rm, 1.0f));
 	}
 	// Copies of this material (GroundSurface3D's near patch) follow its parameters through this signal.
 	emit_changed();
@@ -3585,6 +3614,7 @@ void TerrainMaterial3D::_bind_methods() {
 	BIND_ENUM_CONSTANT(OVERLAY_BEACH);
 	BIND_ENUM_CONSTANT(OVERLAY_MUD);
 	BIND_ENUM_CONSTANT(OVERLAY_BURN);
+	BIND_ENUM_CONSTANT(OVERLAY_SNOW);
 	BIND_ENUM_CONSTANT(OVERLAY_MAX);
 }
 

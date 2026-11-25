@@ -156,6 +156,9 @@
 		<member name="far_start_from_vegetation" type="bool" setter="set_far_start_from_vegetation" getter="is_far_start_from_vegetation" default="true">
 			If [code]true[/code], the far blend ends where a streaming [VegetationField3D]'s placed plants end (the global shader parameter [code]vegetation_near_radius[/code]): it starts at that radius less [member far_fade]. With no field streaming it uses [member far_start].
 		</member>
+		<member name="burn_scan" type="TerrainMaterialLayer" setter="set_overlay" getter="get_overlay">
+			Burn scars on soil and alluvium (WorldFire's burn age): charred ground, fading as the cover regrows.
+		</member>
 		<member name="cliff_scan" type="TerrainMaterialLayer" setter="set_overlay" getter="get_overlay">
 			The rock layer on faces past about 45 degrees: a face scan (beds and joints) instead of the ground scan seen from above.
 		</member>
@@ -219,6 +222,9 @@
 		<member name="snow_max_slope" type="float" setter="set_snow_max_slope" getter="get_snow_max_slope" default="60.0">
 			Slope in degrees past which snow slides off (see [member BaseMaterial3D.snow_max_slope]).
 		</member>
+		<member name="snow_scan" type="TerrainMaterialLayer" setter="set_overlay" getter="get_overlay">
+			The snowpack's grain and crust: its normal over the snow and its roughness as a ratio round the snow's, by the snow's share (see [constant OVERLAY_SNOW]). Published as the [code]snow_grain_normal[/code], [code]snow_grain_roughness[/code] and [code]snow_grain_params[/code] shader globals, which [SnowSurface3D] reads.
+		</member>
 		<member name="soil_layer" type="TerrainMaterialLayer" setter="set_layer" getter="get_layer">
 			Soil on gentle ground.
 		</member>
@@ -278,7 +284,13 @@
 		<constant name="OVERLAY_MUD" value="9" enum="Overlay">
 			Turned, muddy soil.
 		</constant>
-		<constant name="OVERLAY_MAX" value="10" enum="Overlay">
+		<constant name="OVERLAY_BURN" value="10" enum="Overlay">
+			Burn scars: charred ground, fading as the cover regrows.
+		</constant>
+		<constant name="OVERLAY_SNOW" value="11" enum="Overlay">
+			The snowpack's grain and crust: only the scan's normal and roughness, drawn over the snow by its share, never over a layer. Also published as the [code]snow_grain_*[/code] shader globals for [SnowSurface3D].
+		</constant>
+		<constant name="OVERLAY_MAX" value="12" enum="Overlay">
 			Number of overlay slots.
 		</constant>
 	</constants>

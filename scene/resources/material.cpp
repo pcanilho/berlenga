@@ -651,6 +651,11 @@ void BaseMaterial3D::init_shaders() {
 		exact["type"] = "bool";
 		exact["value"] = true;
 		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/snow_exact_glints", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), exact);
+		// The snowpack's grain scan (TerrainMaterial3D's snow_scan publishes it): normal, roughness and
+		// (1 / tile, normal strength, roughness mean, on); w 0 = none, the snow keeps its own smooth surface.
+		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/snow_grain_normal", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), state_map);
+		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/snow_grain_roughness", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), state_map);
+		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/snow_grain_params", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), map_rect);
 		// Ground deformation reads GroundSurface3D's (rect width 0 = none: nothing lowered, nothing moved).
 		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/ground_deform_map", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), state_map);
 		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/ground_deform_rect", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), map_rect);

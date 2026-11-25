@@ -1,0 +1,1 @@
+- Snow: a scanned snow grain (normal and roughness) on the ground's snow and SnowSurface3D, from the scan set's `[snow]` slot (`TerrainMaterial3D.snow_scan`).

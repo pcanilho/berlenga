@@ -116,6 +116,7 @@ public:
 		OVERLAY_BEACH, // sand the generator laid as beach, and the seabed
 		OVERLAY_MUD, // ground turned by ruts, digs and prints (GroundSurface3D's exposed soil)
 		OVERLAY_BURN, // burn scars (WorldFire's burn age, Landscape3D's stand map): charred ground, fading as the cover regrows
+		OVERLAY_SNOW, // the snowpack's grain and crust (normal and roughness only), over the snow, not a layer
 		OVERLAY_MAX,
 	};
 
