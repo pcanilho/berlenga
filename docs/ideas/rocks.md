@@ -1537,6 +1537,9 @@ Second pass, to remove visible repetition:
 - **Deep grooves.** A piece whose back cannot reach behind a groove is tried again at 1.35 and 1.8 times its size,
   deeper as well as larger.
 - **Kit range.** Kit pieces start at 50 degrees, like the beds.
+- **Skyline.** The wall must go on past a piece's top (within a quarter of its height) and sides (within 0.6 of its
+  width). A grown piece once stood on a spire's tip above the skyline. A narrow convex spire now keeps its bed blocks
+  rather than pillars.
 
 On the cliff-foot view the dark vertical bands left on the far right are on faces of 40 to 50 degrees (--slope-map).
 These are the terrain material's streaks, below where the wall's rock goes, and they show the same with the cliff
