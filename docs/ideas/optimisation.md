@@ -615,3 +615,19 @@ sites of each callee's size); the remedy is one call site per heavy function.
   allocation spike stacks on. The landscape at 480x270 now saves its path traced frame on the software device, peak
   11.9 GB resident (it was killed at about 13.5 GB). A GPU-written MultiMesh scene and the grass meadow match the
   previous build inside the run-to-run noise.
+- With the full art set (ground, stone, cave, floor and bark scans, the showcase props) the landscape went back over
+  13 GB on the software device, and not every run: the peak swung between 12.4 and 13.5 GB. Memory maps at 10 GB:
+  4.3 GB device memory, 4.3 GB main heap, 0.8 GB in worker arenas. A debugger on every mapping of 32 MB and up showed
+  the last 2.8 GB is the driver compiling the path tracing pipeline: the software driver links every hit group into one
+  compute program (Mesa's lavapipe, `lvp_compile_ray_tracing_pipeline`) and LLVM holds gigabytes while it optimises
+  it, while raster pipelines compiled on other threads added theirs at the same moment. On a CPU device only:
+  - a ray tracing pipeline compiles alone (`RenderingDevice`: raster and compute pipeline creation take a shared lock,
+    ray tracing pipeline creation the exclusive one), so the two spikes no longer meet;
+  - scans that systems load from files at run time (TerrainMaterial3D, RockField3D, CaveNetwork3D, VegetationField3D
+    and TreeGenerator scan sets) are halved by 2x2 boxes to at most
+    `rendering/textures/scans/cpu_device_max_size` (1024; 0 keeps them whole), the full texture's own next mip
+    levels; the scans are 2K, so this is a quarter of their memory;
+  - the vertex capture arena keeps no 50% headroom.
+  The landscape with the full art set then saved its frame at a 12.3 GB peak. `RenderingServer.get_texture_debug_usage()`
+  (new binding) lists every texture with its size and source, and the landscape bench's `--tex-report` prints the
+  largest after each memory line: textures were about 1 GB of it, not the cause.

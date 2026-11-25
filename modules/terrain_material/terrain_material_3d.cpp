@@ -39,6 +39,7 @@
 #include "core/object/class_db.h"
 #include "scene/resources/image_texture.h"
 #include "servers/rendering/rendering_server.h"
+#include "servers/rendering/scan_texture_limit.h"
 
 #include "modules/terrain_deform/terrain_generator_3d.h"
 #include "modules/vegetation/grass_field_3d.h"
@@ -3288,6 +3289,7 @@ static Ref<Texture2D> _tm_scan_texture(const String &p_path, bool p_normal, bool
 	if (img.is_null() || img->is_empty()) {
 		return Ref<Texture2D>();
 	}
+	scan_texture_limit(img);
 	if (p_grey && !p_normal) {
 		img->convert(Image::FORMAT_RGB8);
 		const int w = img->get_width();

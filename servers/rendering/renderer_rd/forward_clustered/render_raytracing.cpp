@@ -2769,7 +2769,10 @@ void RenderRaytracing::prepare_vertex_captures(const RenderDataRD *p_render_data
 static uint32_t _rt_capture_arena_target(uint64_t p_size) {
 	constexpr uint64_t MIN_SIZE = 64 * 1024;
 	constexpr uint64_t MAX_HEADROOM = 256 * 1024 * 1024;
-	return uint32_t(CLAMP(p_size + MIN(p_size / 2, MAX_HEADROOM), MIN_SIZE, uint64_t(UINT32_MAX)));
+	// A CPU device keeps no headroom: its buffers are system memory, and a reallocation there costs little.
+	static const bool cpu_device = RD::get_singleton()->get_device_type() == RenderingDeviceEnums::DEVICE_TYPE_CPU;
+	const uint64_t headroom = cpu_device ? 0 : MIN(p_size / 2, MAX_HEADROOM);
+	return uint32_t(CLAMP(p_size + headroom, MIN_SIZE, uint64_t(UINT32_MAX)));
 }
 
 // Makes the capture arena hold at least p_size bytes for the current view. Shrinks when the largest view of a full

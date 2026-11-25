@@ -65,6 +65,7 @@
 #include "scene/resources/image_texture.h"
 #include "scene/resources/multimesh.h"
 #include "servers/rendering/rendering_server.h"
+#include "servers/rendering/scan_texture_limit.h"
 
 #include "modules/terrain_deform/terrain_data_map_3d.h"
 #include "modules/weather/weather_map_3d.h"
@@ -5865,6 +5866,7 @@ static Ref<ImageTexture> _floor_scan_texture(const String &p_path) {
 	if (img.is_null() || img->is_empty()) {
 		return Ref<ImageTexture>();
 	}
+	scan_texture_limit(img);
 	img->convert(Image::FORMAT_RGB8);
 	const int w = img->get_width(), h = img->get_height();
 	LocalVector<float> lum;

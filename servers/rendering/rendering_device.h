@@ -32,6 +32,7 @@
 
 #include "core/object/worker_thread_pool.h"
 #include "core/os/condition_variable.h"
+#include "core/os/rw_lock.h"
 #include "core/os/thread_safe.h"
 #include "core/templates/local_vector.h"
 #include "core/templates/rb_map.h"
@@ -1951,6 +1952,12 @@ private:
 	LocalVector<RDD::TextureBarrier> transfer_worker_pool_texture_barriers;
 	BinaryMutex transfer_worker_pool_mutex;
 	BinaryMutex transfer_worker_pool_texture_barriers_mutex;
+	// On a CPU device a ray tracing pipeline compiles alone: it is linked into one program of every hit group, whose
+	// compile takes gigabytes of system memory for minutes, and raster and compute pipelines compiling on other
+	// threads at the same time stack their own memory on top of it. Those take the read side, the ray tracing pipeline
+	// the write side. GPU devices take neither.
+	RWLock cpu_device_pipeline_compile_lock;
+	bool _cpu_device_serializes_pipelines() const { return device.type == RenderingContextDriver::DEVICE_TYPE_CPU; }
 	ConditionVariable transfer_worker_pool_condition;
 
 	TransferWorker *_acquire_transfer_worker(uint32_t p_transfer_size, uint32_t p_required_align, uint32_t &r_staging_offset);

@@ -2292,6 +2292,7 @@ void RenderingServer::_bind_methods() {
 
 	ClassDB::bind_method(D_METHOD("texture_set_path", "texture", "path"), &RenderingServer::texture_set_path);
 	ClassDB::bind_method(D_METHOD("texture_get_path", "texture"), &RenderingServer::texture_get_path);
+	ClassDB::bind_method(D_METHOD("get_texture_debug_usage"), &RenderingServer::_texture_debug_usage_bind);
 
 	ClassDB::bind_method(D_METHOD("texture_get_format", "texture"), &RenderingServer::texture_get_format);
 
@@ -3742,6 +3743,8 @@ void RenderingServer::init() {
 
 	GLOBAL_DEF(PropertyInfo(Variant::INT, "rendering/textures/webp_compression/compression_method", PROPERTY_HINT_RANGE, "0,6,1"), 2);
 	GLOBAL_DEF(PropertyInfo(Variant::FLOAT, "rendering/textures/webp_compression/lossless_compression_factor", PROPERTY_HINT_RANGE, "0,100,1"), 25);
+	// Scans systems load from files at run time, on a CPU (software) rendering device only (scan_texture_limit.h); 0: full size.
+	GLOBAL_DEF(PropertyInfo(Variant::INT, "rendering/textures/scans/cpu_device_max_size", PROPERTY_HINT_RANGE, "0,16384,1"), 1024);
 
 	GLOBAL_DEF(PropertyInfo(Variant::FLOAT, "rendering/limits/time/time_rollover_secs", PROPERTY_HINT_RANGE, "1,10000,1,or_greater,suffix:s"), 3600);
 

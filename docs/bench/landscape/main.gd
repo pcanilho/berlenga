@@ -35,6 +35,7 @@ extends Node3D
 #   --sun-off             no sun at all: what the sky alone lights
 #   --ground-scans=0      plain ground layers instead of the CC0 scans in art/terrain_layers (fetch_art.sh);
 #                         --ground-scans=rock,scree scans on those layers only
+#   --tex-report[=N]      after each memory line, the N (25) largest textures the renderer holds (size, format, path)
 #   --far-shadows=0       no far sun shadows from the ground's horizon toward the sun (raster A/B)
 #   --sky-occlusion=0     ground ambient light without the hills' sky occlusion; --sky-light=0 an even sky for it
 #   --water-param=name:value[;...]   set water shader uniforms on the sea and lakes (floats, true/false, colours as r,g,b,a)
@@ -7511,6 +7512,17 @@ func _mem_log(tag: String) -> void:
 			RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_BUFFER_MEM_USED) >> 20,
 			RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_VIDEO_MEM_USED) >> 20,
 			OS.get_static_memory_usage() >> 20])
+	if args.has("tex-report"):
+		# --tex-report: the largest textures the renderer holds (size, format, source) after each memory line.
+		var tl: Array = RenderingServer.get_texture_debug_usage() if RenderingServer.has_method("get_texture_debug_usage") else []
+		tl.sort_custom(func(a, b): return int(a["bytes"]) > int(b["bytes"]))
+		var total := 0
+		for t in tl:
+			total += int(t["bytes"])
+		_log("textures %s: %d, %d MB" % [tag, tl.size(), total >> 20])
+		for i in mini(int(args.get("tex-report", "25")), tl.size()):
+			var t: Dictionary = tl[i]
+			_log("  %6.1f MB %dx%dx%d fmt %d %s" % [int(t["bytes"]) / 1048576.0, t["width"], t["height"], t["depth"], t["format"], t["path"]])
 
 
 func _snow_strata() -> void:

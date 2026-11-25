@@ -45,6 +45,7 @@
 #include "scene/resources/image_texture.h"
 #include "scene/resources/shader.h"
 #include "servers/rendering/rendering_server.h"
+#include "servers/rendering/scan_texture_limit.h"
 
 #include "modules/weather/weather_map_3d.h"
 
@@ -15079,6 +15080,7 @@ static Ref<Texture2D> _bark_scan_texture(const String &p_base, const Vector2 &p_
 		// Grain across the image (most wood scans): turned a quarter so it runs along the stem (v).
 		a->rotate_90(CLOCKWISE);
 	}
+	scan_texture_limit(a); // a CPU device's own limit first (scan_texture_limit.h), then p_max_size
 	while (MAX(a->get_width(), a->get_height()) > p_max_size) {
 		a->resize(a->get_width() / 2, a->get_height() / 2, Image::INTERPOLATE_BILINEAR);
 	}

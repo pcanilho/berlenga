@@ -14,6 +14,7 @@
 #include "core/io/file_access.h"
 #include "core/io/image.h"
 #include "scene/resources/image_texture.h"
+#include "servers/rendering/scan_texture_limit.h"
 
 struct RockScan {
 	Ref<Texture2D> albedo;
@@ -32,6 +33,7 @@ inline Ref<Texture2D> rock_scan_texture(const String &p_path, bool p_normal, Vec
 	if (img.is_null() || img->is_empty()) {
 		return Ref<Texture2D>();
 	}
+	scan_texture_limit(img);
 	if (r_mean) {
 		Ref<Image> small = img->duplicate();
 		small->convert(Image::FORMAT_RGBA8);
