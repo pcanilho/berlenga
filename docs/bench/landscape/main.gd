@@ -4585,12 +4585,13 @@ func _build_camera() -> void:
 				var br := pb[0] if pb.size() > 0 else 30.0
 				var smin := float(args.get("ped-min-slope", "15"))
 				var smax2 := float(args.get("ped-max-slope", "25"))
-				var bc := Vector3.INF
-				var bd := INF
+				# Candidates nearest the middle first; the scar goes on each in turn until the rocks find pedestal
+				# spots under it (their own gates: soil depth, no water, sand, talus or rock).
+				var cands := []
 				for zz in range(-int(pr), int(pr) + 1, 8):
 					for xx in range(-int(pr), int(pr) + 1, 8):
 						var p := Vector3(xx, 0, zz)
-						if gen.get_height(p) < gen.sea_level + 8.0 or Vector2(xx, zz).length() >= bd:
+						if gen.get_height(p) < gen.sea_level + 8.0:
 							continue
 						var ok := true
 						for o in [Vector3.ZERO, Vector3(10, 0, 0), Vector3(-10, 0, 0), Vector3(0, 0, 10), Vector3(0, 0, -10)]:
@@ -4601,19 +4602,36 @@ func _build_camera() -> void:
 								ok = false
 								break
 						if ok:
-							bc = p
-							bd = Vector2(xx, zz).length()
-				if bc == Vector3.INF:
+							cands.append(Vector3(xx, Vector2(xx, zz).length(), zz))
+				cands.sort_custom(func(a, b): return a.y < b.y)
+				if cands.is_empty():
 					_log("pedestal burn: no soil slope of %.0f..%.0f deg within %.0f m" % [smin, smax2, pr])
 				else:
 					var scar = ClassDB.instantiate("WorldBurnScar3D")
 					scar.name = "PedestalBurn"
 					add_child(scar)
-					scar.global_position = Vector3(bc.x, gen.get_height(bc), bc.z)
 					scar.size = Vector2(br, br) * 2.0
 					scar.age_years = pb[1] if pb.size() > 1 else 0.4
-					prect = Rect2(bc.x - br * 0.7, bc.z - br * 0.7, br * 1.4, br * 1.4)
-					_log("pedestal burn: scar at %s, %.0f m, %.1f years" % [str(scar.global_position.round()), br, scar.age_years])
+					var tries := 0
+					# Spaced candidates only (one per scar width), up to --ped-burn-tries (60).
+					var used := []
+					for c in cands:
+						var far := true
+						for u in used:
+							if Vector2(c.x - u.x, c.z - u.z).length() < br:
+								far = false
+								break
+						if not far:
+							continue
+						used.append(c)
+						tries += 1
+						scar.global_position = Vector3(c.x, gen.get_height(Vector3(c.x, 0, c.z)), c.z)
+						prect = Rect2(c.x - br * 0.7, c.z - br * 0.7, br * 1.4, br * 1.4)
+						if rocks == null or not rocks.has_method("get_pedestal_spots") or not rocks.get_pedestal_spots(prect, 2.0, 1).is_empty():
+							break
+						if tries >= int(args.get("ped-burn-tries", "60")):
+							break
+					_log("pedestal burn: scar at %s, %.0f m, %.1f years (%d of %d slopes tried)" % [str(scar.global_position.round()), br, scar.age_years, tries, cands.size()])
 			if rocks != null and rocks.has_method("get_pedestal_spots"):
 				# Rocks 3589ba9f: the pedestals' own spots (bare patches only), deepest splash first; the first on
 				# gentle ground.
