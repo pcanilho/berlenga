@@ -4733,7 +4733,7 @@ float SnowCover3D::get_albedo_at(Vector3 p_position) const {
 // melt water (Kane and Stein 1983: infiltration into frozen soil falls by orders of magnitude when its pores are
 // ice-filled). A thawed top soaks some up and lets it through.
 float SnowCover3D::ground_seal(Vector3 p_frost) {
-	return Math::smoothstep(0.0f, 0.05f, p_frost.y) * (1.0f - Math::smoothstep(0.0f, 0.03f, p_frost.x));
+	return Math::smoothstep(0.0f, 0.05f, float(p_frost.y)) * (1.0f - Math::smoothstep(0.0f, 0.03f, float(p_frost.x)));
 }
 
 // Darcy flow through the saturated base: hydraulic conductivity K = k rho_w g / mu with the intrinsic permeability
