@@ -3100,6 +3100,15 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 						margin = sp->margin_at(sp->get_patch_depth(p3, &margin_out));
 						scale *= Math::lerp(1.0f, sp->get_margin_scale(), margin);
 					}
+					if (burn_recovery && canopy_r <= 0.0f) {
+						// Regrowth on burnt ground is young and short (docs/ideas/vegetation.md, "Burnt ground and
+						// regrowth"): resprouts a few centimetres high in the first months, a tenth of the plant's size,
+						// growing to full over its recovery years as the stand closes in.
+						const float age = p_setup.burn_at(xz);
+						if (age >= 0.0f) {
+							scale *= Math::lerp(0.1f, 1.0f, Math::smoothstep(0.0f, sp->get_burn_recovery(), age));
+						}
+					}
 					if (canopy_r > 0.0f) {
 						Crown crown = { xz, canopy_r * scale, sp->get_canopy_opacity(), ps.canopy_top * scale, sp->is_canopy_conifer() ? 1.0f : 0.0f, ps.stem_foot * scale, ps.canopy_base * scale };
 						crown.species = s;

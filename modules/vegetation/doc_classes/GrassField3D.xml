@@ -291,7 +291,7 @@
 			Blade colour at the root.
 		</member>
 		<member name="burn_recovery" type="float" setter="set_burn_recovery" getter="get_burn_recovery" default="2.0">
-			Years the sward takes to grow back over burnt ground ([code]WorldFire.burn_age_at[/code]): gone on a fresh burn, short sparse blades first (about a third of their height in the first months, two thirds by a year), full cover after this many years (2: a year after a grassland wildfire bare ground is up by half). The rules' [member PlantSpecies.burn_recovery] wins when it is set. 0 leaves the grass blind to fire. The ages are read once a bake, so a live fire shows after the next [method rebuild].
+			Years the sward takes to grow back over burnt ground ([code]WorldFire.burn_age_at[/code]): gone on a fresh burn, short sparse blades first (a fifth of their height at five months, about half by a year), full cover after this many years (2: a year after a grassland wildfire bare ground is up by half). The rules' [member PlantSpecies.burn_recovery] wins when it is set. 0 leaves the grass blind to fire. The ages are read once a bake, so a live fire shows after the next [method rebuild].
 		</member>
 		<member name="blade_height" type="Vector2" setter="set_blade_height" getter="get_blade_height" default="Vector2(0.2, 0.5)">
 			Minimum and maximum blade height, in metres. Each clump picks a height in this range.

@@ -884,7 +884,7 @@ Plan:
 Built (19 Nov): world-links' `WorldFire.burn_age_at` (b7e28ec4; WorldBurnScar3D for authored scars, PhysXFireSpread3D
 for fires in play, c15a10b7). VegetationField3D samples it on a grid (2 m or more, at most 512 a side) when a species
 needs it; `PlantSpecies.RULE_BURN_AGE` places the burn presets, `PlantSpecies.burn_recovery` (from
-`PlantGenerator.get_burn_recovery`, set by tag_species) thins everything else: grasses back in 2 years (was 0.7; Parker et al. 2024: a year after a mixed-grass megafire bare ground +59%, sward height -39%, recovered by 2.5 years; the blades also regrow short, a third of their height at first), herbs 1.5,
+`PlantGenerator.get_burn_recovery`, set by tag_species) thins everything else: grasses back in 2 years (was 0.7; Parker et al. 2024: a year after a mixed-grass megafire bare ground +59%, sward height -39%, recovered by 2.5 years; the blades also regrow short, a fifth of their height at five months, and placed plants on a burn grow from a tenth of their size to full over their recovery years), herbs 1.5,
 heaths 8, mosses 10, soil crust 30. Presets PRESET_FIREWEED, PRESET_FIRE_MOSS, PRESET_CHARRED_STEMS,
 PRESET_BURNT_TUSSOCK (plant_burn.cpp) read the season's `burn_age`; `make_burn(BURN_HEATH | BURN_GRASS | BURN_SCRUB)`
 builds each in age bands. Bench vegetation `--burn[=off]`: four scars 0.05 to 5 years old in dry heath; all checks
