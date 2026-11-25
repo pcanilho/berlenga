@@ -3528,6 +3528,17 @@
   {
    "name": "Scanned leaves",
    "settings": [
+    "TreeGenerator.near_leaf_detail"
+   ],
+   "note": "",
+   "what": "each leaf's outline is cut from a scan, and leaves near the camera curve.",
+   "page": "trees",
+   "title": "Trees",
+   "topic": "Growth"
+  },
+  {
+   "name": "Scanned leaves",
+   "settings": [
     "TreeGenerator.load_scan_set"
    ],
    "note": "",
