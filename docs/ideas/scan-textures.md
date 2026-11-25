@@ -59,8 +59,8 @@ if they should be augmented with shaders and or textures or more."
 | River and lake beds, gravel bars (terrain + water) | gravelly_sand alluvium under the water | scan: rounded river gravel by depth and current | river_small_rocks 2.9 m, ganges_river_pebbles 2.16 m |
 | Beach (terrain + sand) | sand_03 (same as dunes) + grain shader | scan: coastal sand; damp swash band | coast_sand_04 3.94 m, damp_beach_sand 2 m |
 | Dunes (sand) | sand_03 + grain, ripples, dune tone shaders | keep: shader features fit the physics better | |
-| Forest floor litter (vegetation) | stochastic leaf/needle sprite shader + 3D litter near | scan under the sprites for humus and fine litter between leaves; sprites and 3D litter stay | forest_leaves_02 3 m (broadleaf), forest_ground_04 3.15 m (pine needles), forest_floor 2.1 m |
-| Moss carpets and cushions (vegetation, rocks) | procedural colour + real cushions | scan: moss detail on the cushion and carpet material | ambientCG Moss002 |
+| Forest floor litter (vegetation) | stochastic leaf/needle sprite shader + 3D litter near; humus and duff scans (built 25 Nov) | scan under the sprites for humus and fine litter between leaves; sprites and 3D litter stay | dry_decay_leaves 2 m (broadleaf), forrest_ground_03 2 m (needle duff) |
+| Moss carpets and cushions (vegetation, rocks) | procedural colour + real cushions; moss drift scan on the floor (built 25 Nov) | scan: moss detail on the cushion and carpet material | ambientCG Moss002 1 m |
 | Trails and walked ground (world links) | soil packed, cover removed | scan: compacted path soil | stony_dirt_path 2.17 m |
 | Burn scars (world) | char tint | scan: burned ground | burned_ground_01 1 m |
 | Snow (snow) | microstructure shaders: cups, sastrugi, strata, glints | scan normal and roughness only for grain and crust; shaders stay | snow_02 2 m, ambientCG Snow010A |
@@ -123,3 +123,17 @@ Credits: one line per scan in the README References and CREDIT.txt beside the fi
 
 Next on the terrain side: burn scars (WorldBurnScar3D draws its own char), waterline band on banks. Then the owning threads: forest floor and moss (vegetation), stones and caves
 (rocks), snow detail (snow), bark, deadwood and leaves (trees), mud weights from its own maps (mud).
+
+## Built (25 Nov, vegetation side)
+
+- `VegetationField3D.load_floor_scans(dir)` reads `floor_scans.cfg` beside the terrain scans (its own file:
+  `scans.cfg` warns on sections it does not know). Slots: leaves (broadleaf humus under the leaf sprites), needles
+  (conifer duff under the needle strokes), moss (the feather moss drifts). Detail only, as on the terrain: each scan's
+  linear luminance over its mean, so the floor keeps its own colours. Two placements per scan, the second turned and
+  offset, mixed by a low noise, so a 2 m repeat does not show.
+- Picks by p98/mean (under about 2, no baked shadows): dry_decay_leaves 1.75, forrest_ground_03 1.56, Moss002 1.96.
+  Rejected: forest_leaves_02 2.35 and forest_floor 2.33 (deep shadows between leaves), forest_ground_04 2.03 (gravel,
+  not needles), forest_leaves_03 3.77, mud_forest 5.06.
+- Grass bench `--forest=in --stand=beech|spruce --floor-scans[=DIR]` (=0 for the before shot). Raster pairs show finer,
+  less even humus and duff with no loss; under a full sward most of it is hidden, as it should be.
+- Not yet: moss detail on the 3D cushion and carpet meshes (plant material).

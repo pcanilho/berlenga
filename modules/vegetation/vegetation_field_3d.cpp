@@ -47,6 +47,9 @@
 #endif
 
 #include "core/config/engine.h"
+#include "core/io/config_file.h"
+#include "core/io/dir_access.h"
+#include "core/io/image.h"
 #include "core/math/random_pcg.h"
 #include "core/object/callable_mp.h"
 #include "core/object/class_db.h"
@@ -5814,6 +5817,76 @@ void VegetationField3D::set_forest_floor_enabled(bool p_enabled) {
 	}
 }
 
+// Scanned floor detail (docs/ideas/scan-textures.md, "Forest floor and moss"): detail only, so the floor keeps its own
+// colours. Each scan's linear luminance over its mean, halved into 8 bits (1 at 0.5, room to 2), mipmapped.
+static Ref<ImageTexture> _floor_scan_texture(const String &p_path) {
+	Ref<Image> img = Image::load_from_file(p_path);
+	if (img.is_null() || img->is_empty()) {
+		return Ref<ImageTexture>();
+	}
+	img->convert(Image::FORMAT_RGB8);
+	const int w = img->get_width(), h = img->get_height();
+	LocalVector<float> lum;
+	lum.resize(w * h);
+	double sum = 0.0;
+	const uint8_t *src = img->get_data().ptr();
+	for (int i = 0; i < w * h; i++) {
+		const float r = Math::pow(src[i * 3 + 0] / 255.0f, 2.2f), g = Math::pow(src[i * 3 + 1] / 255.0f, 2.2f), b = Math::pow(src[i * 3 + 2] / 255.0f, 2.2f);
+		lum[i] = 0.2126f * r + 0.7152f * g + 0.0722f * b;
+		sum += lum[i];
+	}
+	const float mean = MAX(float(sum / double(w * h)), 1e-4f);
+	PackedByteArray out;
+	out.resize(w * h);
+	uint8_t *dst = out.ptrw();
+	for (int i = 0; i < w * h; i++) {
+		dst[i] = uint8_t(CLAMP(Math::round(lum[i] / mean * 0.5f * 255.0f), 0.0f, 255.0f));
+	}
+	Ref<Image> d = Image::create_from_data(w, h, false, Image::FORMAT_L8, out);
+	d->generate_mipmaps();
+	return ImageTexture::create_from_image(d);
+}
+
+static Ref<ImageTexture> floor_scan_held[3];
+
+void VegetationField3D::free_floor_scans() {
+	for (Ref<ImageTexture> &t : floor_scan_held) {
+		t.unref();
+	}
+}
+
+int VegetationField3D::load_floor_scans(const String &p_dir) {
+	const String cfg_path = p_dir.path_join("floor_scans.cfg");
+	Ref<ConfigFile> cfg;
+	cfg.instantiate();
+	RenderingServer *rs = RenderingServer::get_singleton();
+	if (!DirAccess::dir_exists_absolute(p_dir) || cfg->load(cfg_path) != OK) {
+		WARN_PRINT(vformat("VegetationField3D: no floor scans at '%s' (fetch the art first): the forest floor and moss draw without scanned detail.", cfg_path));
+		rs->global_shader_parameter_set("forest_scan_tile", Vector4());
+		return 0;
+	}
+	const char *slots[3] = { "leaves", "needles", "moss" };
+	Vector4 tile;
+	int n = 0;
+	for (int i = 0; i < 3; i++) {
+		if (!cfg->has_section(slots[i])) {
+			continue;
+		}
+		const String scan = cfg->get_value(slots[i], "scan", "");
+		const Ref<ImageTexture> t = _floor_scan_texture(p_dir.path_join(scan).path_join(scan + "_albedo.jpg"));
+		if (t.is_null()) {
+			WARN_PRINT(vformat("VegetationField3D: floor scan '%s' for [%s] not found under %s.", scan, slots[i], p_dir));
+			continue;
+		}
+		floor_scan_held[i] = t; // The globals hold only the RID.
+		rs->global_shader_parameter_set(String("forest_scan_") + slots[i], t->get_rid());
+		tile[i] = float(cfg->get_value(slots[i], "tile", 2.0f));
+		n++;
+	}
+	rs->global_shader_parameter_set("forest_scan_tile", tile);
+	return n;
+}
+
 String VegetationField3D::get_floor_shader_code() {
 	return R"(
 // VegetationField3D forest floor, for terrain shaders (docs/ideas/forest-floor.md). Under a closed
@@ -5827,6 +5900,12 @@ String VegetationField3D::get_floor_shader_code() {
 // its detail, so it neither aliases nor costs anything far away.
 global uniform sampler2D forest_floor_map : hint_default_black, filter_linear;
 global uniform vec4 forest_floor_rect; // xy: corner, zw: size; z 0 = no forest.
+// Scanned detail (VegetationField3D.load_floor_scans): luminance over its mean, halved; forest_scan_tile the metres
+// one repeat covers for the leaves (x), needles (y) and moss (z), 0 where none is loaded.
+global uniform sampler2D forest_scan_leaves : hint_default_black, filter_linear_mipmap_anisotropic, repeat_enable;
+global uniform sampler2D forest_scan_needles : hint_default_black, filter_linear_mipmap_anisotropic, repeat_enable;
+global uniform sampler2D forest_scan_moss : hint_default_black, filter_linear_mipmap_anisotropic, repeat_enable;
+global uniform vec4 forest_scan_tile;
 
 vec2 ff_hash2(vec2 p) {
 	p = vec2(dot(p, vec2(127.1, 311.7)), dot(p, vec2(269.5, 183.3)));
@@ -5922,6 +6001,19 @@ vec3 ff_layer_blend(vec3 under, vec4 layer, vec3 mean, float cover, float fine) 
 	return mix(mix(under, layer.rgb, layer.a), mix(under, mean, cover), fine);
 }
 
+// A scan's detail at p (1 its mean), two placements turned against each other and blended by a slow mask, so one
+// tile's features do not line up into a grid over tens of metres (after the terrain's two-scan patches). 1 when the
+// scan is not loaded.
+float ff_scan(sampler2D t, float tile, vec2 xz, float mask) {
+	if (tile <= 0.0) {
+		return 1.0;
+	}
+	vec2 a = xz / tile;
+	vec2 b = mat2(vec2(0.6, 0.8), vec2(-0.8, 0.6)) * (xz / tile) + vec2(0.37, 0.71);
+	float w = smoothstep(0.35, 0.65, mask);
+	return 2.0 * mix(texture(t, a).r, texture(t, b).r, w);
+}
+
 // The floor colour at a point under the canopy: conifer 0 broadleaf, 1 needle.
 vec3 forest_litter(vec3 world_pos, float conifer, float footprint) {
 	vec2 xz = world_pos.xz;
@@ -5936,6 +6028,10 @@ vec3 forest_litter(vec3 world_pos, float conifer, float footprint) {
 		float f1 = smoothstep(0.022, 0.075, footprint);
 		leaves = ff_layer_blend(leaves, f0 < 1.0 ? ff_leaf_layer(xz, 0.06, 0.0) : vec4(0.0), mean, 0.85, f0);
 		leaves = ff_layer_blend(leaves, f1 < 1.0 ? ff_leaf_layer(xz, 0.045, 41.0) : vec4(0.0), mean, 0.6, f1);
+		// The scanned leaf mat (forest_scan_leaves): the fine litter between the drawn leaves, and the leaf-scale
+		// detail once those fade to their mean.
+		float pm = ff_noise(xz * 0.07 + 11.0);
+		leaves *= mix(1.0, ff_scan(forest_scan_leaves, forest_scan_tile.x, xz, pm), mix(0.6, 1.0, f1));
 		// Patches of darker, wetter, older litter.
 		leaves *= 0.75 + 0.45 * ff_noise(xz * 0.8);
 		c = mix(c, leaves, 1.0 - needle);
@@ -5946,10 +6042,14 @@ vec3 forest_litter(vec3 world_pos, float conifer, float footprint) {
 		float f = smoothstep(0.01, 0.03, footprint);
 		duff = ff_layer_blend(duff, f < 1.0 ? ff_needle_layer(xz, 0.025, 7.0) : vec4(0.0), vec3(0.17, 0.085, 0.035), 0.75, f);
 		duff = ff_layer_blend(duff, f < 1.0 ? ff_needle_layer(xz, 0.019, 23.0) : vec4(0.0), vec3(0.17, 0.085, 0.035), 0.6, f);
+		// The scanned needle duff (forest_scan_needles), as the leaves.
+		duff *= mix(1.0, ff_scan(forest_scan_needles, forest_scan_tile.y, xz, ff_noise(xz * 0.07 + 23.0)), mix(0.6, 1.0, f));
 		duff *= 0.8 + 0.35 * ff_noise(xz * 1.1 + 9.0);
 		// Feather moss carpets under spruce and pine, in drifts.
 		float moss = smoothstep(0.38, 0.62, ff_noise(xz * 0.45 + 17.0) * 0.7 + ff_noise(xz * 2.7) * 0.3);
-		vec3 moss_c = vec3(0.13, 0.19, 0.035) * (0.7 + 0.5 * ff_noise(xz * 23.0)) * (0.85 + 0.3 * ff_noise(xz * 4.0 + 5.0));
+		vec3 moss_c = vec3(0.13, 0.19, 0.035) * (0.85 + 0.3 * ff_noise(xz * 4.0 + 5.0));
+		// The scanned moss's shoots (forest_scan_moss), else the noise it had.
+		moss_c *= forest_scan_tile.z > 0.0 ? ff_scan(forest_scan_moss, forest_scan_tile.z, xz, ff_noise(xz * 0.09 + 31.0)) : 0.7 + 0.5 * ff_noise(xz * 23.0);
 		duff = mix(duff, moss_c, moss * 0.85);
 		c = mix(c, duff, needle);
 	}
@@ -7357,6 +7457,7 @@ void VegetationField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_light_at", "global_position"), &VegetationField3D::get_light_at);
 	ClassDB::bind_method(D_METHOD("get_stand_shade_at", "global_position"), &VegetationField3D::get_stand_shade_at);
 	ClassDB::bind_static_method("VegetationField3D", D_METHOD("get_floor_shader_code"), &VegetationField3D::get_floor_shader_code);
+	ClassDB::bind_static_method("VegetationField3D", D_METHOD("load_floor_scans", "dir"), &VegetationField3D::load_floor_scans);
 	ClassDB::bind_static_method("VegetationField3D", D_METHOD("make_game_trails", "data_map", "area", "goals", "options"), &VegetationField3D::make_game_trails, DEFVAL(Dictionary()));
 	ClassDB::bind_method(D_METHOD("set_forest_floor_enabled", "enabled"), &VegetationField3D::set_forest_floor_enabled);
 	ClassDB::bind_method(D_METHOD("is_forest_floor_enabled"), &VegetationField3D::is_forest_floor_enabled);

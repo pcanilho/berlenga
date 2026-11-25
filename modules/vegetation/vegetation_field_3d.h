@@ -748,6 +748,11 @@ protected:
 public:
 	int get_flood_replaced_tiles() const { return flood_tiles; }
 	static String get_floor_shader_code();
+	// Scanned detail for the forest floor and its moss (docs/ideas/scan-textures.md): floor_scans.cfg beside the
+	// ground scans, sections [leaves], [needles], [moss] (scan folder, tile metres). Each albedo's luminance over its mean,
+	// mipmapped, into the forest_scan_* globals. Returns the scans loaded; warns when the folder is missing.
+	static int load_floor_scans(const String &p_dir);
+	static void free_floor_scans();
 	// Game trails (vegetation_trails.cpp): a worn-path network (paths' Dictionaries) linking p_goals over the map.
 	static Array make_game_trails(Node *p_data_map, const Rect2 &p_area, const PackedVector3Array &p_goals, const Dictionary &p_options = Dictionary());
 	void set_forest_floor_enabled(bool p_enabled);

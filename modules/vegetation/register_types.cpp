@@ -111,6 +111,10 @@ void initialize_vegetation_module(ModuleInitializationLevel p_level) {
 		{ "grass_wind", "vec4" },
 		{ "forest_floor_map", "sampler2D" },
 		{ "forest_floor_rect", "vec4" },
+		{ "forest_scan_leaves", "sampler2D" },
+		{ "forest_scan_needles", "sampler2D" },
+		{ "forest_scan_moss", "sampler2D" },
+		{ "forest_scan_tile", "vec4" },
 		{ "vegetation_far_map", "sampler2D" },
 		{ "vegetation_far_rect", "vec4" },
 		{ "vegetation_far_range", "float" },
@@ -134,4 +138,5 @@ void uninitialize_vegetation_module(ModuleInitializationLevel p_level) {
 	TreeGenerator::free_climber_leaves();
 	PlantGenerator::free_shaders();
 	GrassField3D::free_gpu_fill();
+	VegetationField3D::free_floor_scans();
 }

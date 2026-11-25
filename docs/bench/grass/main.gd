@@ -57,6 +57,8 @@ extends Node3D
 #   --forest         a wood of stand-in trees: forest floor (litter, moss, bilberry, fern) in
 #                    their shade, meadow in the open (PlantSpecies.shade_range)
 #   --forest=in      the same, standing inside the wood
+#   --floor-scans[=DIR]  the scanned forest floor and moss detail (VegetationField3D.load_floor_scans; default
+#                    ../landscape/art/terrain_layers; =0 without)
 #   --stand=S        the wood's trees and their floor set (PlantGenerator.make_floor): beech, oak,
 #                    spruce (montane), pine (heath), larch (subalpine) or mixed (beech and spruce);
 #                    the ground's litter follows the crowns. Use with --forest=in.
@@ -398,6 +400,12 @@ func _ready() -> void:
 		elif a.begins_with("--hay="): hay_days = float(a.get_slice("=", 1))
 		elif a.begins_with("--hay-rain="): hay_rain = float(a.get_slice("=", 1))
 		elif a == "--river": river = true
+		elif a.begins_with("--floor-scans"):
+			# --floor-scans[=DIR]: the scanned forest floor and moss detail (VegetationField3D.load_floor_scans) from DIR
+			# (default the landscape bench's fetched art); --floor-scans=0 without.
+			var fdir := a.get_slice("=", 1) if a.contains("=") else ProjectSettings.globalize_path("res://../landscape/art/terrain_layers")
+			if fdir != "0" and ClassDB.class_has_method("VegetationField3D", "load_floor_scans"):
+				print("GRASS_FLOOR_SCANS %d from %s" % [VegetationField3D.load_floor_scans(fdir), fdir])
 		elif a.begins_with("--flood="):
 			var fp := a.substr(8).split(",")
 			flood = Vector2(float(fp[0]), float(fp[1]) if fp.size() > 1 else 10.0)
