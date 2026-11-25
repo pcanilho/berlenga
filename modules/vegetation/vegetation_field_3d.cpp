@@ -1261,6 +1261,7 @@ bool VegetationField3D::PlaceSetup::stand_differs(float p_age0, int p_kind0, flo
 
 namespace {
 float cover_mask_at(const Image *p_mask, const Rect2 &p_rect, const Vector2 &p_xz, int p_channel);
+float biome_share_at(const Image *p_map, const Rect2 &p_rect, const Vector2 &p_xz, int p_channel);
 
 // Squared Euclidean distance transform of one line (Felzenszwalb and Huttenlocher 2012), in place.
 void edt_1d(float *p_f, int p_n, int p_stride, LocalVector<float> &r_d, LocalVector<int> &r_v, LocalVector<float> &r_z) {
@@ -1338,6 +1339,12 @@ void VegetationField3D::_edge_row(void *p_job, uint32_t p_row) {
 			if (suit > 0.0f && sp->get_mask_channel() >= 0) {
 				const float m = CLAMP(cover_mask_at(mask, su.mask_rect, xz, sp->get_mask_channel()), 0.0f, 1.0f);
 				suit *= sp->is_mask_invert() ? 1.0f - m : m;
+			}
+			if (suit > 0.0f && !su.exclusions.is_empty()) {
+				suit *= 1.0f - su.exclusions.keep_out(xz);
+			}
+			if (suit > 0.0f && su.biome_channel >= 0) {
+				suit *= biome_share_at(su.biome_img.ptr(), su.biome_rect, xz, su.biome_channel);
 			}
 			if (suit > 0.0f && !su.stand_rules.is_empty() && sp->uses_stand()) {
 				Vector2 a, k;
@@ -1905,6 +1912,8 @@ bool VegetationField3D::_make_setup(PlaceSetup &r_setup) {
 		}
 		r_setup.mask_rect = density_mask_rect;
 	}
+	r_setup.exclusions.read(WorldExclusion3D::KIND_PLANTS);
+	_read_biome(r_setup);
 	r_setup.obstacles = obstacle_grid;
 	r_setup.rocks_any = !obstacle_grid.is_empty() || _get_rock_field() != nullptr;
 	r_setup.paths = path_grid;
@@ -2805,6 +2814,14 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 					if (sp->get_mask_channel() >= 0 && suit > 0.0f) {
 						const float m = CLAMP(mask_at(xz, sp->get_mask_channel()), 0.0f, 1.0f);
 						suit *= sp->is_mask_invert() ? 1.0f - m : m;
+					}
+					if (suit > 0.0f && !p_setup.exclusions.is_empty()) {
+						// A keep-out area (WorldExclusion3D): plants thin out over its fade and stop inside.
+						suit *= 1.0f - p_setup.exclusions.keep_out(xz);
+					}
+					if (suit > 0.0f && p_setup.biome_channel >= 0) {
+						// The biome map: this field's share of the painted biomes here.
+						suit *= biome_share_at(p_setup.biome_img.ptr(), p_setup.biome_rect, xz, p_setup.biome_channel);
 					}
 					// An uprooted tree's root pit stays bare soil: no plant but the log itself.
 					if (suit > 0.0f && !is_log && (deadwood_pit(local_deadwood_grid, local_deadwood, xz, DEADWOOD_CELL) || (p_setup.other && p_setup.other->_pit_at(xz)))) {
@@ -4971,6 +4988,24 @@ float cover_mask_at(const Image *p_mask, const Rect2 &p_rect, const Vector2 &p_x
 	return c[p_channel];
 }
 
+// A biome map's share for one channel: the channel over the channels' sum when that passes 1, so overlapping paint
+// splits the ground; 1 outside the map (the field grows there as without one).
+float biome_share_at(const Image *p_map, const Rect2 &p_rect, const Vector2 &p_xz, int p_channel) {
+	if (p_channel < 0 || !p_map || p_map->is_empty() || !p_rect.has_point(p_xz)) {
+		return 1.0f;
+	}
+	float sum = 0.0f;
+	float own = 0.0f;
+	for (int c = 0; c < 4; c++) {
+		const float v = CLAMP(cover_mask_at(p_map, p_rect, p_xz, c), 0.0f, 1.0f);
+		sum += v;
+		if (c == p_channel) {
+			own = v;
+		}
+	}
+	return sum > 1.0f ? own / sum : own;
+}
+
 uint8_t cover_srgb8(float p_c) {
 	p_c = CLAMP(p_c, 0.0f, 1.0f);
 	const float s = p_c < 0.0031308f ? p_c * 12.92f : 1.055f * Math::pow(p_c, 1.0f / 2.4f) - 0.055f;
@@ -5011,6 +5046,12 @@ void VegetationField3D::_cover_row(void *p_job, uint32_t p_row) {
 				if (p_ps.sp->get_mask_channel() >= 0 && suit > 0.0f) {
 					const float m = CLAMP(cover_mask_at(mask, setup.mask_rect, Vector2(q.x, q.z), p_ps.sp->get_mask_channel()), 0.0f, 1.0f);
 					suit *= p_ps.sp->is_mask_invert() ? 1.0f - m : m;
+				}
+				if (suit > 0.0f && !setup.exclusions.is_empty()) {
+					suit *= 1.0f - setup.exclusions.keep_out(Vector2(q.x, q.z));
+				}
+				if (suit > 0.0f && setup.biome_channel >= 0) {
+					suit *= biome_share_at(setup.biome_img.ptr(), setup.biome_rect, Vector2(q.x, q.z), setup.biome_channel);
 				}
 				sum += suit;
 			}
@@ -6034,6 +6075,9 @@ vec3 forest_litter(vec3 world_pos, float conifer, float footprint) {
 		leaves *= mix(1.0, ff_scan(forest_scan_leaves, forest_scan_tile.x, xz, pm), mix(0.6, 1.0, f1));
 		// Patches of darker, wetter, older litter.
 		leaves *= 0.75 + 0.45 * ff_noise(xz * 0.8);
+		// The same scan seven times larger (after the terrain's macro scan): metre-scale drifts of damp and dry leaves
+		// past the 3D litter, where the floor otherwise reads as one even carpet.
+		leaves *= mix(1.0, ff_scan(forest_scan_leaves, forest_scan_tile.x * 7.0, xz + 3.1, 1.0 - pm), 0.55);
 		c = mix(c, leaves, 1.0 - needle);
 	}
 	if (needle > 0.001) {
@@ -6045,6 +6089,7 @@ vec3 forest_litter(vec3 world_pos, float conifer, float footprint) {
 		// The scanned needle duff (forest_scan_needles), as the leaves.
 		duff *= mix(1.0, ff_scan(forest_scan_needles, forest_scan_tile.y, xz, ff_noise(xz * 0.07 + 23.0)), mix(0.6, 1.0, f));
 		duff *= 0.8 + 0.35 * ff_noise(xz * 1.1 + 9.0);
+		duff *= mix(1.0, ff_scan(forest_scan_needles, forest_scan_tile.y * 7.0, xz + 5.3, ff_noise(xz * 0.05 + 41.0)), 0.55);
 		// Feather moss carpets under spruce and pine, in drifts.
 		float moss = smoothstep(0.38, 0.62, ff_noise(xz * 0.45 + 17.0) * 0.7 + ff_noise(xz * 2.7) * 0.3);
 		vec3 moss_c = vec3(0.13, 0.19, 0.035) * (0.85 + 0.3 * ff_noise(xz * 4.0 + 5.0));
@@ -6470,8 +6515,7 @@ Vector3 VegetationField3D::_stream_centre() const {
 			return n->get_global_position();
 		}
 	}
-	Viewport *vp = get_viewport();
-	const Camera3D *cam = vp ? vp->get_camera_3d() : nullptr;
+	const Camera3D *cam = WorldContracts::get_view_camera(this);
 	return cam ? cam->get_global_position() : get_global_position();
 }
 
@@ -6626,6 +6670,38 @@ void VegetationField3D::_stream_update(double p_delta) {
 			}
 		}
 		removal_dirty = Rect2();
+	}
+	if (exclusion_dirty.has_area() && stream_jobs.is_empty()) {
+		// Keep-out areas moved (editor-tools.md C): the setup reads them again and the tiles there are placed again.
+		stream_setup.exclusions.read(WorldExclusion3D::KIND_PLANTS);
+		const Rect2 near = exclusion_dirty.grow(stream_setup.max_footprint + 0.5f);
+		for (const KeyValue<Vector2i, StreamTile *> &kv : stream_tiles) {
+			if (Rect2(Vector2(kv.key) * ts, Vector2(ts, ts)).intersects(near)) {
+				kv.value->stale = true; // Placed again; the old one shows until the new one is in.
+			}
+		}
+		exclusion_dirty = Rect2();
+	}
+	if (mask_dirty.has_area() && stream_jobs.is_empty()) {
+		// The density mask was painted (editor-tools.md B): the setup reads it again and the tiles there are placed again.
+		stream_setup.mask_img.unref();
+		stream_setup.mask_rect = Rect2();
+		if (density_mask.is_valid() && density_mask_rect.has_area()) {
+			stream_setup.mask_img = density_mask->get_image();
+			if (stream_setup.mask_img.is_valid() && stream_setup.mask_img->is_compressed()) {
+				stream_setup.mask_img = stream_setup.mask_img->duplicate();
+				stream_setup.mask_img->decompress();
+			}
+			stream_setup.mask_rect = density_mask_rect;
+		}
+		_read_biome(stream_setup);
+		const Rect2 near = mask_dirty.grow(stream_setup.max_footprint + 0.5f);
+		for (const KeyValue<Vector2i, StreamTile *> &kv : stream_tiles) {
+			if (Rect2(Vector2(kv.key) * ts, Vector2(ts, ts)).intersects(near)) {
+				kv.value->stale = true; // Placed again; the old one shows until the new one is in.
+			}
+		}
+		mask_dirty = Rect2();
 	}
 	if (holes_dirty.has_area() && stream_jobs.is_empty()) {
 		stream_setup.holes.read(VegetationHoles::source_of(stream_setup.map));
@@ -6917,13 +6993,106 @@ void VegetationField3D::set_streaming(bool p_enable) {
 		return;
 	}
 	streaming = p_enable;
-	if (!is_inside_tree() || Engine::get_singleton()->is_editor_hint()) {
+	if (!is_inside_tree() || (Engine::get_singleton()->is_editor_hint() && !editor_preview)) {
 		return;
 	}
 	_clear_generated();
 	if (streaming) {
 		set_process_internal(true);
 	} else if (populate_on_ready) {
+		queue_populate();
+	}
+}
+
+// The editor's READY: follow the data map and place, as the game does, without the game-time systems.
+void VegetationField3D::_editor_ready() {
+	if (!editor_preview || !is_inside_tree()) {
+		return;
+	}
+	TerrainDataMap3D *map = Object::cast_to<TerrainDataMap3D>(get_node_or_null(data_map));
+	if (map) {
+		const Callable cb = callable_mp(this, &VegetationField3D::_on_map_baked);
+		if (!map->is_connected(SNAME("baked"), cb)) {
+			map->connect(SNAME("baked"), cb);
+		}
+		if (map->is_baked() && populate_on_ready && !streaming) {
+			queue_populate();
+		}
+	}
+	set_process_internal(streaming);
+}
+
+void VegetationField3D::set_editor_preview(bool p_enable) {
+	if (editor_preview == p_enable) {
+		return;
+	}
+	editor_preview = p_enable;
+	if (!is_inside_tree() || !Engine::get_singleton()->is_editor_hint()) {
+		return;
+	}
+	if (editor_preview) {
+		_editor_ready();
+		TerrainDataMap3D *map = Object::cast_to<TerrainDataMap3D>(get_node_or_null(data_map));
+		if (map && map->is_baked() && !streaming && !populate_on_ready) {
+			queue_populate();
+		}
+	} else {
+		set_process_internal(false);
+		_clear_generated();
+	}
+}
+
+Callable VegetationField3D::get_populate_button() {
+	return callable_mp(this, &VegetationField3D::queue_populate);
+}
+
+Callable VegetationField3D::get_clear_button() {
+	return callable_mp(this, &VegetationField3D::clear);
+}
+
+// The density mask changed over p_area (world x, z; empty: anywhere): a streaming field places those tiles again, any
+// other field is populated again.
+void VegetationField3D::_on_exclusions_changed(const Rect2 &p_area) {
+	if (!is_inside_tree() || (Engine::get_singleton()->is_editor_hint() && !editor_preview)) {
+		return;
+	}
+	if (streaming) {
+		exclusion_dirty = exclusion_dirty.has_area() ? exclusion_dirty.merge(p_area) : p_area;
+	} else if (populate_on_ready) {
+		queue_populate();
+	}
+}
+
+void VegetationField3D::_read_biome(PlaceSetup &r_setup) const {
+	r_setup.biome_img.unref();
+	r_setup.biome_rect = Rect2();
+	r_setup.biome_channel = -1;
+	if (biome_channel < 0 || biome_map.is_null() || !biome_map_rect.has_area()) {
+		return;
+	}
+	r_setup.biome_img = biome_map->get_image();
+	if (r_setup.biome_img.is_valid() && r_setup.biome_img->is_compressed()) {
+		r_setup.biome_img = r_setup.biome_img->duplicate();
+		r_setup.biome_img->decompress();
+	}
+	r_setup.biome_rect = biome_map_rect;
+	r_setup.biome_channel = biome_channel;
+}
+
+float VegetationField3D::get_biome_share_at(const Vector3 &p_position) const {
+	PlaceSetup s;
+	_read_biome(s);
+	return biome_share_at(s.biome_img.ptr(), s.biome_rect, Vector2(p_position.x, p_position.z), s.biome_channel);
+}
+
+void VegetationField3D::notify_density_mask_changed(const Rect2 &p_area) {
+	if (!is_inside_tree()) {
+		return;
+	}
+	if (streaming) {
+		const Rect2 area = p_area.has_area() ? p_area : Rect2(Vector2(-1e7, -1e7), Vector2(2e7, 2e7));
+		mask_dirty = mask_dirty.has_area() ? mask_dirty.merge(area) : area;
+	} else {
 		queue_populate();
 	}
 }
@@ -7172,8 +7341,17 @@ void VegetationField3D::_on_holes_changed(const Rect2 &p_rect) {
 
 void VegetationField3D::_notification(int p_what) {
 	switch (p_what) {
+		case NOTIFICATION_ENTER_TREE: {
+			if (WorldContracts *wc = WorldContracts::get_singleton()) {
+				const Callable cb = callable_mp(this, &VegetationField3D::_on_exclusions_changed);
+				if (!wc->is_connected(SNAME("exclusions_changed"), cb)) {
+					wc->connect(SNAME("exclusions_changed"), cb);
+				}
+			}
+		} break;
 		case NOTIFICATION_READY: {
 			if (Engine::get_singleton()->is_editor_hint()) {
+				_editor_ready();
 				break;
 			}
 			add_to_group(SNAME("vegetation_crop_aware"));
@@ -7192,6 +7370,12 @@ void VegetationField3D::_notification(int p_what) {
 			set_process_internal(true);
 		} break;
 		case NOTIFICATION_EXIT_TREE: {
+			if (WorldContracts *wc = WorldContracts::get_singleton()) {
+				const Callable cb = callable_mp(this, &VegetationField3D::_on_exclusions_changed);
+				if (wc->is_connected(SNAME("exclusions_changed"), cb)) {
+					wc->disconnect(SNAME("exclusions_changed"), cb);
+				}
+			}
 			if (plant_color_registered) {
 				WorldContracts::unregister_plant_color(this);
 				plant_color_registered = false;
@@ -7205,6 +7389,13 @@ void VegetationField3D::_notification(int p_what) {
 			_clear_generated();
 		} break;
 		case NOTIFICATION_INTERNAL_PROCESS: {
+			if (Engine::get_singleton()->is_editor_hint()) {
+				// Editor preview: streaming round the editor's view only; no trampling, fire, floods or far views.
+				if (editor_preview && streaming) {
+					_stream_update(get_process_delta_time());
+				}
+				break;
+			}
 			_contact_trample_step(get_process_delta_time());
 			// A few times a second: has path tracing been switched on or off?
 			impostor_check -= get_process_delta_time();
@@ -7402,8 +7593,17 @@ void VegetationField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_data_map", "path"), &VegetationField3D::set_data_map);
 	ClassDB::bind_method(D_METHOD("get_data_map"), &VegetationField3D::get_data_map);
 	ClassDB::bind_method(D_METHOD("set_density_mask", "mask"), &VegetationField3D::set_density_mask);
+	ClassDB::bind_method(D_METHOD("notify_density_mask_changed", "area"), &VegetationField3D::notify_density_mask_changed, DEFVAL(Rect2()));
 	ClassDB::bind_method(D_METHOD("get_density_mask"), &VegetationField3D::get_density_mask);
 	ClassDB::bind_method(D_METHOD("set_density_mask_rect", "rect"), &VegetationField3D::set_density_mask_rect);
+	ClassDB::bind_method(D_METHOD("set_biome_map", "map"), &VegetationField3D::set_biome_map);
+	ClassDB::bind_method(D_METHOD("get_biome_map"), &VegetationField3D::get_biome_map);
+	ClassDB::bind_method(D_METHOD("set_biome_map_rect", "rect"), &VegetationField3D::set_biome_map_rect);
+	ClassDB::bind_method(D_METHOD("get_biome_map_rect"), &VegetationField3D::get_biome_map_rect);
+	ClassDB::bind_method(D_METHOD("set_biome_channel", "channel"), &VegetationField3D::set_biome_channel);
+	ClassDB::bind_method(D_METHOD("get_biome_channel"), &VegetationField3D::get_biome_channel);
+	ClassDB::bind_method(D_METHOD("notify_biome_map_changed", "area"), &VegetationField3D::notify_biome_map_changed, DEFVAL(Rect2()));
+	ClassDB::bind_method(D_METHOD("get_biome_share_at", "position"), &VegetationField3D::get_biome_share_at);
 	ClassDB::bind_method(D_METHOD("get_density_mask_rect"), &VegetationField3D::get_density_mask_rect);
 	ClassDB::bind_method(D_METHOD("set_obstacles", "obstacles"), &VegetationField3D::set_obstacles);
 	ClassDB::bind_method(D_METHOD("set_rock_field", "path"), &VegetationField3D::set_rock_field);
@@ -7439,6 +7639,10 @@ void VegetationField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_populate_on_ready", "enable"), &VegetationField3D::set_populate_on_ready);
 	ClassDB::bind_method(D_METHOD("is_populate_on_ready"), &VegetationField3D::is_populate_on_ready);
 	ClassDB::bind_method(D_METHOD("populate"), &VegetationField3D::populate);
+	ClassDB::bind_method(D_METHOD("set_editor_preview", "enable"), &VegetationField3D::set_editor_preview);
+	ClassDB::bind_method(D_METHOD("is_editor_preview"), &VegetationField3D::is_editor_preview);
+	ClassDB::bind_method(D_METHOD("get_populate_button"), &VegetationField3D::get_populate_button);
+	ClassDB::bind_method(D_METHOD("get_clear_button"), &VegetationField3D::get_clear_button);
 	ClassDB::bind_method(D_METHOD("queue_populate"), &VegetationField3D::queue_populate);
 	ClassDB::bind_method(D_METHOD("clear"), &VegetationField3D::clear);
 	ClassDB::bind_method(D_METHOD("get_plant_count"), &VegetationField3D::get_plant_count);
@@ -7531,6 +7735,9 @@ void VegetationField3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "still_shot"), "set_still_shot", "is_still_shot");
 	ClassDB::bind_method(D_METHOD("get_stream_stats"), &VegetationField3D::get_stream_stats);
 
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "editor_preview"), "set_editor_preview", "is_editor_preview");
+	ADD_PROPERTY(PropertyInfo(Variant::CALLABLE, "populate_button", PROPERTY_HINT_TOOL_BUTTON, "Populate,Reload", PROPERTY_USAGE_EDITOR), "", "get_populate_button");
+	ADD_PROPERTY(PropertyInfo(Variant::CALLABLE, "clear_button", PROPERTY_HINT_TOOL_BUTTON, "Clear,Clear", PROPERTY_USAGE_EDITOR), "", "get_clear_button");
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "biome", PROPERTY_HINT_RESOURCE_TYPE, "Biome"), "set_biome", "get_biome");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "data_map", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "TerrainDataMap3D"), "set_data_map", "get_data_map");
 	ADD_PROPERTY(PropertyInfo(Variant::VECTOR2, "litter_wind"), "set_litter_wind", "get_litter_wind");
@@ -7540,6 +7747,9 @@ void VegetationField3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "forest_floor_enabled"), "set_forest_floor_enabled", "is_forest_floor_enabled");
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "density_mask", PROPERTY_HINT_RESOURCE_TYPE, "Texture2D"), "set_density_mask", "get_density_mask");
 	ADD_PROPERTY(PropertyInfo(Variant::RECT2, "density_mask_rect", PROPERTY_HINT_NONE, "suffix:m"), "set_density_mask_rect", "get_density_mask_rect");
+	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "biome_map", PROPERTY_HINT_RESOURCE_TYPE, "Texture2D"), "set_biome_map", "get_biome_map");
+	ADD_PROPERTY(PropertyInfo(Variant::RECT2, "biome_map_rect", PROPERTY_HINT_NONE, "suffix:m"), "set_biome_map_rect", "get_biome_map_rect");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "biome_channel", PROPERTY_HINT_ENUM, "None:-1,Red:0,Green:1,Blue:2,Alpha:3"), "set_biome_channel", "get_biome_channel");
 	ADD_PROPERTY(PropertyInfo(Variant::PACKED_VECTOR4_ARRAY, "obstacles"), "set_obstacles", "get_obstacles");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "rock_field", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "RockField3D"), "set_rock_field", "get_rock_field");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "rock_obstacle_min", PROPERTY_HINT_RANGE, "0,4,0.05,suffix:m"), "set_rock_obstacle_min", "get_rock_obstacle_min");

@@ -6706,6 +6706,13 @@ varying vec3 v_geo_n;
 varying float v_light;
 varying vec3 v_tone; // The plant's own tone (no two plants of a species alike).
 uniform float light_response = 1.0;
+// Litter (PRESET_LEAF_LITTER 1, PRESET_NEEDLE_LITTER 2) takes the forest floor's scanned detail
+// (VegetationField3D.load_floor_scans) in world space, as the ground under it does: rot, damp and the fine litter's
+// pattern run across the fallen leaves and needles instead of each one being a clean copy of its texture.
+uniform float floor_scan = 0.0;
+global uniform sampler2D forest_scan_leaves : hint_default_black, filter_linear_mipmap_anisotropic, repeat_enable;
+global uniform sampler2D forest_scan_needles : hint_default_black, filter_linear_mipmap_anisotropic, repeat_enable;
+global uniform vec4 forest_scan_tile;
 
 #ifdef PLANT_SILK
 // Silk (docs/ideas/vegetation.md, "Dewy webs"): threads 1 to 4 microns thick, drawn here, not modelled. Each is a line in
@@ -6980,6 +6987,24 @@ void fragment() {
 		back *= 1.0 - 0.7 * dead;
 	}
 	albedo *= v_tone;
+	if (floor_scan > 0.0) {
+		bool needle = floor_scan > 1.5;
+		float tile = needle ? forest_scan_tile.y : forest_scan_tile.x;
+		if (tile > 0.0) {
+			// Two placements turned against each other, as the ground's ff_scan(), offset so a leaf does not repeat
+			// the floor just under it.
+			vec2 q = v_world.xz / tile + vec2(0.23, 0.61);
+			vec2 q2 = mat2(vec2(0.6, 0.8), vec2(-0.8, 0.6)) * q + vec2(0.37, 0.71);
+			float w = step(0.5, fract(sin(dot(floor(v_world.xz * 0.25), vec2(12.9898, 78.233))) * 43758.5453));
+			float d = needle ? mix(texture(forest_scan_needles, q).r, texture(forest_scan_needles, q2).r, w)
+							 : mix(texture(forest_scan_leaves, q).r, texture(forest_scan_leaves, q2).r, w);
+			albedo *= mix(1.0, 2.0 * d, 0.7);
+			// And seven times larger, as the ground under it: metre-scale drifts of damp, darker and drier, paler litter.
+			vec2 m = v_world.xz / (tile * 7.0) + vec2(0.11, 0.43);
+			float dm = needle ? texture(forest_scan_needles, m).r : texture(forest_scan_leaves, m).r;
+			albedo *= mix(1.0, 2.0 * dm, 0.55);
+		}
+	}
 	// Living tissue acclimates to its light (sun and shade leaves); litter and dead tissue do not.
 	albedo = mix(albedo, vegetation_light_tint(albedo, v_light), light_response * (1.0 - dead));
 	float rough = roughness;
@@ -8595,6 +8620,9 @@ Ref<ArrayMesh> PlantGenerator::generate() {
 		}
 		mat->set_shader_parameter("height", MAX(plant_height * size, 0.05f));
 		// Sun and shade leaves: leaves and stems change colour with their light, petals and litter do not.
+		if (preset == PRESET_LEAF_LITTER || preset == PRESET_NEEDLE_LITTER) {
+			mat->set_shader_parameter("floor_scan", preset == PRESET_LEAF_LITTER ? 1.0f : 2.0f);
+		}
 		mat->set_shader_parameter("light_response", s >= SURFACE_PETAL || is_mushroom(preset) || preset == PRESET_LEAF_LITTER || preset == PRESET_NEEDLE_LITTER || preset == PRESET_TWIGS ? 0.0f : 1.0f);
 		// Stiffer the bigger and woodier: bramble canes and bracken stipes barely lean in the wind.
 		mat->set_shader_parameter("stiffness", preset == PRESET_BRAMBLE ? 4.0f : (preset == PRESET_RASPBERRY ? 3.0f : (preset == PRESET_BRACKEN || preset == PRESET_CATTAIL || preset == PRESET_MARRAM || preset == PRESET_SEA_HOLLY || preset == PRESET_CORD_GRASS || preset == PRESET_GLASSWORT ? 2.5f : (preset == PRESET_MOSS || preset == PRESET_FEATHER_MOSS || preset == PRESET_PINCUSHION_MOSS || preset == PRESET_SOIL_CRUST || preset == PRESET_FIRE_MOSS || preset == PRESET_CHARRED_STEMS || preset == PRESET_LEAF_LITTER || preset == PRESET_NEEDLE_LITTER || preset == PRESET_TWIGS || preset == PRESET_WATER_LILY || preset == PRESET_STONECROP || preset == PRESET_RIVER_MOSS || preset == PRESET_LIVERWORT || preset == PRESET_SPHAGNUM || is_mushroom(preset) ? 50.0f : 1.5f))));

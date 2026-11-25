@@ -37,6 +37,7 @@
 #include "tree_bark_detail.h"
 #include "tree_generator.h"
 #include "tree_wind_3d.h"
+#include "placed_plant_3d.h"
 #include "vegetation_field_3d.h"
 #include "vegetation_mist_3d.h"
 #include "vegetation_pollen_3d.h"
@@ -55,6 +56,7 @@ void initialize_vegetation_module(ModuleInitializationLevel p_level) {
 	GDREGISTER_CLASS(PlantSpecies);
 	GDREGISTER_CLASS(Biome);
 	GDREGISTER_CLASS(VegetationField3D);
+	GDREGISTER_CLASS(PlacedPlant3D);
 	GDREGISTER_CLASS(VegetationMist3D);
 	GDREGISTER_CLASS(VegetationPollen3D);
 	GDREGISTER_CLASS(LeafFall3D);

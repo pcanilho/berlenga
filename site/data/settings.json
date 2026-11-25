@@ -726,12 +726,84 @@
    "topic": ""
   },
   {
-   "name": "Generate",
+   "name": "Editor preview",
    "settings": [
-    "TerrainGenerator3D"
+    "generate_on_ready",
+    "water_on_ready",
+    "auto_rebuild",
+    "editor_preview"
    ],
    "note": "",
-   "what": "runs the generator and writes the ground, sea, lakes and rivers into the scene.",
+   "what": "ground, water, material, data maps, plants, grass and stones appear in the editor as in the game; nothing generated is saved.",
+   "page": "level-design",
+   "title": "Level design",
+   "topic": "Editor tools"
+  },
+  {
+   "name": "Mask painting",
+   "settings": [
+    "*_map",
+    "*_mask"
+   ],
+   "note": "",
+   "what": "paint any `*_map` or `*_mask` slot on the ground with Add, Subtract, Replace and Smooth; each stroke is one undo step.",
+   "page": "level-design",
+   "title": "Level design",
+   "topic": "Editor tools"
+  },
+  {
+   "name": "Keep-out areas",
+   "settings": [
+    "WorldExclusion3D"
+   ],
+   "note": "",
+   "what": "a closed curve, open track or box keeps plants, grass or stones out, with a soft edge.",
+   "page": "level-design",
+   "title": "Level design",
+   "topic": "Editor tools"
+  },
+  {
+   "name": "Hand-placed plants",
+   "settings": [
+    "PlacedPlant3D"
+   ],
+   "note": "",
+   "what": "one plant of a species, with its footprint kept clear of procedural plants and stones.",
+   "page": "level-design",
+   "title": "Level design",
+   "topic": "Editor tools"
+  },
+  {
+   "name": "Biome map",
+   "settings": [
+    "biome_map",
+    "biome_channel"
+   ],
+   "note": "",
+   "what": "fields share one painted map, a channel each; overlapping paint splits the ground.",
+   "page": "level-design",
+   "title": "Level design",
+   "topic": "Editor tools"
+  },
+  {
+   "name": "Sculpt layers",
+   "settings": [
+    "TerrainSculptLayer3D"
+   ],
+   "note": "",
+   "what": "painted height offsets over the generated ground; lakes and rivers settle round them, and turning a layer off restores the ground.",
+   "page": "level-design",
+   "title": "Level design",
+   "topic": "Editor tools"
+  },
+  {
+   "name": "Generate",
+   "settings": [
+    "TerrainGenerator3D",
+    "generate_on_ready"
+   ],
+   "note": "",
+   "what": "generates the ground when the scene opens and writes it into the ground node on Generate.",
    "page": "level-design",
    "title": "Level design",
    "topic": "Terrain"

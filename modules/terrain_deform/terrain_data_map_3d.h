@@ -99,6 +99,10 @@ private:
 	Ref<ImageTexture> water_texture;
 	double bake_msec = 0.0;
 	bool bake_queued = false;
+	uint64_t bake_serial = 0; // counts bakes; a queued bake skips when a bake ran since it was queued
+	uint64_t queued_serial = 0;
+	ObjectID followed_generator; // bake_on_ready: a TerrainGenerator3D height source is baked again each time it generates
+	void _on_generator_generated();
 
 	Ref<ClimateRecipe> climate_recipe;
 	int climate_resolution = 0;

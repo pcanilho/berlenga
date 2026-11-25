@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="WorldExclusion3D" inherits="Path3D" api_type="core" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+	<brief_description>
+		A keep-out area for procedural plants, grass and stones.
+	</brief_description>
+	<description>
+		Keeps the procedural fields out of hand-placed content, like PCG Biome Core's exclusion volumes and paths. A closed curve is an area, an open curve a track of [member width], and no curve a box of [member size]; the node's rotation and scale apply. Moving or editing it announces the old and new bounds through [signal WorldContracts.exclusions_changed], and the fields place only that ground again.
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="get_keep_out_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				How strongly the area keeps content out at [param position]: 1 inside, 0 outside, softened over [member fade].
+			</description>
+		</method>
+	</methods>
+	<members>
+		<member name="closed" type="bool" setter="set_closed" getter="is_closed" default="true">
+			With a curve: [code]true[/code] makes it an area, [code]false[/code] a track of [member width].
+		</member>
+		<member name="fade" type="float" setter="set_fade" getter="get_fade" default="1.0">
+			The width in metres over which the keep-out softens at the edge.
+		</member>
+		<member name="kinds" type="int" setter="set_kinds" getter="get_kinds" default="7">
+			What it keeps out: plants ([constant KIND_PLANTS]), grass ([constant KIND_GRASS]) and stones ([constant KIND_ROCKS]).
+		</member>
+		<member name="size" type="Vector2" setter="set_size" getter="get_size" default="Vector2(16, 16)">
+			The box's size in metres, used when the node has no curve.
+		</member>
+		<member name="width" type="float" setter="set_width" getter="get_width" default="4.0">
+			A track's width in metres (an open curve).
+		</member>
+	</members>
+	<constants>
+		<constant name="KIND_PLANTS" value="1" enum="Kind">
+			Keeps out [VegetationField3D] plants.
+		</constant>
+		<constant name="KIND_GRASS" value="2" enum="Kind">
+			Keeps out [GrassField3D] grass.
+		</constant>
+		<constant name="KIND_ROCKS" value="4" enum="Kind">
+			Keeps out [RockField3D] stones.
+		</constant>
+	</constants>
+</class>

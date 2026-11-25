@@ -1,0 +1,24 @@
+config_version=5
+
+[application]
+
+config/name="Editor tools bench"
+run/main_scene="res://world.tscn"
+
+[autoload]
+
+Check="*res://check.gd"
+
+[display]
+
+window/size/viewport_width=960
+window/size/viewport_height=540
+window/vsync/vsync_mode=0
+
+[editor_plugins]
+
+enabled=PackedStringArray()
+
+[physics]
+
+3d/physics_engine="PhysX"

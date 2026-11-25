@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="PlacedPlant3D" inherits="Node3D" api_type="core" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+	<brief_description>
+		One hand-placed plant from a [PlantSpecies].
+	</brief_description>
+	<description>
+		Draws one variant of a species at the node's transform, like a single placement in a foliage tool, and keeps the procedural plants and stones (and grass, with [member clear_grass]) out of its footprint.
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="get_effective_clearance" qualifiers="const">
+			<return type="float" />
+			<description>
+				The keep-out radius in use: [member clearance], or the species' footprint when that is negative.
+			</description>
+		</method>
+	</methods>
+	<members>
+		<member name="clear_grass" type="bool" setter="set_clear_grass" getter="is_clear_grass" default="false">
+			Also keeps grass out of the footprint.
+		</member>
+		<member name="clearance" type="float" setter="set_clearance" getter="get_clearance" default="-1.0">
+			The keep-out radius in metres; negative uses the species' footprint.
+		</member>
+		<member name="species" type="PlantSpecies" setter="set_species" getter="get_species">
+			The species to draw.
+		</member>
+		<member name="variant" type="int" setter="set_variant" getter="get_variant" default="0">
+			Which of the species' meshes to draw.
+		</member>
+	</members>
+</class>

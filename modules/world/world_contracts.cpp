@@ -30,6 +30,7 @@
 /**************************************************************************/
 
 #include "world_contracts.h"
+#include "core/config/engine.h"
 
 #include "core/math/geometry_2d.h"
 #include "core/templates/hash_set.h"
@@ -41,6 +42,11 @@
 #include "servers/physics_3d/physics_server_3d.h"
 #include "scene/resources/3d/world_3d.h"
 #include "scene/main/window.h"
+#include "scene/3d/camera_3d.h"
+#include "scene/main/viewport.h"
+#ifdef TOOLS_ENABLED
+#include "editor/editor_interface.h"
+#endif
 #include "scene/main/scene_tree.h"
 #include "scene/3d/physics/collision_shape_3d.h"
 #include "scene/3d/physics/character_body_3d.h"
@@ -1199,6 +1205,26 @@ void WorldGround::_bind_methods() {
 }
 
 WorldContracts *WorldContracts::singleton = nullptr;
+
+bool WorldContracts::is_editor_preview(const Node *p_node) {
+	return p_node && Engine::get_singleton()->is_editor_hint() && p_node->is_inside_tree();
+}
+
+Camera3D *WorldContracts::get_view_camera(const Node *p_node) {
+	if (!p_node || !p_node->is_inside_tree()) {
+		return nullptr;
+	}
+#ifdef TOOLS_ENABLED
+	if (Engine::get_singleton()->is_editor_hint() && EditorInterface::get_singleton()) {
+		SubViewport *vp = EditorInterface::get_singleton()->get_editor_viewport_3d(0);
+		if (vp && vp->get_camera_3d()) {
+			return vp->get_camera_3d();
+		}
+	}
+#endif
+	Viewport *vp = p_node->get_viewport();
+	return vp ? vp->get_camera_3d() : nullptr;
+}
 
 WorldWeather *WorldContracts::weather() {
 	static Ref<WorldWeather> fallback; // before the singleton exists or after it goes
@@ -2503,6 +2529,8 @@ Dictionary WorldContracts::describe_body_bind(Node *p_node) const {
 }
 
 void WorldContracts::_bind_methods() {
+	// A WorldExclusion3D came, went or changed over area (world x, z): placers lay what sits there again.
+	ADD_SIGNAL(MethodInfo("exclusions_changed", PropertyInfo(Variant::RECT2, "area")));
 	ClassDB::bind_static_method("WorldContracts", D_METHOD("climate_precipitation_factor_at", "position"), &WorldContracts::climate_precipitation_factor_at);
 	ClassDB::bind_method(D_METHOD("set_weather", "stub"), &WorldContracts::set_weather);
 	ClassDB::bind_method(D_METHOD("get_weather"), &WorldContracts::get_weather);

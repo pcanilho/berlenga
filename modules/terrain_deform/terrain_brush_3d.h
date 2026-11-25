@@ -64,9 +64,9 @@ private:
 	real_t cell_size = 0.5;
 	bool enabled = true;
 
+protected:
 	void _changed();
 
-protected:
 	void _notification(int p_what);
 	static void _bind_methods();
 
@@ -89,9 +89,10 @@ public:
 	bool is_enabled() const { return enabled; }
 
 	Dictionary get_carve_brush() const;
-	Rect2 get_world_rect() const; // world XZ bounds with the falloff
+	virtual Rect2 get_world_rect() const; // world XZ bounds with the falloff
 	// The target height (or offset, for MODE_ADD) and the mask at a world point; p_inv is p_xf's affine inverse.
-	void sample_world(const Transform3D &p_xf, const Transform3D &p_inv, real_t p_x, real_t p_z, float &r_height, float &r_mask) const;
+	virtual void sample_world(const Transform3D &p_xf, const Transform3D &p_inv, real_t p_x, real_t p_z, float &r_height, float &r_mask) const;
+	virtual ~TerrainBrush3D() {}
 
 	TerrainBrush3D();
 };

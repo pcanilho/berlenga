@@ -88,6 +88,12 @@
 				Takes [member sea_level] and the erosion detail code from a [TerrainGenerator3D] that has generated. The geology maps reach the shader through the generator's global uniforms.
 			</description>
 		</method>
+		<method name="get_generator" qualifiers="const">
+			<return type="Object" />
+			<description>
+				The [TerrainGenerator3D] the material reads, or [code]null[/code].
+			</description>
+		</method>
 	</methods>
 	<members>
 		<member name="alluvium_area" type="float" setter="set_alluvium_area" getter="get_alluvium_area" default="5.5">

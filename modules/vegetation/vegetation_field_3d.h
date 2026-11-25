@@ -38,6 +38,7 @@
 #include "vegetation_holes.h"
 #include "vegetation_obstacles.h"
 #include "vegetation_paths.h"
+#include "modules/world/world_exclusion_3d.h"
 
 #include "core/object/worker_thread_pool.h"
 #include "core/os/rw_lock.h"
@@ -146,6 +147,12 @@ private:
 	// Painted or generated density over a world rect: each species reads one channel (PlantSpecies.mask_channel).
 	Ref<Texture2D> density_mask;
 	Rect2 density_mask_rect;
+	// Biome map (docs/ideas/editor-tools.md, D; Unreal PCG Biome Core's texture biomes): fields that share one painted
+	// map each take one channel, its share of the channels painted there (normalised when they sum past 1); outside
+	// the map's rect the field grows everywhere.
+	Ref<Texture2D> biome_map;
+	Rect2 biome_map_rect;
+	int biome_channel = -1;
 	PackedVector4Array obstacles;
 	VegetationObstacles obstacle_grid;
 	// A RockField3D whose stones the plants keep out of, fetched round each tile as it is placed (get_obstacles), in
@@ -217,6 +224,10 @@ private:
 	float tile_size = 32.0f;
 	int seed = 0;
 	bool populate_on_ready = true;
+	// Editor preview (docs/ideas/editor-tools.md, A): in the scene being edited the field places its plants as in the
+	// game, round the editor's view when streaming; nothing it places is saved.
+	bool editor_preview = true;
+	void _editor_ready();
 
 	HashMap<uint64_t, Pattern> patterns;
 
@@ -283,6 +294,10 @@ private:
 		Rect2 rect;
 		Ref<Image> mask_img;
 		Rect2 mask_rect;
+		WorldExclusions exclusions; // keep-out areas for plants (WorldExclusion3D), a copy
+		Ref<Image> biome_img; // the biome map (editor-tools.md D), read once
+		Rect2 biome_rect;
+		int biome_channel = -1;
 		const VegetationField3D *other = nullptr;
 		Transform3D to_local;
 		Transform3D global_xf;
@@ -478,6 +493,10 @@ private:
 	LocalVector<Vector4> canopy_losses;
 	LocalVector<Vector4> plant_removals; // add_plant_removal(): x, z, radius, species.
 	Rect2 removal_dirty;
+	void _read_biome(PlaceSetup &r_setup) const;
+	Rect2 exclusion_dirty; // keep-out areas changed there (WorldContracts exclusions_changed)
+	void _on_exclusions_changed(const Rect2 &p_area);
+	Rect2 mask_dirty; // density mask painted there (notify_density_mask_changed): its tiles are placed again
 	static void _apply_canopy_losses(LocalVector<Crown> &r_crowns, const LocalVector<Vector4> &p_losses, int p_from = 0);
 	static void _compute_maps(Maps &r_maps, const LocalVector<const LocalVector<Crown> *> &p_crowns, const LocalVector<const LocalVector<FarAdd> *> &p_far);
 	void _apply_maps(Maps &p_maps);
@@ -763,6 +782,15 @@ public:
 	NodePath get_data_map() const { return data_map; }
 	void set_density_mask(const Ref<Texture2D> &p_mask) { density_mask = p_mask; }
 	Ref<Texture2D> get_density_mask() const { return density_mask; }
+	void notify_density_mask_changed(const Rect2 &p_area);
+	void set_biome_map(const Ref<Texture2D> &p_map) { biome_map = p_map; }
+	Ref<Texture2D> get_biome_map() const { return biome_map; }
+	void set_biome_map_rect(const Rect2 &p_rect) { biome_map_rect = p_rect; }
+	Rect2 get_biome_map_rect() const { return biome_map_rect; }
+	void set_biome_channel(int p_channel) { biome_channel = CLAMP(p_channel, -1, 3); }
+	int get_biome_channel() const { return biome_channel; }
+	void notify_biome_map_changed(const Rect2 &p_area) { notify_density_mask_changed(p_area); }
+	float get_biome_share_at(const Vector3 &p_position) const;
 	void set_density_mask_rect(const Rect2 &p_rect) { density_mask_rect = p_rect; }
 	Rect2 get_density_mask_rect() const { return density_mask_rect; }
 	// Rocks on the ground, (x, ground y, z, radius at the soil): no plant grows inside one.
@@ -814,6 +842,10 @@ public:
 	float get_tile_size() const { return tile_size; }
 	void set_seed(int p_seed);
 	int get_seed() const { return seed; }
+	void set_editor_preview(bool p_enable);
+	bool is_editor_preview() const { return editor_preview; }
+	Callable get_populate_button();
+	Callable get_clear_button();
 	void set_populate_on_ready(bool p_enable);
 	bool is_populate_on_ready() const { return populate_on_ready; }
 

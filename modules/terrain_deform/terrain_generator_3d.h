@@ -364,6 +364,16 @@ private:
 	LocalVector<Channel> channels_generated; // before the river tails were cut
 	LocalVector<float> touch_mask; // per cell: the mask of the brushes that moved it (the tile erosion fades there)
 	LocalVector<float> touch_flat; // per cell: the mask of the flatten brushes (the erosion detail fades there)
+	// Sculpt layers (TerrainSculptLayer3D, editor-tools.md E): their offsets at the grid's nodes went into the touch-ups;
+	// the ground adds what lies between the nodes (each layer's offset less the nodes' interpolated sum).
+	struct SculptFine {
+		Ref<Image> image; // RF, metres before scale
+		Rect2 rect;
+		float scale = 1.0f;
+		float at(real_t p_x, real_t p_z) const;
+	};
+	LocalVector<SculptFine> sculpt_fine;
+	LocalVector<float> sculpt_nodes;
 	int last_touch_cells = 0;
 	int last_touch_lakes = 0;
 	double last_touch_msec = 0.0;
@@ -432,6 +442,15 @@ private:
 	NodePath sky_light_source;
 	// Guide preview: a coarse run (guide_preview_scale times the cell size) a moment after a guide changes.
 	bool guide_preview = true;
+	// A saved scene sets itself up (docs/ideas/editor-tools.md, A): the ground is generated when the node is ready, in
+	// the editor and in the game, unless a script has generated it first; the sea, lakes and rivers are then built as
+	// internal children (not saved), rivers from water_river_min_area up.
+	bool generate_on_ready = true;
+	bool water_on_ready = true;
+	real_t water_river_min_area = 1500000.0;
+	ObjectID auto_water; // the internal holder of the water generate_on_ready built
+	void _auto_generate();
+	void _auto_water();
 	real_t guide_preview_scale = 4.0;
 	double preview_wait = -1.0;
 	double last_preview_msec = 0.0;
@@ -1114,6 +1133,12 @@ public:
 	real_t get_last_change() const { return last_change; }
 
 	Callable get_bake_button();
+	void set_generate_on_ready(bool p_enable);
+	bool is_generate_on_ready() const { return generate_on_ready; }
+	void set_water_on_ready(bool p_enable);
+	bool is_water_on_ready() const { return water_on_ready; }
+	void set_water_river_min_area(real_t p_area) { water_river_min_area = MAX(real_t(0.0), p_area); }
+	real_t get_water_river_min_area() const { return water_river_min_area; }
 
 	PackedStringArray get_configuration_warnings() const override;
 };

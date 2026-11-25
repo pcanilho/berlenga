@@ -3553,6 +3553,7 @@ void TerrainMaterial3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_overlay", "overlay"), &TerrainMaterial3D::get_overlay);
 	ClassDB::bind_method(D_METHOD("load_scan_set", "dir", "slots", "maps"), &TerrainMaterial3D::load_scan_set, DEFVAL(PackedStringArray()), DEFVAL(String()));
 	ClassDB::bind_method(D_METHOD("use_generator", "generator"), &TerrainMaterial3D::use_generator);
+	ClassDB::bind_method(D_METHOD("get_generator"), &TerrainMaterial3D::get_generator);
 	ClassDB::bind_method(D_METHOD("get_ground_albedo_at", "position"), &TerrainMaterial3D::get_ground_albedo_at);
 #define BIND_PROP(m_type, m_name, m_get, m_hint, m_hint_str) \
 	ClassDB::bind_method(D_METHOD("set_" #m_name, "value"), &TerrainMaterial3D::set_##m_name); \

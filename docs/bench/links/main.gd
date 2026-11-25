@@ -3521,6 +3521,7 @@ func _ground_color_tests() -> void:
 		_skip("ground colour", "needs the terrain modules")
 		return
 	var gen := TerrainGenerator3D.new()
+	gen.generate_on_ready = false # this bench generates itself, with its own settings
 	gen.glacial_enabled = false
 	gen.glacial_converged = false
 	gen.tile_erosion_enabled = false
