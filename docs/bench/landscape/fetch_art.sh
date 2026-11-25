@@ -3,7 +3,7 @@
 # Usage: GITEA_LFS_TOKEN=... bash fetch_art.sh [commit]
 set -euo pipefail
 : "${GITEA_LFS_TOKEN:?GITEA_LFS_TOKEN is not set in this environment}"
-REV="${1:-74c4863}"
+REV="${1:-2b41030}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 SRC="${ART_CACHE:-/tmp/bench-art-src}"
 AUTH=(-c credential.helper= -c 'credential.https://gitea.canilho.net.helper=!f() { echo username=oauth2; echo "password=$GITEA_LFS_TOKEN"; }; f')

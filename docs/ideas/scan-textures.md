@@ -162,4 +162,16 @@ Next on the terrain side: burn scars (WorldBurnScar3D draws its own char), water
 - Raster and path traced at 100% crop on an oak trunk and a fallen log's butt: the scans'
   fibres stay under the path tracer.
 
-Next on the tree side: leaf atlases (ambientCG LeafSet) against the procedural leaf textures and their atlas UVs.
+- Leaves (art 2b41030): ambientCG Leaf Set 009 (hazel) and 010 (maple) are the only CC0 leaf atlases that fit a
+  species. `docs/bench/trees/leaf_atlas.py` unwraps each scanned leaf into the blade's UV frame (u margin to margin
+  across each row, the two halves either side of the midline, v base to tip; for maples the central lobe, as every
+  lobe is its own blade) as its luminance over a local mean. The scans hardly show their veins in colour (a hazel
+  midrib is 3% brighter than the lamina beside it; the relief carries them), so `_leaf_albedo` multiplies the scan
+  over the drawn venation (strength 0.6 as an exponent) rather than replacing it: the veins stay, each leaf gains a
+  real lamina's mottling and spots. Each leaf takes one of the atlas's leaves by a hash of where it grows (the blade's
+  u into that column, the flutter shader reads u back), so neighbours differ. Hazel; sycamore, sugar, red and field
+  maple (palmate venation is shared across Acer).
+- Dead stubs: a kept dead branch's stub scales with its radius (a thin one 1.6 m long read as a wire).
+
+Next on the tree side: a leaf normal map from the scans (leaves carry no tangents yet), more species as CC0 leaf
+scans appear.
