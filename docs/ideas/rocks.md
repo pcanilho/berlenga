@@ -1382,6 +1382,13 @@ terrain material drew as sward. It now reads the shared pattern (WorldContracts:
 point, the same as climate_bare_patch_at): a pedestal only on bare soil patches, each soil stone checked at its own
 spot. get_pedestal_spots(rect, step, max) lists bare spots, deepest splash first, for framing.
 
+Cobble caps (25 Nov). A column is capped at 0.35 of its cap's width, and the soil stones are 1 to 8 cm, so no column
+stood above about 3 cm however much soil the rain took. Field pedestals of 5 to 10 cm, on badly eroding slopes and
+fresh burns, stand under cobbles. Now 4 percent of the pebble class's soil stones are 15 to 40 cm cobbles, with the same
+rule and cap. Default valley: a few cm of soil lost is right (mm to a few cm a wet season). For 5 to 15 cm, use a burn
+scar under half a year old on a bare 15 to 25 degree slope with 1200 mm or more of rain (10 to 14 cm lost), or a fully
+bare 20 degree dry patch (about 7 cm).
+
 ## Falling ledges (24 Nov)
 
 Technique: cantilever failure. An undercut caprock slab fails at its root over the bench's edge, where the bending

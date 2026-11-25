@@ -2784,6 +2784,13 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_cell_rect, uint32_t p_see
 							sdepth = own_depth;
 							pd.key = _library_key(type, rng.randf() < 0.3f ? RockGenerator::FAMILY_PEBBLE : RockGenerator::FAMILY_SCREE, RF_DETAIL_BIN + cls);
 							pd.size = sd1 * Math::pow(sd2 / sd1, rng.randf());
+							if (cls == 0 && rng.randf() < 0.04f) {
+								// Now and then a cobble, 15 to 40 cm: the caps real tall pedestals stand under (a column is
+								// capped at about a third of its cap's width, so the pebbles' columns stop at 3 cm however
+								// much soil the rain took; a cobble's carries the 5 to 15 cm a fresh burn or a badly
+								// eroding slope loses).
+								pd.size = 0.15f * Math::pow(0.4f / 0.15f, rng.randf());
+							}
 							pd.film = 0.0f;
 							if (sdepth > 0.002f && rng.randf() >= 0.25f) {
 								pd.tilt = Math::deg_to_rad(8.0f) * rng.randf();
