@@ -588,6 +588,10 @@ real_t Landscape3D::_cliff_scale(const Vector3 &p, real_t p_k, real_t p_tan) con
 	if (p_k <= 0.0) {
 		return 0.0;
 	}
+	return MIN(p_k, _cliff_scale_limit(p, p_tan));
+}
+
+real_t Landscape3D::_cliff_scale_limit(const Vector3 &p, real_t p_tan) const {
 	const real_t tn = MIN(p_tan, real_t(6.0));
 	// Down the surface's own fall line: outward along the slope's horizontal normal m by 0.4 / tn while 0.4 m down, so
 	// the offset's change across the face (its noise and joints) counts with its change in height: the surface folds
@@ -609,7 +613,7 @@ real_t Landscape3D::_cliff_scale(const Vector3 &p, real_t p_k, real_t p_tan) con
 		}
 		prev = o;
 	}
-	return MIN(p_k, real_t(0.8) / MAX(tn * g, real_t(1e-4)));
+	return real_t(0.8) / MAX(tn * g, real_t(1e-4));
 }
 
 // The bank relief's scale at a point, as _cliff_scale for the cliffs: a slump's head scarp falls 0.4 to 1 of its
@@ -621,6 +625,10 @@ real_t Landscape3D::_bank_scale(const Vector3 &p, real_t p_k, real_t p_tan) cons
 	if (p_k <= 0.0) {
 		return 0.0;
 	}
+	return MIN(p_k, _bank_scale_limit(p, p_tan));
+}
+
+real_t Landscape3D::_bank_scale_limit(const Vector3 &p, real_t p_tan) const {
 	const real_t tn = MIN(p_tan, real_t(6.0));
 	// Down the surface's own fall line: outward along the slope's horizontal normal m by 0.4 / tn while 0.4 m down, so
 	// the offset's change across the face (its noise and joints) counts with its change in height: the surface folds
@@ -641,29 +649,56 @@ real_t Landscape3D::_bank_scale(const Vector3 &p, real_t p_k, real_t p_tan) cons
 		}
 		prev = o;
 	}
-	return MIN(p_k, real_t(0.6) / MAX(tn * g, real_t(1e-4)));
+	return real_t(0.6) / MAX(tn * g, real_t(1e-4));
 }
 
 // The displaced point for a point on the heightfield surface (landscape space).
 Vector3 Landscape3D::_cliff_point(const Vector3 &p, real_t p_weight_scale) const {
+	ReliefFrame frame;
+	return _cliff_point_framed(p, p_weight_scale, frame);
+}
+
+void Landscape3D::_relief_frame_weights(real_t p_fx, real_t p_fz, ReliefFrame &r_frame) const {
+	if (!r_frame.has_w) {
+		r_frame.w = _relief_weights_at(p_fx, p_fz);
+		r_frame.fold = _relief_fold_scale(p_fx, p_fz);
+		r_frame.has_w = true;
+	}
+}
+
+// As _cliff_point, keeping what it read at the point in r_frame (and reading only what r_frame lacks), so the mesh
+// build's other reads at a vertex (its CUSTOM channels) come from the same values instead of a second evaluation.
+Vector3 Landscape3D::_cliff_point_framed(const Vector3 &p, real_t p_weight_scale, ReliefFrame &r_frame) const {
 	const real_t fx = (p.x - origin.x) / spacing, fz = (p.z - origin.y) / spacing;
-	const Vector3 n = _normal_at(fx, fz);
+	if (!r_frame.has_n) {
+		r_frame.n = _normal_at(fx, fz);
+		r_frame.ml = Vector2(r_frame.n.x, r_frame.n.z).length();
+		r_frame.has_n = true;
+	}
+	const Vector3 n = r_frame.n;
 	const Vector2 m(n.x, n.z);
-	const real_t ml = m.length();
+	const real_t ml = r_frame.ml;
 	if (ml < 1e-4f || p_weight_scale <= 0.0) {
 		return p;
 	}
-	const Vector2 w = _relief_weights_at(fx, fz) * (p_weight_scale * _relief_fold_scale(fx, fz));
+	_relief_frame_weights(fx, fz, r_frame);
+	const Vector2 w = r_frame.w * (p_weight_scale * r_frame.fold);
 	real_t d = 0.0;
 	if (w.x > 0.0 && cliff_relief > 0.0) {
 		const real_t tn = ml / MAX(n.y, real_t(1e-3));
-		const real_t k = _cliff_scale(p, cliff_relief * w.x, tn);
+		if (r_frame.cliff_limit < 0.0) {
+			r_frame.cliff_limit = _cliff_scale_limit(p, tn);
+		}
+		const real_t k = MIN(cliff_relief * w.x, r_frame.cliff_limit); // _cliff_scale (its p_k is over 0 here)
 		d += k * _cliff_offset(p, cliff_relief * tn, cliff_relief, false); // the lip rule at the full scale, as _cliff_scale measured it
 		// The joint steps at the face's own scale: they never overhang, so the easing for the rest leaves them be.
 		d += cliff_relief * w.x * _joint_offset(p, cliff_relief * tn);
 	}
 	if (w.y > 0.0 && bank_relief > 0.0) {
-		d += _bank_scale(p, bank_relief * w.y, ml / MAX(n.y, real_t(1e-3))) * _bank_offset(p);
+		if (r_frame.bank_limit < 0.0) {
+			r_frame.bank_limit = _bank_scale_limit(p, ml / MAX(n.y, real_t(1e-3)));
+		}
+		d += MIN(bank_relief * w.y, r_frame.bank_limit) * _bank_offset(p); // _bank_scale
 	}
 	return p + Vector3(m.x / ml, 0.0, m.y / ml) * d;
 }
@@ -744,7 +779,14 @@ void Landscape3D::_build_cliff_surface(MeshJob &r_job) const {
 	// middle strays from the straight line between its ends (error-driven tessellation of a displacement, as adaptive
 	// displacement mapping does, Moreton 2001; Nießner et al. 2016), so a lip and the shadow it casts follow vertices
 	// placed along it instead of zig-zagging across the triangles.
-	auto split = [&](int a, int b) -> bool {
+	// An edge is shared by two triangles (and tested again at each depth it stays whole): the test runs once per edge,
+	// and the displacement of its middle is kept for the vertex a split puts there (the same point).
+	HashMap<uint64_t, uint8_t> split_done;
+	HashMap<uint64_t, Vector3> mid_disp;
+	auto edge_key = [](int a, int b) -> uint64_t {
+		return a < b ? (uint64_t(a) << 32 | uint32_t(b)) : (uint64_t(b) << 32 | uint32_t(a));
+	};
+	auto split_test = [&](int a, int b) -> bool {
 		if (on_fixed_side(base[a], base[b])) {
 			return false;
 		}
@@ -761,19 +803,30 @@ void Landscape3D::_build_cliff_surface(MeshJob &r_job) const {
 		}
 		const Vector3 pm = (base[a] + base[b]) * 0.5f;
 		const Vector3 dm = _cliff_point(pm, 1.0) - pm;
+		mid_disp.insert(edge_key(a, b), dm);
 		return (dm - (da + db) * 0.5f).length() > 0.08f;
+	};
+	auto split = [&](int a, int b) -> bool {
+		const uint64_t k = edge_key(a, b);
+		if (const uint8_t *f = split_done.getptr(k)) {
+			return *f != 0;
+		}
+		const bool s = split_test(a, b);
+		split_done.insert(k, s ? 1 : 0);
+		return s;
 	};
 	HashMap<uint64_t, int> mids;
 	auto mid = [&](int a, int b) -> int {
-		const uint64_t k = a < b ? (uint64_t(a) << 32 | uint32_t(b)) : (uint64_t(b) << 32 | uint32_t(a));
+		const uint64_t k = edge_key(a, b);
 		if (const int *f = mids.getptr(k)) {
 			return *f;
 		}
 		const int id = int(base.size());
 		base.push_back((base[a] + base[b]) * 0.5f);
 		keep.push_back(keep_at((base[a] + base[b]) * 0.5f));
-		disp.push_back(Vector3());
-		has_disp.push_back(0);
+		const Vector3 *dm = mid_disp.getptr(k);
+		disp.push_back(dm ? *dm : Vector3());
+		has_disp.push_back(dm ? 1 : 0);
 		mids.insert(k, id);
 		return id;
 	};
@@ -902,19 +955,39 @@ void Landscape3D::_build_cliff_surface(MeshJob &r_job) const {
 	const real_t e = 0.3f;
 	for (uint32_t i = 0; i < base.size(); i++) {
 		const Vector3 p = base[i];
-		vp[i] = _cliff_point(p, keep[i]) - corner;
-		const Vector3 nb = _normal_at((p.x - origin.x) / spacing, (p.z - origin.y) / spacing);
-		const Vector2 w = _relief_weights_at((p.x - origin.x) / spacing, (p.z - origin.y) / spacing) * _relief_fold_scale((p.x - origin.x) / spacing, (p.z - origin.y) / spacing);
+		ReliefFrame frame; // the reads below at p, each once
+		vp[i] = _cliff_point_framed(p, keep[i], frame) - corner;
+		_relief_frame_weights((p.x - origin.x) / spacing, (p.z - origin.y) / spacing, frame);
+		const Vector3 nb = frame.n;
+		const Vector2 w = frame.w * frame.fold;
 		{
 			const real_t ml = Vector2(nb.x, nb.z).length();
+			const real_t tn = ml / MAX(nb.y, real_t(1e-3));
 			c0[i * 4 + 0] = p.x;
 			c0[i * 4 + 1] = p.y;
 			c0[i * 4 + 2] = p.z;
-			c0[i * 4 + 3] = ml < 1e-4f ? 0.0f : float(_cliff_scale(p, cliff_relief * w.x * keep[i], ml / MAX(nb.y, real_t(1e-3))));
+			// _cliff_scale and _bank_scale, their bounds from the frame.
+			const real_t kc = cliff_relief * w.x * keep[i];
+			if (ml < 1e-4f || kc <= 0.0) {
+				c0[i * 4 + 3] = 0.0f;
+			} else {
+				if (frame.cliff_limit < 0.0) {
+					frame.cliff_limit = _cliff_scale_limit(p, tn);
+				}
+				c0[i * 4 + 3] = float(MIN(kc, frame.cliff_limit));
+			}
 			c1[i * 4 + 0] = nb.x;
 			c1[i * 4 + 1] = nb.y;
 			c1[i * 4 + 2] = nb.z;
-			c1[i * 4 + 3] = ml < 1e-4f ? 0.0f : float(_bank_scale(p, bank_relief * w.y * keep[i], ml / MAX(nb.y, real_t(1e-3))));
+			const real_t kb = bank_relief * w.y * keep[i];
+			if (ml < 1e-4f || kb <= 0.0) {
+				c1[i * 4 + 3] = 0.0f;
+			} else {
+				if (frame.bank_limit < 0.0) {
+					frame.bank_limit = _bank_scale_limit(p, tn);
+				}
+				c1[i * 4 + 3] = float(MIN(kb, frame.bank_limit));
+			}
 			c2[i * 4 + 0] = ml < 1e-4f ? 0.0f : float(cliff_relief * w.x * keep[i]);
 			const Vector3 np = _normal_central_at((p.x - origin.x) / spacing, (p.z - origin.y) / spacing);
 			c2[i * 4 + 1] = np.x;

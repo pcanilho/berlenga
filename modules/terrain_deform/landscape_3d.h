@@ -250,7 +250,22 @@ class Landscape3D : public Node3D, public WorldReliefProvider {
 	real_t _relief_fold_scale(real_t p_x, real_t p_z) const; // grid units
 	real_t _cliff_scale(const Vector3 &p, real_t p_k, real_t p_tan) const;
 	real_t _bank_scale(const Vector3 &p, real_t p_k, real_t p_tan) const;
+	real_t _cliff_scale_limit(const Vector3 &p, real_t p_tan) const; // _cliff_scale's bound, whatever p_k
+	real_t _bank_scale_limit(const Vector3 &p, real_t p_tan) const;
+	// What _cliff_point reads at a point besides the point itself, kept so the mesh build reads each once per vertex.
+	struct ReliefFrame {
+		Vector3 n; // _normal_at
+		real_t ml = 0.0; // its length in plan
+		Vector2 w; // _relief_weights_at
+		real_t fold = 1.0; // _relief_fold_scale
+		real_t cliff_limit = -1.0; // _cliff_scale_limit, -1 until read
+		real_t bank_limit = -1.0;
+		bool has_n = false;
+		bool has_w = false;
+	};
+	void _relief_frame_weights(real_t p_fx, real_t p_fz, ReliefFrame &r_frame) const;
 	Vector3 _cliff_point(const Vector3 &p_world, real_t p_weight_scale) const;
+	Vector3 _cliff_point_framed(const Vector3 &p_world, real_t p_weight_scale, ReliefFrame &r_frame) const;
 	void _build_cliff_surface(MeshJob &r_job) const;
 	const LocalVector<int> &_indices(int p_level, int p_mask);
 	void _crease_indices(int p_cx, int p_cz, int p_level, int p_mask, LocalVector<int> &r_indices) const;

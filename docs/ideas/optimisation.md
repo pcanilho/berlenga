@@ -631,3 +631,10 @@ sites of each callee's size); the remedy is one call site per heavy function.
   The landscape with the full art set then saved its frame at a 12.3 GB peak. `RenderingServer.get_texture_debug_usage()`
   (new binding) lists every texture with its size and source, and the landscape bench's `--tex-report` prints the
   largest after each memory line: textures were about 1 GB of it, not the cause.
+- Cliff wall views (rocks bench `--world --view=cliff`): placing the wall blocks and cliff kit pillars is under 4% of
+  the CPU there; 82% is Landscape3D building its cliff relief meshes (`_build_cliff_surface`), most of it the same
+  reads made again at one point. Now each edge's split test runs once (an edge is shared by two triangles) and keeps
+  its middle's displacement for the vertex a split puts there, and the per-vertex pass reads the heightfield normal,
+  face weights, fold scale and the two relief scale bounds (`_cliff_scale_limit`, `_bank_scale_limit`) once, shared
+  by the displaced point and the CUSTOM channels (`ReliefFrame`). All 611 chunk meshes of the view hash the same
+  (positions, normals, CUSTOM0-2, indices) and the frame is byte-identical; their build time fell by a third.
