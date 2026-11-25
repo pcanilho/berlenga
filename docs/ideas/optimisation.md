@@ -567,3 +567,41 @@ colour bake draws its own world in a SubViewport for about 117 frames while the 
 frames no longer run the landscape's caustics and collider. The bake wait on the landscape bench went from 474 s at
 100 frames to 258 s.
 
+
+## Path tracer pipeline build memory: one call site, no standby variant on a CPU device
+
+Building the landscape's path tracing pipeline on the software device passed 12.5 GB. Drivers turn each material's
+hit group into one closest-hit program with its whole call tree inlined (SPIR-V to NIR inlines every function; the
+software driver then keeps every stage's code and links the whole pipeline into one program), and every material's
+closest hit carries the shared integrator, `shade_and_bounce()`. Counting instructions after inlining in the cached
+SPIR-V (`spirv-opt --inline-entry-points-exhaustive`, and a call-site count per function) showed that integrator at
+about 320k instructions per hit group, most of it copies: `shade_local_surface()` and
+`sample_surface_continuation()` were each called from two places (the transparency peel and the opaque hit), and
+`surface_continuation_pdf()` from four places in each continuation, so the compiled code held two copies of the
+lighting, two of the bounce and ten of the density. This is ordinary inlining growth (code size is the sum over call
+sites of each callee's size); the remedy is one call site per heavy function.
+
+- `shade_and_bounce()` runs the peel and the opaque hit through one call of `shade_local_surface()` and one of
+  `sample_surface_continuation()`; each path keeps its own steps before and after, in the same order, with the
+  same random numbers.
+- `sample_surface_continuation()` wraps `sample_surface_lobe()`, which picks the lobe and direction and says whether
+  the density is owed; the wrapper takes it once, for `ps.next_ray_dir` under the same material.
+- The default hit shader went from about 400k to 215k instructions after inlining, and a materials bench start from
+  82 s to 19 s on the software device. The software device's output is not repeatable run to run (a few hundred
+  pixels of a 480x270 frame at 4 spp move by up to about 30 levels between two runs of one build); old against new
+  stays inside that on seven material scenes (coat, layer textures, transmission, back light, hair, subsurface,
+  water).
+- Scene-feature elision keeps a second, standby variant (nothing left out) built so a feature that streams in is
+  traced at once. On a CPU device that doubles every hit group's memory and its link alone needs gigabytes, and a
+  variant takes it minutes to build anyway, so a CPU device skips the standby. Traced frames use the scene's own
+  variant either way.
+- The water surface's hit and any-hit shaders were the largest (its `vertex()` and `fragment()` run in them): the
+  path tracer's foam gradient and the per-vertex normal each took four central-difference samples through four
+  calls, four copies of the foam or wave code. Each is now one call in a four-step loop (same arguments, same
+  arithmetic after); a body that size is never unrolled. Water hit shader 916k to 656k instructions after inlining,
+  any-hit 787k to 527k. Raster draws per-pixel normals by default, so it does not run the vertex samples.
+- Where the rest goes on the landscape (software device, allocations of 32 MB and up caught in a debugger): the
+  pipeline link itself is small now (about 50 MB); the last 4 GB before the peak are GPU allocations the path tracer
+  makes for its first frames (256 MB blocks, which on a CPU device are system memory) and the raster material
+  pipelines compiling on a worker at the same time (glibc arenas of 64 and 128 MB). `MALLOC_ARENA_MAX=2` trims a
+  little. The landscape at 640 still peaks near 13 GB there; the next cut is in those allocations, not the shaders.

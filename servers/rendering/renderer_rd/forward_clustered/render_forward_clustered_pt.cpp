@@ -159,9 +159,13 @@ void RenderForwardClusteredPT::_render_scene(RenderDataRD *p_render_data, const 
 		// otherwise draw this frame raster.
 		SceneShaderRaytracing *rt_shader = raytracing->get_shader();
 		if (rt_shader->request_pipeline_bundle(rt_flags)) {
-			if (rt_flags != full_rt_flags) {
-				// Keep the variant that leaves nothing out built, so a material that brings a left-out feature
-				// back (a snowy area streamed in) is traced with it at once, not drawn raster while it builds.
+			// Keep the variant that leaves nothing out built, so a material that brings a left-out feature back (a
+			// snowy area streamed in) is traced with it at once, not drawn raster while it builds. Not on a CPU device:
+			// its driver keeps every hit group's compiled code in system memory and links the whole pipeline into one
+			// program, so this standby set doubles the memory and its link alone needs gigabytes; a variant takes it
+			// minutes to build in any case. The frames traced are the same (this variant only stands by).
+			static const bool cpu_device = RD::get_singleton()->get_device_type() == RenderingDeviceEnums::DEVICE_TYPE_CPU;
+			if (rt_flags != full_rt_flags && !cpu_device) {
 				rt_shader->request_pipeline_bundle(full_rt_flags);
 			}
 		} else {
