@@ -2594,10 +2594,10 @@ Vector2 Landscape3D::_relief_at_local(const Vector3 &p, bool p_steps) const {
 	return Vector2(d * ml / n.y + tc, MIN(w.x + w.y, real_t(1.0)));
 }
 
-Vector2 Landscape3D::contract_relief_at(const Vector3 &p_position) const {
+Vector2 Landscape3D::contract_relief_at(const Vector3 &p_position, bool p_steps) const {
 	RWLockRead hl(heights_lock);
 	const Transform3D xf = is_inside_tree() ? get_global_transform() : Transform3D();
-	return _relief_at_local(xf.affine_inverse().xform(p_position));
+	return _relief_at_local(xf.affine_inverse().xform(p_position), p_steps);
 }
 
 // What contract_relief_at reads besides the stored properties: the placement, the grid and its heights as read so far.

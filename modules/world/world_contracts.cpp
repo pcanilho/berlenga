@@ -1155,7 +1155,7 @@ void WorldGround::_bind_methods() {
 	GDVIRTUAL_BIND(_stones_near, "rect");
 	ClassDB::bind_method(D_METHOD("albedo_at", "position"), &WorldGround::albedo_at);
 	GDVIRTUAL_BIND(_albedo_at, "position");
-	ClassDB::bind_method(D_METHOD("relief_at", "position"), &WorldGround::relief_at);
+	ClassDB::bind_method(D_METHOD("relief_at", "position", "steps"), &WorldGround::relief_at, DEFVAL(true));
 	GDVIRTUAL_BIND(_relief_at, "position");
 	ClassDB::bind_method(D_METHOD("notify_relief_changed", "area"), &WorldGround::notify_relief_changed);
 	ADD_SIGNAL(MethodInfo("relief_changed", PropertyInfo(Variant::RECT2, "area")));
@@ -1577,7 +1577,7 @@ void WorldGround::notify_relief_changed(const Rect2 &p_area) {
 	emit_signal(SNAME("relief_changed"), p_area);
 }
 
-Vector2 WorldGround::relief_at(const Vector3 &p_position) const {
+Vector2 WorldGround::relief_at(const Vector3 &p_position, bool p_steps) const {
 	Vector2 r;
 	if (GDVIRTUAL_CALL(_relief_at, p_position, r)) {
 		return r;
@@ -1585,7 +1585,7 @@ Vector2 WorldGround::relief_at(const Vector3 &p_position) const {
 	const LocalVector<WorldReliefProvider *> *list = WorldContracts::relief_providers_list();
 	if (list) {
 		for (const WorldReliefProvider *p : *list) {
-			const Vector2 v = p->contract_relief_at(p_position);
+			const Vector2 v = p->contract_relief_at(p_position, p_steps);
 			if (Math::is_finite(v.x)) {
 				return Vector2(v.x, CLAMP(v.y, 0.0f, 1.0f));
 			}
