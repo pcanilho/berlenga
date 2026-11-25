@@ -4329,8 +4329,8 @@ func _build_camera() -> void:
 					var band := 0.0
 					for k in 10:
 						band = maxf(band, GrassField3D.get_terracette_at(Vector3(xx, hp - float(k) * 0.2, zz), grad).x)
-					if band < 0.8:
-						continue
+					if band < 0.8 and not args.has("tc-any"):
+						continue # --tc-any: any soil slope in the band, terraced or not (cured-cover and plant frames)
 					var down := Vector2(-gx, -gz).normalized()
 					# Raking: the contour along the sun (down the slope square to it), the face still lit.
 					# Lit: the slope faces the sun at least --tc-lit (0.2) of the way, so the treads catch light and the
