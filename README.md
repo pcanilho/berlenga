@@ -21,6 +21,7 @@ Berlenga is a Godot 4 fork with Vulkan path tracing, DLSS Ray Reconstruction and
 
 **World**
 
+- **[Level design](https://berlenga.canilho.net/features/level-design/)**: how the world systems are set up in the editor: nodes, curves, brush nodes and painted maps.
 - **[Terrain](https://berlenga.canilho.net/features/terrain/)**: mountain ranges raised and eroded per seed, with geology, river networks, coasts and lakes; non-destructive height brushes; terrain data maps.
 - **[Rocks](https://berlenga.canilho.net/features/rocks/)**: rocks and stones as geometry, broken along each rock type's joints and weathered; placed by rockfall, scree, glacial till, rivers, shores and cliffs.
 - **[Water](https://berlenga.canilho.net/features/water/)**: refraction, murky water, caustics, ocean and storm seas, currents, boat wakes, white water, rivers and waterfalls, live water that floods and drains, shore waves, camera under water.
