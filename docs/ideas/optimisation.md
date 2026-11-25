@@ -605,3 +605,13 @@ sites of each callee's size); the remedy is one call site per heavy function.
   makes for its first frames (256 MB blocks, which on a CPU device are system memory) and the raster material
   pipelines compiling on a worker at the same time (glibc arenas of 64 and 128 MB). `MALLOC_ARENA_MAX=2` trims a
   little. The landscape at 640 still peaks near 13 GB there; the next cut is in those allocations, not the shaders.
+- Those allocations, on a CPU device only (a GPU keeps every path as before): MultiMesh instances are traced as
+  TLAS instances of the mesh's own BLAS instead of being copied into merged per-tile BLASes (the merge cap,
+  `rendering/pathtracing/multimesh_merged_blas_max_triangles`, is held at its floor of 256 there). Merging trades
+  memory for trace speed on hardware traversal; a software device has the memory cost (merged vertex copies,
+  per-tile BLASes and their build scratch, all system memory) and none of the gain. The same triangles are traced
+  either way. And the free heap is handed back to the system (`malloc_trim`) at most every 5 s while a CPU device
+  renders, since the pipeline compiles on worker threads leave glibc arenas full of freed pages that the next
+  allocation spike stacks on. The landscape at 480x270 now saves its path traced frame on the software device, peak
+  11.9 GB resident (it was killed at about 13.5 GB). A GPU-written MultiMesh scene and the grass meadow match the
+  previous build inside the run-to-run noise.
