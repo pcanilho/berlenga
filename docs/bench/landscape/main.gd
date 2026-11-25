@@ -1252,6 +1252,19 @@ func _ready() -> void:
 			await RenderingServer.frame_post_draw
 			get_viewport().get_texture().get_image().save_png(args["rock-pair"])
 			_log("saved %s (rocks %s, paused)" % [args["rock-pair"], args.get("rock-pair-prop", "")])
+		if args.has("mat-pair") and landscape != null and landscape.material != null:
+			# --mat-pair=PATH --mat-pair-prop=name:value[;...]: the same moment with the ground's TerrainMaterial3D
+			# properties changed (e.g. mud_scan:null for the mud scan's before frame): paused, --mat-pair-frames (12) more.
+			process_mode = Node.PROCESS_MODE_ALWAYS
+			get_tree().paused = true
+			for kv in String(args.get("mat-pair-prop", "")).split(";", false):
+				var pv := kv.split(":")
+				landscape.material.set(pv[0], str_to_var(pv[1]))
+			for i in int(args.get("mat-pair-frames", "12")):
+				await get_tree().process_frame
+			await RenderingServer.frame_post_draw
+			get_viewport().get_texture().get_image().save_png(args["mat-pair"])
+			_log("saved %s (ground material %s, paused)" % [args["mat-pair"], args.get("mat-pair-prop", "")])
 		if args.has("land-pair") and landscape != null:
 			# --land-pair=PATH --land-pair-prop=name:value[;...]: the same moment with Landscape3D properties changed
 			# (e.g. terracette_relief:0.0): the scene paused, the landscape rebuilt over --land-pair-frames (90).
