@@ -2057,7 +2057,8 @@ func _generate() -> void:
 		lake_marker.set_meta("rock_lip", true)
 		add_child(lake_marker)
 	gen = TerrainGenerator3D.new()
-	gen.generate_on_ready = false # this bench generates itself, with its own settings
+	if "generate_on_ready" in gen:
+		gen.generate_on_ready = false # this bench generates itself, with its own settings (older builds lack it)
 	# Heavy generator options are on by default: this bench sets each from its own flags (dunes on, --dunes=0 off).
 	gen.glacial_enabled = false
 	gen.glacial_converged = false
@@ -7514,7 +7515,7 @@ func _mem_log(tag: String) -> void:
 			OS.get_static_memory_usage() >> 20])
 	if args.has("tex-report"):
 		# --tex-report: the largest textures the renderer holds (size, format, source) after each memory line.
-		var tl: Array = RenderingServer.get_texture_debug_usage() if RenderingServer.has_method("get_texture_debug_usage") else []
+		var tl: Array = RenderingServer.call("get_texture_debug_usage") if RenderingServer.has_method("get_texture_debug_usage") else []
 		tl.sort_custom(func(a, b): return int(a["bytes"]) > int(b["bytes"]))
 		var total := 0
 		for t in tl:
