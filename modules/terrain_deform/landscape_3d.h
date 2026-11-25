@@ -99,6 +99,17 @@ class Landscape3D : public Node3D, public WorldReliefProvider {
 	};
 
 	NodePath source;
+	// The ground of a saved scene draws itself (docs/ideas/editor-tools.md, A): rebuilt once its TerrainGenerator3D
+	// source has a result and each time it generates again, in the editor and in the game; a TerrainMaterial3D as
+	// material is pointed at that generator. A script's own rebuild() before the deferred one cancels it.
+	bool auto_rebuild = true;
+	bool rebuild_pending = false;
+	ObjectID auto_source;
+	void _auto_connect();
+	void _auto_disconnect();
+	void _on_source_generated();
+	void _auto_rebuild();
+	void _auto_material(Node *p_source);
 	Ref<Image> height_image;
 	Vector2 origin;
 	real_t spacing = 1.0;
@@ -281,7 +292,10 @@ protected:
 	static void _bind_methods();
 
 public:
-	void set_source(const NodePath &p_path) { source = p_path; }
+	void set_source(const NodePath &p_path);
+	void set_auto_rebuild(bool p_enable);
+	bool is_auto_rebuild() const { return auto_rebuild; }
+	Callable get_rebuild_button();
 	NodePath get_source() const { return source; }
 	void set_height_image(const Ref<Image> &p_image) { height_image = p_image; }
 	Ref<Image> get_height_image() const { return height_image; }

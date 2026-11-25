@@ -891,6 +891,8 @@ struct WorldContactBody {
 	bool feet = false; // meta world_contact_feet: its feet are contact bodies of their own; deformers skip the walker
 };
 
+class Camera3D;
+
 class WorldContracts : public Object {
 	GDCLASS(WorldContracts, Object);
 
@@ -926,6 +928,12 @@ public:
 	static constexpr const char *CONTACT_GROUP = "world_contact";
 
 	static WorldContracts *get_singleton() { return singleton; }
+
+	// The camera a world system follows from p_node: the editor's 3D view while editing a scene (editor preview),
+	// else the node's viewport camera. Null when neither has one.
+	static Camera3D *get_view_camera(const Node *p_node);
+	// True when p_node is in the scene being edited (not running), where systems draw their editor preview.
+	static bool is_editor_preview(const Node *p_node);
 
 	// The contract objects: never null.
 	static WorldWeather *weather();

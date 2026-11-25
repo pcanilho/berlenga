@@ -35,6 +35,7 @@
 #include "plant_species.h"
 #include "vegetation_holes.h"
 #include "vegetation_obstacles.h"
+#include "modules/world/world_exclusion_3d.h"
 #include "vegetation_paths.h"
 #include "water_current_bend.h"
 
@@ -173,6 +174,8 @@ private:
 	float trample_resistance = 300.0f; // Passes a year that halve the sward's cover (Cole 1995: grasses resist).
 	float _trample_cover(float p_passes) const;
 	float _trample_scale(float p_passes) const;
+	WorldExclusions exclusions; // keep-out areas for grass (WorldExclusion3D)
+	void _on_exclusions_changed(const Rect2 &p_area);
 	VegetationHoles holes; // Openings in the ground (cave mouths, the data map's generator): no blade there.
 	ObjectID hole_source;
 	void _follow_holes(TerrainDataMap3D *p_map);
@@ -253,6 +256,8 @@ private:
 	// Trample field (docs/ideas/grass.md, contact): bend per texel around the camera, pressed by
 	// movers and relaxing back, so blades stay stateless and trails persist.
 	bool trample_enabled = true;
+	// Editor preview (docs/ideas/editor-tools.md, A): in the scene being edited, blades grow round the editor's view.
+	bool editor_preview = true;
 	StringName trample_group = "grass_trample";
 	float trample_size = 32.0f;
 	int trample_resolution = 128;
@@ -745,6 +750,8 @@ public:
 	// its functions before the first function and, first in every fragment(), the discard outside the shadow pass.
 	static String add_camera_cutout(const String &p_code);
 
+	void set_editor_preview(bool p_enable);
+	bool is_editor_preview() const { return editor_preview; }
 	void set_trample_enabled(bool p_enabled);
 	bool is_trample_enabled() const { return trample_enabled; }
 	void set_trample_group(const StringName &p_group) { trample_group = p_group; }

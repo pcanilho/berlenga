@@ -356,6 +356,7 @@ Error TerrainDataMap3D::bake() {
 	const int nn = n * n;
 	const float cell = size / n;
 
+	bake_serial++;
 	// Bake against the current rect, not the previous bake's.
 	baked_resolution = 0;
 	const Rect2 rect = get_map_rect();
@@ -622,11 +623,19 @@ void TerrainDataMap3D::queue_bake() {
 		return;
 	}
 	bake_queued = true;
+	queued_serial = bake_serial;
 	callable_mp(this, &TerrainDataMap3D::_queued_bake).call_deferred();
+}
+
+void TerrainDataMap3D::_on_generator_generated() {
+	queue_bake();
 }
 
 void TerrainDataMap3D::_queued_bake() {
 	bake_queued = false;
+	if (queued_serial != bake_serial) {
+		return; // a script baked in the meantime
+	}
 	if (is_inside_tree()) {
 		bake();
 		if (climate_recipe.is_valid()) {
@@ -1005,9 +1014,28 @@ void TerrainDataMap3D::_notification(int p_what) {
 		case NOTIFICATION_EXIT_TREE: {
 			WorldContracts::unregister_water(this);
 			WorldContracts::unregister_climate(this);
+			if (TerrainGenerator3D *gen = Object::cast_to<TerrainGenerator3D>(ObjectDB::get_instance(followed_generator))) {
+				const Callable cb = callable_mp(this, &TerrainDataMap3D::_on_generator_generated);
+				if (gen->is_connected(SNAME("generated"), cb)) {
+					gen->disconnect(SNAME("generated"), cb);
+				}
+			}
+			followed_generator = ObjectID();
 		} break;
 		case NOTIFICATION_READY: {
-			if (bake_on_ready && !Engine::get_singleton()->is_editor_hint()) {
+			if (!bake_on_ready) {
+				break;
+			}
+			// In the editor too (editor preview, docs/ideas/editor-tools.md A). A generator as height source is
+			// followed: baked once it has a result and again each time it generates.
+			TerrainGenerator3D *gen = Object::cast_to<TerrainGenerator3D>(height_source.is_empty() ? nullptr : get_node_or_null(height_source));
+			if (gen) {
+				gen->connect(SNAME("generated"), callable_mp(this, &TerrainDataMap3D::_on_generator_generated));
+				followed_generator = gen->get_instance_id();
+				if (gen->has_result()) {
+					queue_bake();
+				}
+			} else if (!Engine::get_singleton()->is_editor_hint()) {
 				// Deferred, so terrain deformers and colliders are in place first.
 				queue_bake();
 			}

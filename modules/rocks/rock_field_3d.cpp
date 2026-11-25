@@ -552,10 +552,8 @@ Vector3 RockField3D::_target_position() const {
 			return n->get_global_position();
 		}
 	}
-	if (is_inside_tree() && get_viewport()) {
-		if (const Camera3D *cam = get_viewport()->get_camera_3d()) {
-			return cam->get_global_position();
-		}
+	if (const Camera3D *cam = WorldContracts::get_view_camera(this)) {
+		return cam->get_global_position();
 	}
 	return get_global_position();
 }
@@ -563,10 +561,8 @@ Vector3 RockField3D::_target_position() const {
 // The ground detail is about what the camera sees up close, so it is centred on the camera (the follow target when
 // there is none).
 Vector3 RockField3D::_detail_center() const {
-	if (is_inside_tree() && get_viewport()) {
-		if (const Camera3D *cam = get_viewport()->get_camera_3d()) {
-			return cam->get_global_position();
-		}
+	if (const Camera3D *cam = WorldContracts::get_view_camera(this)) {
+		return cam->get_global_position();
 	}
 	return _target_position();
 }
@@ -3148,6 +3144,14 @@ void RockField3D::_watch_holes() {
 	holes_watched = gen->get_instance_id();
 }
 
+void RockField3D::_on_exclusions_changed(const Rect2 &p_area) {
+	exclusions.read(WorldExclusion3D::KIND_ROCKS);
+	if (Engine::get_singleton()->is_editor_hint() && !editor_preview) {
+		return;
+	}
+	_on_holes_changed(p_area); // the coarse cells there are placed again
+}
+
 void RockField3D::_on_holes_changed(const Rect2 &p_rect) {
 	if (building > 0) {
 		return;
@@ -5166,6 +5170,16 @@ void RockField3D::_coarse_commit(const Vector3i &p_key, LocalVector<Stone> &ston
 			}
 		}
 	}
+	// Keep-out areas (WorldExclusion3D, editor-tools.md C): stones thin by a hash over the fade and none lie inside.
+	if (layer != LAYER_LANDFORM && !exclusions.is_empty() && exclusions.any_in(rect.grow(2.0))) {
+		for (int i = int(stones.size()) - 1; i >= 0; i--) {
+			const Vector3 &sp = stones[i].position;
+			const float k = exclusions.keep_out(Vector2(sp.x, sp.z));
+			if (k > 0.0f && (k >= 1.0f || float(rf_hash3(int(Math::floor(sp.x * 100.0f)), int(Math::floor(sp.z * 100.0f)), 77, 0x9e37u) & 0xFFFF) / 65535.0f < k)) {
+				stones.remove_at(i);
+			}
+		}
+	}
 	if (!broken_stones.is_empty()) {
 		for (int i = int(stones.size()) - 1; i >= 0; i--) {
 			if (broken_stones.has(Vector3i((stones[i].position * 100.0f).round()))) {
@@ -7039,8 +7053,31 @@ void RockField3D::set_live_rockfall(bool p_enabled) {
 }
 
 void RockField3D::_update_process() {
-	set_process_internal(!Engine::get_singleton()->is_editor_hint() && (streaming || live_rockfall || ground_contact || frost_sorting));
-	set_physics_process_internal(!Engine::get_singleton()->is_editor_hint() && (rockfall_dust || stones_react));
+	if (Engine::get_singleton()->is_editor_hint()) {
+		set_process_internal(editor_preview && streaming);
+		set_physics_process_internal(false);
+		return;
+	}
+	set_process_internal(streaming || live_rockfall || ground_contact || frost_sorting);
+	set_physics_process_internal(rockfall_dust || stones_react);
+}
+
+void RockField3D::set_editor_preview(bool p_enable) {
+	if (editor_preview == p_enable) {
+		return;
+	}
+	editor_preview = p_enable;
+	if (!is_inside_tree() || !Engine::get_singleton()->is_editor_hint()) {
+		return;
+	}
+	_update_process();
+	if (!editor_preview) {
+		clear();
+	}
+}
+
+Callable RockField3D::get_rebuild_button() {
+	return callable_mp(this, &RockField3D::rebuild);
 }
 
 /* Stones that react */
@@ -9997,6 +10034,13 @@ void RockField3D::_notification(int p_what) {
 			if (wind_obstacles) {
 				add_to_group(SNAME("weather_shelter"));
 			}
+			if (WorldContracts *wc = WorldContracts::get_singleton()) {
+				const Callable cb = callable_mp(this, &RockField3D::_on_exclusions_changed);
+				if (!wc->is_connected(SNAME("exclusions_changed"), cb)) {
+					wc->connect(SNAME("exclusions_changed"), cb);
+				}
+			}
+			exclusions.read(WorldExclusion3D::KIND_ROCKS);
 		} break;
 		case NOTIFICATION_READY: {
 			auto_ground_found = false;
@@ -10007,6 +10051,9 @@ void RockField3D::_notification(int p_what) {
 		case NOTIFICATION_INTERNAL_PROCESS: {
 			if (streaming) {
 				_update_streaming(false);
+			}
+			if (Engine::get_singleton()->is_editor_hint()) {
+				break; // editor preview: the stones only, no rockfall, contact, frost or snow
 			}
 			if (live_rockfall) {
 				_update_rockfall(get_process_delta_time());
@@ -10034,6 +10081,12 @@ void RockField3D::_notification(int p_what) {
 			}
 		} break;
 		case NOTIFICATION_EXIT_TREE: {
+			if (WorldContracts *wc = WorldContracts::get_singleton()) {
+				const Callable cb = callable_mp(this, &RockField3D::_on_exclusions_changed);
+				if (wc->is_connected(SNAME("exclusions_changed"), cb)) {
+					wc->disconnect(SNAME("exclusions_changed"), cb);
+				}
+			}
 			WorldContracts::unregister_cover(this);
 			_clear_react();
 			_clear_cover();
@@ -10163,6 +10216,9 @@ void RockField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_streaming", "streaming"), &RockField3D::set_streaming);
 	ClassDB::bind_method(D_METHOD("is_streaming"), &RockField3D::is_streaming);
 	ClassDB::bind_method(D_METHOD("rebuild"), &RockField3D::rebuild);
+	ClassDB::bind_method(D_METHOD("set_editor_preview", "enable"), &RockField3D::set_editor_preview);
+	ClassDB::bind_method(D_METHOD("is_editor_preview"), &RockField3D::is_editor_preview);
+	ClassDB::bind_method(D_METHOD("get_rebuild_button"), &RockField3D::get_rebuild_button);
 	ClassDB::bind_method(D_METHOD("build_area", "rect"), &RockField3D::build_area);
 	ClassDB::bind_method(D_METHOD("clear"), &RockField3D::clear);
 	ClassDB::bind_method(D_METHOD("get_obstacles", "rect", "min_size"), &RockField3D::get_obstacles, DEFVAL(0.25));
@@ -10233,6 +10289,8 @@ void RockField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_last_library_msec"), &RockField3D::get_last_library_msec);
 	ClassDB::bind_method(D_METHOD("get_library_triangle_count"), &RockField3D::get_library_triangle_count);
 
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "editor_preview"), "set_editor_preview", "is_editor_preview");
+	ADD_PROPERTY(PropertyInfo(Variant::CALLABLE, "rebuild_button", PROPERTY_HINT_TOOL_BUTTON, "Rebuild,Reload", PROPERTY_USAGE_EDITOR), "", "get_rebuild_button");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "generator", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "TerrainGenerator3D"), "set_generator", "get_generator");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "follow_target", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "Node3D"), "set_follow_target", "get_follow_target");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "terrain3d"), "set_terrain3d", "get_terrain3d");

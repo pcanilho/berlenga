@@ -213,6 +213,7 @@ public:
 	void set_detail_code(const String &p_code);
 	String get_detail_code() const { return detail_code; }
 	void use_generator(Object *p_generator);
+	Object *get_generator() const { return ObjectDB::get_instance(generator_id); }
 	void set_grass_tint_enabled(bool p_enabled);
 	bool is_grass_tint_enabled() const { return grass_tint_enabled; }
 	void set_rock_detail_enabled(bool p_enabled);

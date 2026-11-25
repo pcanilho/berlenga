@@ -445,6 +445,7 @@ func _one_rock() -> void:
 func _world() -> void:
 	var t0 := Time.get_ticks_msec()
 	gen = TerrainGenerator3D.new()
+	gen.generate_on_ready = false # this bench generates itself, with its own settings
 	gen.name = "Generator"
 	# Heavy generator options are on by default; this bench keeps its own fast choices.
 	gen.glacial_enabled = false

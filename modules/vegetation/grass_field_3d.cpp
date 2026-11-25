@@ -3224,7 +3224,8 @@ void GrassField3D::_build_tile(const Vector2i &p_tile, int p_lod, TerrainDataMap
 	// Wider blades where fewer remain, so the field keeps its coverage at a distance.
 	const float width = blade_width / Math::sqrt(keep);
 	// Crops are CPU-built for now (farmland stage 1).
-	if (gpu_fill && crop == CROP_NONE && is_gpu_fill_available()) {
+	const bool tile_excluded = !exclusions.is_empty() && exclusions.any_in(Rect2(x0, z0, tile_size, tile_size));
+	if (gpu_fill && crop == CROP_NONE && !tile_excluded && is_gpu_fill_available()) {
 		_build_tile_gpu(p_tile, p_lod, p_map, r.ptr(), canopy, light_grid, sward_grid, wear_grid, lg, width);
 		return;
 	}
@@ -3232,6 +3233,7 @@ void GrassField3D::_build_tile(const Vector2i &p_tile, int p_lod, TerrainDataMap
 	LocalVector<Color> customs;
 	const bool rocks = _tile_has_obstacles(x0, z0);
 	const bool holed = !holes.is_empty() && holes.any_in(Rect2(x0, z0, tile_size, tile_size).grow(OBSTACLE_MARGIN));
+	const bool excluded = tile_excluded;
 	// Whether a blade (or crop tiller) grows at (x, z): the rules, paths and light decide; rank orders
 	// the thinning (coarser levels keep the same ones).
 	struct Spot {
@@ -3252,6 +3254,13 @@ void GrassField3D::_build_tile(const Vector2i &p_tile, int p_lod, TerrainDataMap
 		}
 		if (holed && _blade_in_hole(p_map, x, z, ground_y)) {
 			return false;
+		}
+		if (excluded) {
+			// A keep-out area (WorldExclusion3D): blades thin by rank over its fade and stop inside.
+			const float k = exclusions.keep_out(Vector2(x, z));
+			if (k > 0.0f && rank >= keep * (1.0f - k)) {
+				return false;
+			}
 		}
 		const float passes = trodden ? path_grid.passes_at(Vector2(x, z)) : 0.0f;
 		if (passes > 0.0f && rank >= keep * _trample_cover(passes)) {
@@ -3883,6 +3892,7 @@ void GrassField3D::_build_ring_tile(const Vector3i &p_key, float p_near, Terrain
 	const Rect2 rect(p_key.x * size, p_key.y * size, size, size);
 	const bool rocks = !obstacle_grid.is_empty();
 	const bool holed = !holes.is_empty() && holes.any_in(rect.grow(OBSTACLE_MARGIN));
+	const bool excluded = !exclusions.is_empty() && exclusions.any_in(rect);
 	const bool fielded = crop_mask.any_in(rect);
 	const bool trodden = !path_grid.is_empty() && trample_resistance > 0.0f && path_grid.any_in(rect.grow(path_grid.max_reach));
 	// Only over the data map: past it there are no rules or heights.
@@ -3982,6 +3992,9 @@ void GrassField3D::_build_ring_tile(const Vector3i &p_key, float p_near, Terrain
 				continue;
 			}
 			if (holed && _blade_in_hole(p_map, x, z, ground_y)) {
+				continue;
+			}
+			if (excluded && exclusions.keep_out(q) >= 0.5f) {
 				continue;
 			}
 			if (use_gpu) {
@@ -5093,8 +5106,8 @@ void GrassField3D::advance_lodging(double p_weather_seconds) {
 		return;
 	}
 	Vector3 center = get_global_position();
-	if (is_inside_tree() && get_viewport() && get_viewport()->get_camera_3d()) {
-		center = get_viewport()->get_camera_3d()->get_global_position();
+	if (const Camera3D *vcam = WorldContracts::get_view_camera(this)) {
+		center = vcam->get_global_position();
 	}
 	_lodge_place(center);
 	lodge_clock += p_weather_seconds;
@@ -7433,6 +7446,23 @@ void GrassField3D::set_trample_resolution(int p_resolution) {
 	trample.clear();
 }
 
+void GrassField3D::set_editor_preview(bool p_enable) {
+	if (editor_preview == p_enable) {
+		return;
+	}
+	editor_preview = p_enable;
+	if (!is_inside_tree() || !Engine::get_singleton()->is_editor_hint()) {
+		return;
+	}
+	set_process_internal(editor_preview);
+	if (!editor_preview) {
+		for (KeyValue<Vector2i, Tile> &kv : tiles) {
+			_free_tile(kv.value);
+		}
+		tiles.clear();
+	}
+}
+
 void GrassField3D::update_at(const Vector3 &p_center) {
 	if (still_shot && still_frozen) {
 		if (p_center.distance_to(still_at) < 0.5f && generation == still_generation) {
@@ -7482,9 +7512,19 @@ void GrassField3D::_notification(int p_what) {
 				set_process_internal(true);
 				_season_step(); // The season's look from the first frame, not a frame later.
 				_queue_far_bake();
+			} else if (editor_preview) {
+				set_process_internal(true);
+				_season_step();
 			}
 		} break;
 		case NOTIFICATION_ENTER_TREE: {
+			if (WorldContracts *wc = WorldContracts::get_singleton()) {
+				const Callable cb = callable_mp(this, &GrassField3D::_on_exclusions_changed);
+				if (!wc->is_connected(SNAME("exclusions_changed"), cb)) {
+					wc->connect(SNAME("exclusions_changed"), cb);
+				}
+			}
+			exclusions.read(WorldExclusion3D::KIND_GRASS);
 			add_to_group(SNAME("grass_trample_field")); // keeps the trample field (VegetationField3D stands in without one)
 			_hay_register();
 			if (!meadows.is_empty()) {
@@ -7504,6 +7544,12 @@ void GrassField3D::_notification(int p_what) {
 			}
 		} break;
 		case NOTIFICATION_EXIT_TREE: {
+			if (WorldContracts *wc = WorldContracts::get_singleton()) {
+				const Callable cb = callable_mp(this, &GrassField3D::_on_exclusions_changed);
+				if (wc->is_connected(SNAME("exclusions_changed"), cb)) {
+					wc->disconnect(SNAME("exclusions_changed"), cb);
+				}
+			}
 			if (mow_published) {
 				RenderingServer::get_singleton()->global_shader_parameter_set("grass_mow_rect", Vector4());
 				mow_published = false;
@@ -7545,6 +7591,15 @@ void GrassField3D::_notification(int p_what) {
 			_free_rings();
 		} break;
 		case NOTIFICATION_INTERNAL_PROCESS: {
+			if (Engine::get_singleton()->is_editor_hint()) {
+				// Editor preview: the blades round the editor's view, in the season's look; no trampling, lodging,
+				// floods or far bake.
+				if (Camera3D *ecam = editor_preview ? WorldContracts::get_view_camera(this) : nullptr) {
+					update_at(ecam->get_global_position());
+				}
+				_season_step();
+				break;
+			}
 			Viewport *vp = get_viewport();
 			Camera3D *cam = vp ? vp->get_camera_3d() : nullptr;
 			if (cam) {
@@ -7627,6 +7682,15 @@ void GrassField3D::_follow_holes(TerrainDataMap3D *p_map) {
 	holes.read(gen);
 	if (!holes.is_empty()) {
 		generation++; // Holes cut before this field found them.
+	}
+}
+
+void GrassField3D::_on_exclusions_changed(const Rect2 &p_area) {
+	exclusions.read(WorldExclusion3D::KIND_GRASS);
+	for (KeyValue<Vector2i, Tile> &kv : tiles) {
+		if (Rect2(Vector2(kv.key) * tile_size, Vector2(tile_size, tile_size)).intersects(p_area)) {
+			kv.value.generation = generation - 1; // built again, the old one drawn until then
+		}
 	}
 }
 
@@ -8244,6 +8308,9 @@ void GrassField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_build_time_msec"), &GrassField3D::get_build_time_msec);
 	ClassDB::bind_method(D_METHOD("get_material"), &GrassField3D::get_material);
 
+	ClassDB::bind_method(D_METHOD("set_editor_preview", "enable"), &GrassField3D::set_editor_preview);
+	ClassDB::bind_method(D_METHOD("is_editor_preview"), &GrassField3D::is_editor_preview);
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "editor_preview"), "set_editor_preview", "is_editor_preview");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "data_map", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "TerrainDataMap3D"), "set_data_map", "get_data_map");
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "rules", PROPERTY_HINT_RESOURCE_TYPE, "PlantSpecies"), "set_rules", "get_rules");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "canopy_field", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "VegetationField3D"), "set_canopy_field", "get_canopy_field");

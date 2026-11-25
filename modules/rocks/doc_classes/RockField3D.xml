@@ -645,6 +645,12 @@
 		<member name="wind_obstacles" type="bool" setter="set_wind_obstacles" getter="is_wind_obstacles_enabled" default="true">
 			Boulders block the wind: the field joins the [code]weather_shelter[/code] group and gives its boulders through [method get_wind_obstacles], so WeatherMap3D slows the wind in their lee and snow and sand drift there.
 		</member>
+		<member name="editor_preview" type="bool" setter="set_editor_preview" getter="is_editor_preview" default="true">
+			Places stones round the editor's 3D view in the scene being edited, without physics, rockfall or far bakes. Nothing it places is saved.
+		</member>
+		<member name="rebuild_button" type="Callable" setter="" getter="get_rebuild_button" default="Callable()">
+			Places the stones again.
+		</member>
 	</members>
 	<signals>
 		<signal name="rockfall">

@@ -330,6 +330,27 @@
 				The range the biome's species [param species] is drawn to: its [member PlantSpecies.visibility_range], or for a small species ([member PlantSpecies.detail_size] above 0, with [member detail_reach] on) the distance where that size is still [member detail_pixels] tall, when that is further, up to [member detail_max_range].
 			</description>
 		</method>
+		<method name="get_biome_share_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The share of the ground at [param position] this field's [member biome_channel] holds in [member biome_map]: normalised when the painted channels sum past 1, and 1 outside the map.
+			</description>
+		</method>
+		<method name="notify_biome_map_changed">
+			<return type="void" />
+			<param index="0" name="area" type="Rect2" default="Rect2(0, 0, 0, 0)" />
+			<description>
+				Places again the tiles in [param area] (metres; empty for all) after [member biome_map] was painted.
+			</description>
+		</method>
+		<method name="notify_density_mask_changed">
+			<return type="void" />
+			<param index="0" name="area" type="Rect2" default="Rect2(0, 0, 0, 0)" />
+			<description>
+				Places again the tiles in [param area] (metres; empty for all) after [member density_mask] was painted.
+			</description>
+		</method>
 	</methods>
 	<members>
 		<member name="density_mask" type="Texture2D" setter="set_density_mask" getter="get_density_mask">
@@ -461,6 +482,24 @@
 		<member name="paths" type="Dictionary[]" setter="set_paths" getter="get_paths" default="[]">
 			Worn paths, each a [Dictionary] with [code]points[/code] ([PackedVector3Array], the path's centre line), [code]width[/code] (metres, default 1.0) and [code]passes[/code] (walkers a year, default 1000). Trampling falls off across a path as a Gaussian with sigma a quarter of its width, over a wider tail (15% of the walkers, three times the sigma), so plants shorten over a metre or so towards the tread. Plants with a [member PlantSpecies.trample_resistance] thin out and grow shorter where passes outweigh it, following Cole's trampling experiments; trees, logs and stone-top plants are never trampled. Changing it repopulates.
 			The world's game trails ([code]WorldStand.get_trails()[/code], published from [method VegetationField3D.make_game_trails]) are worn the same way, on top of these, and followed when they change.
+		</member>
+		<member name="biome_channel" type="int" setter="set_biome_channel" getter="get_biome_channel" default="-1">
+			The channel of [member biome_map] that holds this field's biome; -1 ignores the map.
+		</member>
+		<member name="biome_map" type="Texture2D" setter="set_biome_map" getter="get_biome_map">
+			A painted map shared by several fields, one biome a channel. A field's plants are kept by its channel's share, so overlapping paint splits the ground; outside the map the field grows everywhere.
+		</member>
+		<member name="biome_map_rect" type="Rect2" setter="set_biome_map_rect" getter="get_biome_map_rect" default="Rect2(0, 0, 0, 0)">
+			The ground [member biome_map] covers, in metres (x, z, width, depth).
+		</member>
+		<member name="clear_button" type="Callable" setter="" getter="get_clear_button" default="Callable()">
+			Clears the placed plants.
+		</member>
+		<member name="editor_preview" type="bool" setter="set_editor_preview" getter="is_editor_preview" default="true">
+			Places plants round the editor's 3D view in the scene being edited, as in the game, without the game-time systems. Nothing it places is saved.
+		</member>
+		<member name="populate_button" type="Callable" setter="" getter="get_populate_button" default="Callable()">
+			Places the plants again.
 		</member>
 	</members>
 	<signals>

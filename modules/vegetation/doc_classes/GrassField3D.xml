@@ -477,6 +477,9 @@
 		<member name="trample_resistance" type="float" setter="set_trample_resistance" getter="get_trample_resistance" default="300.0">
 			Walkers a year on a path that halve the sward's cover. Grasses resist trampling well (Cole 1995); 0 turns paths off for this field.
 		</member>
+		<member name="editor_preview" type="bool" setter="set_editor_preview" getter="is_editor_preview" default="true">
+			Grows grass round the editor's 3D view in the scene being edited, without the game-time systems (trampling, fire, floods, far bakes). Nothing it places is saved.
+		</member>
 	</members>
 	<signals>
 		<signal name="far_color_changed">

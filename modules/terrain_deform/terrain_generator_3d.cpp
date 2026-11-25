@@ -30,6 +30,7 @@
 /**************************************************************************/
 
 #include "terrain_generator_3d.h"
+#include "terrain_sculpt_layer_3d.h"
 
 #include "world_cache.h"
 
@@ -2620,6 +2621,8 @@ bool TerrainGenerator3D::generate() {
 	lakes_generated = lake_info;
 	touch_mask.clear();
 	touch_flat.clear();
+	sculpt_fine.clear();
+	sculpt_nodes.clear();
 	last_touch_cells = 0;
 	last_touch_lakes = 0;
 	{
@@ -2637,6 +2640,8 @@ bool TerrainGenerator3D::generate() {
 void TerrainGenerator3D::clear_result() {
 	holes.clear();
 	emit_signal(SNAME("changing"));
+	sculpt_fine.clear();
+	sculpt_nodes.clear();
 	nx = 0;
 	ny = 0;
 	heights.clear();
@@ -3157,10 +3162,36 @@ TypedArray<Dictionary> TerrainGenerator3D::get_ledge_lips_bind(const Rect2 &p_re
 	return out;
 }
 
+float TerrainGenerator3D::SculptFine::at(real_t p_x, real_t p_z) const {
+	if (image.is_null() || !rect.has_point(Vector2(p_x, p_z))) {
+		return 0.0f;
+	}
+	const int w = image->get_width();
+	const int h = image->get_height();
+	const float fx = float((p_x - rect.position.x) / rect.size.x) * w - 0.5f;
+	const float fz = float((p_z - rect.position.y) / rect.size.y) * h - 0.5f;
+	const int x0 = CLAMP(int(Math::floor(fx)), 0, w - 1);
+	const int z0 = CLAMP(int(Math::floor(fz)), 0, h - 1);
+	const int x1 = MIN(x0 + 1, w - 1);
+	const int z1 = MIN(z0 + 1, h - 1);
+	const float ax = CLAMP(fx - Math::floor(fx), 0.0f, 1.0f);
+	const float az = CLAMP(fz - Math::floor(fz), 0.0f, 1.0f);
+	const float *d = reinterpret_cast<const float *>(image->ptr());
+	return Math::lerp(Math::lerp(d[z0 * w + x0], d[z0 * w + x1], ax), Math::lerp(d[z1 * w + x0], d[z1 * w + x1], ax), az) * scale;
+}
+
 float TerrainGenerator3D::_ground(real_t p_x, real_t p_z) const {
 	float g = _ground_detail(p_x, p_z);
 	if (Math::is_nan(g)) {
 		return g;
+	}
+	if (!sculpt_fine.is_empty() && sculpt_nodes.size() == uint32_t(nx * ny)) {
+		// Sculpt layers: the strokes finer than the grid (their sum less what the nodes already carry).
+		float fine = -_sample(sculpt_nodes, p_x, p_z);
+		for (const SculptFine &f : sculpt_fine) {
+			fine += f.at(p_x, p_z);
+		}
+		g += fine;
 	}
 	// A flatten touch-up keeps its ground flat: the erosion detail fades under it.
 	if (!touch_flat.is_empty()) {
@@ -6545,6 +6576,10 @@ void TerrainGenerator3D::_notification(int p_what) {
 		} break;
 		case NOTIFICATION_READY:
 		case NOTIFICATION_ENTER_TREE: {
+			if (p_what == NOTIFICATION_READY && generate_on_ready) {
+				// Deferred: a script that builds the world generates in its own _ready first, and is left alone.
+				callable_mp(this, &TerrainGenerator3D::_auto_generate).call_deferred();
+			}
 			set_process_internal(!sky_light_source.is_empty() || sun_shadows);
 			set_notify_transform(true);
 			world_centre = get_global_position();
@@ -9099,7 +9134,11 @@ int TerrainGenerator3D::bake() {
 	if (!generate()) {
 		return 0;
 	}
-	const int written = write_to_terrain();
+	// A Landscape3D reads the generator itself (it rebuilds on "generated"): no ground node to write is not an error.
+	const int written = _get_terrain_node() ? write_to_terrain() : 0;
+	if (auto_water.is_valid() || (generate_on_ready && water_on_ready && Engine::get_singleton()->is_editor_hint())) {
+		_auto_water();
+	}
 	print_line(vformat("TerrainGenerator3D: %dx%d grid, %d steps in %.0f ms; %d vertices written in %.0f ms.", nx, ny, last_steps, last_generate_msec, written, last_write_msec));
 	return written;
 }
@@ -9141,6 +9180,28 @@ void TerrainGenerator3D::_touch_up() {
 	touch_flat.clear();
 	LocalVector<TerrainBrush3D *> brushes;
 	_brushes(brushes);
+	sculpt_fine.clear();
+	sculpt_nodes.clear();
+	for (TerrainBrush3D *b : brushes) {
+		const TerrainSculptLayer3D *layer = Object::cast_to<TerrainSculptLayer3D>(b);
+		if (!layer || layer->get_offset_image().is_null() || !layer->get_height_map_rect().has_area()) {
+			continue;
+		}
+		SculptFine f;
+		f.image = layer->get_offset_image();
+		f.rect = layer->get_height_map_rect();
+		f.scale = float(layer->get_height_scale());
+		if (sculpt_nodes.is_empty()) {
+			sculpt_nodes.resize(n);
+			memset(sculpt_nodes.ptr(), 0, sizeof(float) * n);
+		}
+		for (int z = 0; z < ny; z++) {
+			for (int x = 0; x < nx; x++) {
+				sculpt_nodes[z * nx + x] += f.at(result_rect.position.x + x * result_cell, result_rect.position.y + z * result_cell);
+			}
+		}
+		sculpt_fine.push_back(f);
+	}
 	LocalVector<uint8_t> moved;
 	moved.resize(n);
 	memset(moved.ptr(), 0, n);
@@ -9390,6 +9451,9 @@ bool TerrainGenerator3D::apply_touch_ups() {
 	emit_signal(SNAME("changing"));
 	_touch_up();
 	emit_signal(SNAME("generated"));
+	if (auto_water.is_valid()) {
+		_auto_water(); // the lakes and rivers re-solved round the touch-ups
+	}
 	return true;
 }
 
@@ -9413,6 +9477,62 @@ int TerrainGenerator3D::preview() {
 	last_preview_msec = double(OS::get_singleton()->get_ticks_usec() - t0) / 1000.0;
 	print_verbose(vformat("TerrainGenerator3D: preview at %.0f m cells in %.0f ms.", double(keep * guide_preview_scale), last_preview_msec));
 	return written;
+}
+
+// generate_on_ready: the ground of a saved scene, when nothing has generated it yet.
+void TerrainGenerator3D::_auto_generate() {
+	if (!generate_on_ready || !is_inside_tree() || has_result()) {
+		return;
+	}
+	if (!generate()) {
+		return;
+	}
+	if (_get_terrain_node()) {
+		write_to_terrain();
+	}
+	_auto_water();
+}
+
+// water_on_ready: the sea, lakes and rivers of the auto-generated ground, in one internal holder that is never saved
+// (its children are owned by it), replaced on each auto generation.
+void TerrainGenerator3D::_auto_water() {
+	if (Node *old = Object::cast_to<Node>(ObjectDB::get_instance(auto_water))) {
+		old->queue_free();
+		if (old->get_parent()) {
+			old->get_parent()->remove_child(old);
+		}
+	}
+	auto_water = ObjectID();
+	if (!water_on_ready || !has_result() || !is_inside_tree()) {
+		return;
+	}
+	Node3D *holder = memnew(Node3D);
+	holder->set_name("GeneratedWater");
+	add_child(holder, false, INTERNAL_MODE_BACK);
+	holder->set_global_transform(Transform3D());
+	auto_water = holder->get_instance_id();
+	const Array waters = build_water(holder);
+	for (int i = 0; i < waters.size(); i++) {
+		Node *w = Object::cast_to<Node>(waters[i]);
+		if (w && String(w->get_name()).begins_with("Sea") && w->has_method(SNAME("set_terrain_source"))) {
+			w->call(SNAME("set_terrain_source"), w->get_path_to(this)); // no sea through terrain holes
+		}
+	}
+	build_river_paths(holder, water_river_min_area);
+}
+
+void TerrainGenerator3D::set_generate_on_ready(bool p_enable) {
+	generate_on_ready = p_enable;
+}
+
+void TerrainGenerator3D::set_water_on_ready(bool p_enable) {
+	if (water_on_ready == p_enable) {
+		return;
+	}
+	water_on_ready = p_enable;
+	if (!water_on_ready && auto_water.is_valid()) {
+		_auto_water(); // removes it
+	}
 }
 
 Callable TerrainGenerator3D::get_bake_button() {
@@ -9829,6 +9949,15 @@ void TerrainGenerator3D::_bind_methods() {
 
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "guide_preview"), "set_guide_preview", "is_guide_preview");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "guide_preview_scale", PROPERTY_HINT_RANGE, "1,16,0.5"), "set_guide_preview_scale", "get_guide_preview_scale");
+	ClassDB::bind_method(D_METHOD("set_generate_on_ready", "enable"), &TerrainGenerator3D::set_generate_on_ready);
+	ClassDB::bind_method(D_METHOD("is_generate_on_ready"), &TerrainGenerator3D::is_generate_on_ready);
+	ClassDB::bind_method(D_METHOD("set_water_on_ready", "enable"), &TerrainGenerator3D::set_water_on_ready);
+	ClassDB::bind_method(D_METHOD("is_water_on_ready"), &TerrainGenerator3D::is_water_on_ready);
+	ClassDB::bind_method(D_METHOD("set_water_river_min_area", "area"), &TerrainGenerator3D::set_water_river_min_area);
+	ClassDB::bind_method(D_METHOD("get_water_river_min_area"), &TerrainGenerator3D::get_water_river_min_area);
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "generate_on_ready"), "set_generate_on_ready", "is_generate_on_ready");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "water_on_ready"), "set_water_on_ready", "is_water_on_ready");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "water_river_min_area", PROPERTY_HINT_RANGE, "10000,100000000,10000,or_greater,suffix:m²"), "set_water_river_min_area", "get_water_river_min_area");
 	ADD_PROPERTY(PropertyInfo(Variant::CALLABLE, "generate_button", PROPERTY_HINT_TOOL_BUTTON, "Generate,Terrain", PROPERTY_USAGE_EDITOR), "", "get_bake_button");
 	ADD_PROPERTY(PropertyInfo(Variant::VECTOR2, "size", PROPERTY_HINT_NONE, "suffix:m"), "set_size", "get_size");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "cell_size", PROPERTY_HINT_RANGE, "0.25,256,0.25,or_greater,suffix:m"), "set_cell_size", "get_cell_size");

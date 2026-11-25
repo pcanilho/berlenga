@@ -2135,12 +2135,94 @@ void Landscape3D::_refresh_holes(const Rect2 &p_rect) {
 	_update_collision();
 }
 
+void Landscape3D::set_source(const NodePath &p_path) {
+	if (source == p_path) {
+		return;
+	}
+	source = p_path;
+	if (is_inside_tree()) {
+		_auto_connect();
+	}
+}
+
+void Landscape3D::set_auto_rebuild(bool p_enable) {
+	if (auto_rebuild == p_enable) {
+		return;
+	}
+	auto_rebuild = p_enable;
+	if (is_inside_tree()) {
+		_auto_connect();
+	}
+}
+
+// Follows the source generator's "generated", and queues a rebuild when it already has a result and nothing is drawn.
+void Landscape3D::_auto_connect() {
+	_auto_disconnect();
+	if (!auto_rebuild || !is_inside_tree()) {
+		return;
+	}
+	TerrainGenerator3D *gen = Object::cast_to<TerrainGenerator3D>(source.is_empty() ? nullptr : get_node_or_null(source));
+	if (!gen) {
+		return;
+	}
+	gen->connect(SNAME("generated"), callable_mp(this, &Landscape3D::_on_source_generated));
+	auto_source = gen->get_instance_id();
+	if (gen->has_result() && chunks.is_empty()) {
+		_on_source_generated();
+	}
+}
+
+void Landscape3D::_auto_disconnect() {
+	if (TerrainGenerator3D *gen = Object::cast_to<TerrainGenerator3D>(ObjectDB::get_instance(auto_source))) {
+		const Callable cb = callable_mp(this, &Landscape3D::_on_source_generated);
+		if (gen->is_connected(SNAME("generated"), cb)) {
+			gen->disconnect(SNAME("generated"), cb);
+		}
+	}
+	auto_source = ObjectID();
+}
+
+void Landscape3D::_on_source_generated() {
+	if (rebuild_pending) {
+		return;
+	}
+	rebuild_pending = true;
+	callable_mp(this, &Landscape3D::_auto_rebuild).call_deferred();
+}
+
+void Landscape3D::_auto_rebuild() {
+	if (!rebuild_pending || !is_inside_tree()) {
+		rebuild_pending = false;
+		return;
+	}
+	rebuild();
+}
+
+// A TerrainMaterial3D drawn on a generator's ground reads that generator's geology and erosion detail.
+void Landscape3D::_auto_material(Node *p_source) {
+	TerrainGenerator3D *gen = Object::cast_to<TerrainGenerator3D>(p_source);
+	if (!gen || !gen->has_result() || material.is_null() || !material->has_method(SNAME("use_generator"))) {
+		return;
+	}
+	if (Object::cast_to<Object>(material->call(SNAME("get_generator"))) == gen) {
+		return;
+	}
+	material->call(SNAME("use_generator"), gen);
+	material->call(SNAME("update_shader"));
+}
+
+Callable Landscape3D::get_rebuild_button() {
+	return callable_mp(this, &Landscape3D::rebuild);
+}
+
 bool Landscape3D::rebuild() {
 	const uint64_t t0 = OS::get_singleton()->get_ticks_usec();
+	rebuild_pending = false;
 	clear();
 	// Valid points from the source (vw x vh), then the grid rounded up to whole chunks, clamped at the far edges.
 	Ref<Image> img;
 	Node *src = source.is_empty() ? nullptr : get_node_or_null(source);
+	_auto_material(src);
 	if (src) {
 		ERR_FAIL_COND_V_MSG(!src->has_method("sample_heights"), false, "Landscape3D: the source needs sample_heights(origin, spacing, size), as TerrainGenerator3D has.");
 		if (src->has_method("get_world_rect")) {
@@ -2830,6 +2912,7 @@ void Landscape3D::_notification(int p_what) {
 	switch (p_what) {
 		case NOTIFICATION_ENTER_WORLD: {
 			_create_instances();
+			_auto_connect();
 			if (!relief_registered) {
 				WorldContracts::register_relief(this);
 				relief_registered = true;
@@ -2838,6 +2921,7 @@ void Landscape3D::_notification(int p_what) {
 			set_process_internal(true);
 		} break;
 		case NOTIFICATION_EXIT_WORLD: {
+			_auto_disconnect();
 			_wait_all();
 			_free_instances();
 			_free_all_collision();
@@ -2963,6 +3047,9 @@ void Landscape3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("update_collision"), &Landscape3D::update_collision);
 	ClassDB::bind_method(D_METHOD("has_chunk_collision", "chunk"), &Landscape3D::has_chunk_collision);
 	ClassDB::bind_method(D_METHOD("rebuild"), &Landscape3D::rebuild);
+	ClassDB::bind_method(D_METHOD("set_auto_rebuild", "enable"), &Landscape3D::set_auto_rebuild);
+	ClassDB::bind_method(D_METHOD("is_auto_rebuild"), &Landscape3D::is_auto_rebuild);
+	ClassDB::bind_method(D_METHOD("get_rebuild_button"), &Landscape3D::get_rebuild_button);
 	ClassDB::bind_method(D_METHOD("clear"), &Landscape3D::clear);
 	ClassDB::bind_method(D_METHOD("update_lods", "camera_transform", "projection", "viewport_height"), &Landscape3D::update_lods);
 	ClassDB::bind_method(D_METHOD("update_lods_from_camera"), &Landscape3D::update_lods_from_camera);
@@ -2982,6 +3069,8 @@ void Landscape3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_stats"), &Landscape3D::get_stats);
 
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "source", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "TerrainGenerator3D"), "set_source", "get_source");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "auto_rebuild"), "set_auto_rebuild", "is_auto_rebuild");
+	ADD_PROPERTY(PropertyInfo(Variant::CALLABLE, "rebuild_button", PROPERTY_HINT_TOOL_BUTTON, "Rebuild,Reload", PROPERTY_USAGE_EDITOR), "", "get_rebuild_button");
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "height_image", PROPERTY_HINT_RESOURCE_TYPE, "Image"), "set_height_image", "get_height_image");
 	ADD_PROPERTY(PropertyInfo(Variant::VECTOR2, "origin", PROPERTY_HINT_NONE, "suffix:m"), "set_origin", "get_origin");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "spacing", PROPERTY_HINT_RANGE, "0.05,16,0.05,or_greater,suffix:m"), "set_spacing", "get_spacing");

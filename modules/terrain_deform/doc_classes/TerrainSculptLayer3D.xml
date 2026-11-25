@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="TerrainSculptLayer3D" inherits="TerrainBrush3D" api_type="core" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+	<brief_description>
+		A painted layer of height offsets over the generated ground.
+	</brief_description>
+	<description>
+		A freehand sculpt layer, as in Unreal's Landscape edit layers: a child of a [TerrainGenerator3D] that holds a painted map of offsets in metres. Paint it in the editor with the Paint Mask tool in the 3D toolbar: Add raises, Subtract lowers, Replace eases to a height and Smooth smooths. The generator adds the offsets in its touch-ups, so lakes and rivers settle round the sculpted ground, and keeps strokes finer than its cells. Layers stack in tree order; turning one off restores the ground.
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="get_offset_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="x" type="float" />
+			<param index="1" name="z" type="float" />
+			<description>
+				The layer's offset in metres at world [param x], [param z].
+			</description>
+		</method>
+		<method name="notify_height_map_changed">
+			<return type="void" />
+			<param index="0" name="area" type="Rect2" default="Rect2(0, 0, 0, 0)" />
+			<description>
+				Re-reads the painted map after a stroke changed [param area] (in metres; empty for all of it).
+			</description>
+		</method>
+	</methods>
+	<members>
+		<member name="falloff" type="float" setter="set_falloff" getter="get_falloff" overrides="TerrainBrush3D" default="0.0" />
+		<member name="height_map" type="Texture2D" setter="set_height_map" getter="get_height_map">
+			The painted offsets: a one-channel float image in metres, times [member height_scale].
+		</member>
+		<member name="height_map_rect" type="Rect2" setter="set_height_map_rect" getter="get_height_map_rect" default="Rect2(0, 0, 0, 0)">
+			The ground [member height_map] covers, in metres (x, z, width, depth).
+		</member>
+		<member name="height_scale" type="float" setter="set_height_scale" getter="get_height_scale" default="1.0">
+			Scales every offset of the layer.
+		</member>
+		<member name="mode" type="int" setter="set_mode" getter="get_mode" overrides="TerrainBrush3D" enum="TerrainBrush3D.Mode" default="3" />
+	</members>
+</class>

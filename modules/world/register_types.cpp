@@ -35,6 +35,12 @@
 #include "foot_placement_modifier_3d.h"
 #include "world_burn_scar_3d.h"
 #include "world_contracts.h"
+#include "world_exclusion_3d.h"
+
+#ifdef TOOLS_ENABLED
+#include "editor/plugins/editor_plugin.h"
+#include "editor/world_mask_paint_plugin.h"
+#endif
 
 #include "core/config/engine.h"
 #include "core/object/class_db.h"
@@ -45,9 +51,16 @@ void initialize_world_module(ModuleInitializationLevel p_level) {
 	if (p_level == MODULE_INITIALIZATION_LEVEL_SCENE) {
 		GDREGISTER_CLASS(WorldBurnScar3D); // a producer node: scene level
 		GDREGISTER_CLASS(WorldBeaverDam3D);
+		GDREGISTER_CLASS(WorldExclusion3D);
 		GDREGISTER_CLASS(FootPlacementModifier3D);
 		return;
 	}
+#ifdef TOOLS_ENABLED
+	if (p_level == MODULE_INITIALIZATION_LEVEL_EDITOR) {
+		EditorPlugins::add_by_type<WorldMaskPaintPlugin>();
+		return;
+	}
+#endif
 	// Core level, so the modules that produce and consume contracts (registered at scene level) find it.
 	if (p_level != MODULE_INITIALIZATION_LEVEL_CORE) {
 		return;

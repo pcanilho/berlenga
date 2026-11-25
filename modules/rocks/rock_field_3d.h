@@ -30,6 +30,8 @@
 
 #pragma once
 
+#include "modules/world/world_exclusion_3d.h"
+
 #include "rock_generator.h"
 #include "rock_scans.h"
 #include "rock_moss.h"
@@ -528,6 +530,10 @@ private:
 	real_t close_up_radius = 8.0; // m from the target to a stone's surface
 	int close_up_max_shapes = 12;
 	bool streaming = true;
+	// Editor preview (docs/ideas/editor-tools.md, A): in the scene being edited, stones stream round the editor's view.
+	bool editor_preview = true;
+	WorldExclusions exclusions; // keep-out areas for stones (WorldExclusion3D), read on the main thread
+	void _on_exclusions_changed(const Rect2 &p_area);
 
 	ObjectID generator_id;
 	LocalVector<River> rivers;
@@ -961,6 +967,9 @@ public:
 	int get_close_up_max_shapes() const { return close_up_max_shapes; }
 	int get_close_up_shape_count() const;
 	int get_close_up_triangle_count() const;
+	void set_editor_preview(bool p_enable);
+	bool is_editor_preview() const { return editor_preview; }
+	Callable get_rebuild_button();
 	void set_streaming(bool p_streaming);
 	bool is_streaming() const { return streaming; }
 

@@ -2063,6 +2063,7 @@ func _region(path: String) -> void:
 		noise.frequency = 1.0 / 1500.0
 		noise.fractal_octaves = 3
 		var g3 := TerrainGenerator3D.new()
+		g3.generate_on_ready = false # this bench generates itself, with its own settings
 		# Heavy generator options are on by default; this bench keeps its own fast choices.
 		g3.glacial_enabled = false
 		g3.glacial_converged = false

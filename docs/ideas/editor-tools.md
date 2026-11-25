@@ -34,67 +34,88 @@ workflow, named below.
 
 Reference: PCG's Generate and preview on the component; Terrain3D's live editor view.
 
-- Each system gets an editor preview that follows the editor camera, as Landscape3D's `_camera()` already does:
-  Landscape3D, VegetationField3D, GrassField3D, RockField3D, SnowSurface3D, GroundSurface3D and WeatherMap3D.
-  It is a per-node `editor_preview` setting, on by default, with tool buttons to rebuild or clear (`Rebuild`,
-  `Populate`, `Clear`). Work stays on worker threads with the same budgets as in the game, so the editor stays
-  responsive. Wind, rain and snow show their resting state, without time stepping.
-- `TerrainGenerator3D.generate_on_ready`: a saved scene generates its ground when loaded, in the editor and in the
-  game, and Landscape3D rebuilds when its source finishes. The result stays derived rather than saved: the
-  generator is deterministic, and its expensive stages already go through the world cache.
-- **Project world cache** (`world/cache/path` set to a folder in the project): the cache ships with the level, so
-  the first launch on another machine skips the minutes of erosion and dunes. A game keeps that folder in LFS.
-- The test is a scene file with no script that opens in the editor with ground, plants, rocks and grass showing,
-  and runs the same.
+Built:
+
+- `TerrainGenerator3D.generate_on_ready` (on): a saved scene generates its ground when the node is ready, in the
+  editor and in the game, unless a script generated it first (deferred a frame). `water_on_ready` (on) then builds
+  the sea, lakes and rivers (`water_river_min_area`) as internal children that are never saved, rebuilt after the
+  Generate button and after touch-ups. Generate no longer fails without a ground node: a Landscape3D reads the
+  generator itself. Benches that generate in their own code set `generate_on_ready = false`.
+- `Landscape3D.auto_rebuild` (on): rebuilds once its generator source has a result and each time it generates again
+  (a script's own `rebuild()` first cancels the deferred one); a TerrainMaterial3D material is pointed at that
+  generator (`use_generator`, new `get_generator`). Rebuild button.
+- `TerrainDataMap3D`: with `bake_on_ready` and a generator as height source, bakes once the generator has a result and
+  again each time it generates, in the editor too. A queued bake is skipped when a script baked in the meantime.
+- `editor_preview` (on) on VegetationField3D (Populate and Clear buttons), GrassField3D and RockField3D (Rebuild
+  button): in the scene being edited they place as in the game round the editor's 3D view
+  (`WorldContracts.get_view_camera`), without the game-time systems (trampling, fire, floods, rockfall, far bakes).
+  Nothing they place is saved.
+- Bench: `docs/bench/editor`. `make_world.gd` saves a scene of system nodes only; `check.gd` opens it in the headless
+  editor and runs it, and checks ground, water, material, data map, plants, grass and stones appear with no script,
+  and that saving keeps only the authored nodes.
+
+Left for later: weather, snow and ground deformation previews (they need time stepping); a project world cache
+folder so the cache ships with a level (`world/cache/path` already accepts one).
 
 ## B. Mask painter
 
 Reference: Terrain3D's paint tools and undo by region; PCG's Paint tool with data layers.
 
-- One editor plugin (`modules/world/editor`) paints any mask slot the systems already read:
-  `VegetationField3D.density_mask` (per channel, matched by `PlantSpecies.mask_channel`),
-  `TerrainGenerator3D.uplift_map` and `sea_map`, `GroundSurface3D.type_map` and `mud_map`, and
-  `WeatherMap3D.painted_map`. The painter lists the selected node's mask slots.
-- Brush: size, strength, falloff, pen pressure, channel, slope limits. Operations: Add, Subtract, Replace, Smooth
-  (Terrain3D's set). Ctrl inverts and Shift smooths, as in the cloth painter.
-- Rays hit the ground through WorldGround, so painting works on Landscape3D, Terrain3D or a HeightMapShape3D.
-- Undo: tiles touched by a stroke are backed up and committed as one undo step (Terrain3D's backup_region).
-- Storage: the mask is saved as an image resource next to the scene, created at the slot's rect when missing.
-  The consumer re-reads only the painted rect (vegetation re-places only its touched tiles).
-- Scale: masks are kept in 256 m tiles (PCG's partition size), so an open world loads only the tiles it streams.
-  Existing single-image slots keep working.
+Built (`modules/world/editor/world_mask_paint_plugin.cpp`): a "Paint Mask" toggle in the 3D toolbar for any selected
+node with a mask slot: a Texture2D or Image property named `*_map` or `*_mask` with a matching `*_rect` property, or
+on a node with `get_world_rect()` (the generator's `uplift_map` and `sea_map`). That covers
+`VegetationField3D.density_mask` and `biome_map`, `GroundSurface3D.type_map` and `mud_map`, `WeatherMap3D.painted_map`
+and `canopy_map`, and `TerrainSculptLayer3D.height_map`.
+
+- Toolbar: slot, channel, operation (Add, Subtract, Replace, Smooth), Value, Radius (m), Strength, the texel of a new
+  map, and Fill. Shift+LMB subtracts, Ctrl+LMB smooths.
+- The brush ray-marches to the generated ground (any TerrainGenerator3D in the scene), else a collider, else the
+  node's height. A decal shows the painted channel.
+- Undo: each stroke stores only the pixels it changed, before and after (Terrain3D's backup_region).
+- A painted texture is updated in place, so nodes sharing it (biome fields) all see the paint; every node using it is
+  told the changed rect through `notify_<slot>_changed(area)` when it has one. VegetationField3D re-places only the
+  tiles there while streaming.
+- Storage: a new map of a saved scene is saved next to it as `<scene>_<node>_<slot>.res` when the scene is saved.
+
+Left for later: masks in 256 m tiles for open worlds (today one image per slot); pen pressure.
 
 ## C. Hand placement and keep-out areas
 
 Reference: PCG Biome Core exclusions (`BiomeExclusion`, `BiomePath`); Unreal foliage single place.
 
-- `WorldExclusion3D`: a box or closed Path3D. Its kind flags pick what it keeps out: plants, grass, rocks, ground
-  detail. An open path is a track of a set width. It is registered through a new WorldContracts slot, so every
-  field reads the same areas, and moving one re-places only the tiles it touched.
-- `PlacedPlant3D`: one plant of a chosen species and variant, at the node's transform. Fields keep its footprint
-  clear and treat it like their own plants (canopy, shade, wind, PT). Rocks get `PlacedRock3D`.
-- Instance paint: the painter's Instance tool paints and erases placed plants or rocks of a chosen species. They
-  are saved per 256 m tile as resources, so regeneration never removes them.
+Built:
+
+- `WorldExclusion3D` (a Path3D): a closed curve is an area, an open one a track of `width`, no curve a box of `size`
+  (rotation and scale apply); `fade` softens the edge; `kinds` flags Plants, Grass, Rocks. Moving or editing one
+  announces the old and new bounds through `WorldContracts` signal `exclusions_changed(area)`.
+  VegetationField3D (all three placement passes), GrassField3D (CPU tiles, the GPU fill falls back to the CPU in a
+  touched tile; far rings) and RockField3D (coarse layers) keep out and place only that ground again.
+- `PlacedPlant3D`: one variant of a PlantSpecies at the node's transform; draws it and keeps procedural plants (and
+  stones, and grass with `clear_grass`) out of its footprint (`clearance`).
+
+Left for later: an Instance paint tool that paints and erases placed plants in tiles; `PlacedRock3D`; ground detail
+stones.
 
 ## D. Biome map
 
-Reference: PCG Biome Core biome definitions (colour and priority) and texture biomes.
+Reference: PCG Biome Core biome definitions and texture biomes.
 
-- `BiomeMap`: a list of entries (Biome, colour, priority) and a painted index map (painted with B).
-  VegetationField3D reads it: each species' weight is multiplied by its biome's share at that point, and
-  boundaries blend over `blend_width` so edges mix rather than cut.
-- Biome volumes: `WorldExclusion3D` gets an "override" kind that forces a biome inside it, as PCG's volume biomes.
-- The default stays rule-driven: without a map, a field uses its one Biome, as today.
+Built: fields that share one painted `biome_map` (with `biome_map_rect`) each take a `biome_channel`. A field's
+plants are kept by its channel's share there, normalised when the painted channels sum past 1, so overlapping paint
+splits the ground; outside the map a field grows everywhere. Up to four biomes per map; paint them with B. A field
+keeps its one Biome, so every existing rule and species order is unchanged.
+
+Left for later: priority between biomes (PCG's lower-priority-wins) instead of shares.
 
 ## E. Freehand sculpt layer
 
 Reference: Unreal Landscape edit layers; Terrain3D sculpt operations.
 
-- `TerrainSculptLayer3D` under the generator: a height-offset layer in 256 m tiles, painted with B's plugin using
-  the sculpt operations Raise, Lower, Flatten, Smooth and Slope.
-- It composites after the generated ground with the existing touch-up path (`apply_touch_ups`), so lakes and
-  rivers re-solve around sculpted ground and the erosion detail fades where the layer flattened.
-- Layers stack in tree order. Hiding one restores the ground under it, because the deformer keeps base heights.
+Built: `TerrainSculptLayer3D` (a TerrainBrush3D) under the generator holds a painted map of offsets in metres
+(`height_map`, `height_map_rect`, `height_scale`), painted with B: Add raises by Value metres, Subtract lowers,
+Replace eases to Value, Smooth smooths. The generator adds its offsets at the grid's nodes in the touch-ups, so lakes
+and rivers re-solve round sculpted ground, and adds the strokes finer than its cells when it draws the ground (each
+layer's offset less the nodes' interpolated sum). Layers stack in tree order; turning one off restores the ground.
 
 ## Rules for all five
 
