@@ -7786,6 +7786,8 @@ func _frost_sorted_cam() -> void:
 	var upd := float(args.get("fs-up", "25"))
 	var gmax := 0.0
 	var fmin := float(args.get("fs-min", "0.6")) # --fs-min: the sorting strength a spot and its ring need
+	var bfg := 0.0 # the strongest flat point, for when no ring passes
+	var bf := Vector3.INF
 	var xx := wr.position.x + 100.0
 	while xx < wr.end.x - 100.0:
 		var zz := wr.position.y + 100.0
@@ -7793,7 +7795,11 @@ func _frost_sorted_cam() -> void:
 			var p := Vector3(xx, 0, zz)
 			var g0: Vector2 = rocks.call("get_frost_at", p)
 			gmax = maxf(gmax, g0.x)
-			if g0.x > fmin and rad_to_deg(atan(_slip_grad(p).length())) < float(args.get("fs-flat", "2")):
+			var flat_here := rad_to_deg(atan(_slip_grad(p).length())) < float(args.get("fs-flat", "2"))
+			if flat_here and g0.x > bfg:
+				bfg = g0.x
+				bf = p
+			if g0.x > fmin and flat_here:
 				var ok := true
 				var lo := 1.0
 				for k in 8:
@@ -7822,8 +7828,20 @@ func _frost_sorted_cam() -> void:
 						bu = up
 			zz += 16.0
 		xx += 16.0
+	if best < 0.0 and bfg > fmin and bf != Vector3.INF:
+		# No spot with its whole 15 m ring sorted (small patches): the strongest flat point, looking up its steepest rise.
+		var rise2 := -INF
+		for k in 16:
+			var d := Vector3(cos(TAU * k / 16.0), 0, sin(TAU * k / 16.0))
+			var r := height_at(bf.x + d.x * 40.0, bf.z + d.z * 40.0) - height_at(bf.x, bf.z)
+			if r > rise2:
+				rise2 = r
+				bu = d
+		bp = Vector3(bf.x, height_at(bf.x, bf.z), bf.z)
+		best = bfg
+		_log("frost sorted: no ring passes; strongest flat point %s, sorting %.2f" % [str(bp.round()), bfg])
 	if best < 0.0:
-		_log("frost sorted: no sorted ground found (strongest sorting anywhere %.2f, needs %.2f)" % [gmax, fmin])
+		_log("frost sorted: no sorted ground found (strongest sorting anywhere %.2f, strongest flat %.2f, needs %.2f)" % [gmax, bfg, fmin])
 		return
 	var c3: Camera3D = get_viewport().get_camera_3d()
 	var dir := bu.rotated(Vector3.UP, deg_to_rad(float(args.get("fs-yaw", "0"))))
