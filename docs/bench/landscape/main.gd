@@ -1246,6 +1246,20 @@ func _ready() -> void:
 			await RenderingServer.frame_post_draw
 			get_viewport().get_texture().get_image().save_png(args["rock-pair"])
 			_log("saved %s (rocks %s, paused)" % [args["rock-pair"], args.get("rock-pair-prop", "")])
+		if args.has("land-pair") and landscape != null:
+			# --land-pair=PATH --land-pair-prop=name:value[;...]: the same moment with Landscape3D properties changed
+			# (e.g. terracette_relief:0.0): the scene paused, the landscape rebuilt over --land-pair-frames (90).
+			process_mode = Node.PROCESS_MODE_ALWAYS
+			get_tree().paused = true
+			landscape.process_mode = Node.PROCESS_MODE_ALWAYS
+			for kv in String(args.get("land-pair-prop", "")).split(";", false):
+				var pv := kv.split(":")
+				landscape.set(pv[0], str_to_var(pv[1]))
+			for i in int(args.get("land-pair-frames", "90")):
+				await get_tree().process_frame
+			await RenderingServer.frame_post_draw
+			get_viewport().get_texture().get_image().save_png(args["land-pair"])
+			_log("saved %s (landscape %s, paused)" % [args["land-pair"], args.get("land-pair-prop", "")])
 		if args.has("weather-pair") and weather != null:
 			# --weather-pair=PATH --weather-pair-prop=name:value[;...]: the same moment with WeatherMap3D properties
 			# changed (a docs on/off pair from one run): the scene paused, the weather maps refreshed, then
@@ -4247,6 +4261,68 @@ func _build_camera() -> void:
 					best_pos = Vector3(c.x, y, c.z)
 			cam.position = best_pos
 			cam.look_at(lake_center)
+		"terracettes":
+			# Grazing terracettes (Landscape3D.terracette_relief, WorldContracts::terracette_at): a soil slope of
+			# --tc-min..--tc-max degrees (25..35) with strong treads, its contour as square to the sun as the sun allows
+			# (low raking light down the treads), seen raised and oblique from --tc-dist m (30) out and --tc-up m (14)
+			# up, looking at the spot. Not near the sea, no rock exposure.
+			var to_sun_t := Vector2(sun.global_basis.z.x, sun.global_basis.z.z).normalized()
+			var tmin := float(args.get("tc-min", "25"))
+			var tmax := float(args.get("tc-max", "35"))
+			var best_tc := -INF
+			var tspot := Vector3.ZERO
+			var tdown := Vector2(0, 1)
+			var tr := int(args.get("tc-search", "700"))
+			for zz in range(-tr, tr + 1, 6):
+				for xx in range(-tr, tr + 1, 6):
+					var p := Vector3(xx, 0, zz)
+					var hp := gen.get_height(p)
+					if hp < gen.sea_level + 8.0:
+						continue
+					var gx := gen.get_height(p + Vector3(3, 0, 0)) - gen.get_height(p - Vector3(3, 0, 0))
+					var gz := gen.get_height(p + Vector3(0, 0, 3)) - gen.get_height(p - Vector3(0, 0, 3))
+					var sl := rad_to_deg(atan(Vector2(gx, gz).length() / 6.0))
+					if sl < tmin or sl > tmax:
+						continue
+					# The slope stays in the band 15 m round (a real hillside, not a bank).
+					var steady := true
+					for o in [Vector3(15, 0, 0), Vector3(-15, 0, 0), Vector3(0, 0, 15), Vector3(0, 0, -15)]:
+						var q: Vector3 = p + o
+						var qx := gen.get_height(q + Vector3(3, 0, 0)) - gen.get_height(q - Vector3(3, 0, 0))
+						var qz := gen.get_height(q + Vector3(0, 0, 3)) - gen.get_height(q - Vector3(0, 0, 3))
+						var qs := rad_to_deg(atan(Vector2(qx, qz).length() / 6.0))
+						if qs < tmin - 5.0 or qs > tmax + 5.0:
+							steady = false
+					if not steady:
+						continue
+					var g := gen.get_material_geology_at(p)
+					if g.r < 0.25 or g.g > 0.0 or absf(g.b) > 0.0:
+						continue
+					var grad := Vector2(gx, gz) / 6.0
+					var band := 0.0
+					for k in 10:
+						band = maxf(band, GrassField3D.get_terracette_at(Vector3(xx, hp - float(k) * 0.2, zz), grad).x)
+					if band < 0.8:
+						continue
+					var down := Vector2(-gx, -gz).normalized()
+					# Raking: the contour along the sun (down the slope square to it), the face still lit.
+					var rake := 1.0 - absf(down.dot(to_sun_t))
+					var lit := 1.0 if down.dot(to_sun_t) > -0.2 else 0.0
+					var score := rake * 2.0 + lit - absf(sl - 30.0) / 10.0 - Vector2(xx, zz).length() / 4000.0
+					if score > best_tc:
+						best_tc = score
+						tspot = Vector3(xx, hp, zz)
+						tdown = down
+			var td := Vector3(tdown.x, 0, tdown.y)
+			var tside := Vector3(-td.z, 0, td.x)
+			# Oblique: out down the slope and to the side, so the steps read as stripes across the frame.
+			var tdir := (td + tside * float(args.get("tc-oblique", "0.6"))).normalized()
+			var tcp := tspot + tdir * float(args.get("tc-dist", "30"))
+			tcp.y = maxf(height_at(tcp.x, tcp.z) + 1.7, tspot.y + float(args.get("tc-up", "14")))
+			cam.fov = 50.0
+			cam.position = tcp
+			cam.look_at(tspot + Vector3(0, float(args.get("tc-look-up", "0")), 0))
+			_log("terracette view: spot %s, score %.2f, camera %s" % [str(tspot.round()), best_tc, str(tcp.round())])
 		"talus":
 			# Standing 1.7 m high 20 to 30 m out from the foot of a talus cone (the densest 40 m patch of scree stones,
 			# --talus-pick=N for the Nth densest), looking back up at the cone and the cliff face above it.
