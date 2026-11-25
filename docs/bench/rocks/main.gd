@@ -107,7 +107,8 @@ extends Node3D
 #   --rain-climate[=P]    with --world: a mild climate of P mm a year (350) for RockField3D.rain_pedestals (stones on rain
 #                         splash pedestals on bare soil); --pedestal-spot the tallest near the centre; --no-rain-pedestals off
 #   --snow[=CM]           with --world: an even settled pack of CM cm (8) round the spot with its deep snow surface, for
-#                         RockField3D.snow_burial (stones under the pack left out); --no-snow-burial off
+#                         RockField3D.snow_burial (stones under the pack left out); --no-snow-burial off;
+#                         --no-snow-surface leaves the deep snow surface out (the ground material's snow only)
 #   --no-cliff-relief     with --world: Landscape3D.cliff_relief off (the bare heightfield faces; a before frame)
 #   --no-patch-relief     with --world: the beach GroundSurface3D patch without the landscape's cliff relief (a before
 #                         frame; the landscape keeps it)
@@ -1128,7 +1129,7 @@ func _world() -> void:
 		sc.add_snow(cm * 0.01 * 250.0, 250.0) # settled: 250 kg/m3
 		sc.advance(1.0) # (publishes the pack: snow_map for the materials, the cells for the deep snow surface)
 		print("snow: %.3f m under the camera" % sc.get_depth_at(cam.position))
-	if has_node("SnowCover3D"):
+	if has_node("SnowCover3D") and not args.has("no-snow-surface"):
 		var ss := SnowSurface3D.new()
 		ss.name = "SnowSurface"
 		ss.snow_cover = NodePath("../SnowCover3D")
