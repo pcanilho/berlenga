@@ -171,7 +171,10 @@
 		<constant name="FAMILY_LEDGE" value="16" enum="Family">
 			A ledge slab: the hard caprock bed of a bench standing out over the weaker bed under it (x along the lip, y the bed's thickness, z out over the lip), its lip broken along slanted joints, its soffit's front edge bevelled up, sometimes a stress-release crack open behind the lip.
 		</constant>
-		<constant name="FAMILY_MAX" value="17" enum="Family">
+		<constant name="FAMILY_CLIFF_PILLAR" value="17" enum="Family">
+			A cliff face's joint-bounded pillar: the column a vertical joint set cuts out of a thick bed or a stack of beds, two to four times as tall as wide (x up when stood on end, y across the face, z into the wall), its faces the joint planes, bedded across.
+		</constant>
+		<constant name="FAMILY_MAX" value="18" enum="Family">
 			Number of families.
 		</constant>
 	</constants>
