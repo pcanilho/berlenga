@@ -1560,6 +1560,29 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_cell_rect, uint32_t p_see
 			if (rf_ledges_only) {
 				break; // the wall blocks stand in faces too steep for plants: no obstacles
 			}
+			struct KitPiece {
+				Vector3 centre, up, along, out;
+				float ext_up, ext_along, ext_out;
+			};
+			LocalVector<KitPiece> kits;
+			HashMap<Vector2i, LocalVector<uint32_t>> kit_grid; // 8 m plan squares: the pieces reaching into each
+			const float kit_tan = Math::tan(Math::deg_to_rad(55.0f));
+			const float kit_tier = 5.5f; // m, mean pillar height
+			// Whether a point of the face lies inside a kit piece (a bed block there would be buried in it).
+			auto in_kit = [&](const Vector3 &p_point) {
+				const LocalVector<uint32_t> *list = kit_grid.getptr(Vector2i(int(Math::floor(p_point.x / 8.0f)), int(Math::floor(p_point.z / 8.0f))));
+				if (!list) {
+					return false;
+				}
+				for (uint32_t ki : *list) {
+					const KitPiece &kp = kits[ki];
+					const Vector3 d = p_point - kp.centre;
+					if (Math::abs(d.dot(kp.up)) <= kp.ext_up * 0.9f && Math::abs(d.dot(kp.along)) <= kp.ext_along * 0.9f && Math::abs(d.dot(kp.out)) <= kp.ext_out + 0.3f) {
+						return true;
+					}
+				}
+				return false;
+			};
 			for (real_t z = p_rect.position.y; z < p_rect.get_end().y; z += sub) {
 				for (real_t x = p_rect.position.x; x < p_rect.get_end().x; x += sub) {
 					const Vector3 c(x + sub * 0.5f, 0, z + sub * 0.5f);
@@ -1580,6 +1603,139 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_cell_rect, uint32_t p_see
 						continue;
 					}
 					const Vector2 up_dir = grad / gl; // uphill, in plan
+					// The cliff kit (docs/ideas/rocks.md, "Cliff kit on fluted walls"): where the face is too rounded or
+					// fluted for blocks set into it (the bend and fit tests below turn them away), tall joint-bounded
+					// pillars wrap it. Each piece's plane is fitted to the face over its own footprint: its front stands at
+					// the ridges, its back reaches behind the grooves, so the flutes vanish inside real rock geometry and no
+					// piece floats. Tiers of 4 to 7 m up the face, pillars a third to three fifths as wide, their joints
+					// shared along a world axis like the beds'.
+					if (cliff_kit && gl >= kit_tan) {
+						const real_t ek = 2.5; // the face's plane over a flute's width, not one flank of it
+						const Vector2 gk((rf_height(gen, c + Vector3(ek, 0, 0)) - rf_height(gen, c - Vector3(ek, 0, 0))) / (2.0 * ek), (rf_height(gen, c + Vector3(0, 0, ek)) - rf_height(gen, c - Vector3(0, 0, ek))) / (2.0 * ek));
+						const float glk = gk.length();
+						if (glk >= min_tan && Math::is_finite(glk)) {
+							const Vector2 kup = gk / glk;
+							const Vector2 kstrike(-kup.y, kup.x);
+							const Vector3 kn = Vector3(-gk.x, 1.0f, -gk.y).normalized();
+							const Vector3 kface_up = (Vector3(0, 1, 0) - kn * kn.y).normalized();
+							const Vector3 kx3 = Vector3(kstrike.x, 0, kstrike.y);
+							const bool kalong_x = Math::abs(kstrike.x) >= Math::abs(kstrike.y);
+							const float kcomp = kalong_x ? kstrike.x : kstrike.y;
+							const float khalf = float(sub) * 0.5f;
+							const float ky0 = float(hc) - glk * khalf, ky1 = float(hc) + glk * khalf;
+							const Rect2 ksub(c.x - khalf, c.z - khalf, float(sub), float(sub));
+							const int64_t t0 = int64_t(Math::floor(ky0 / kit_tier)) - 1, t1 = int64_t(Math::floor(ky1 / kit_tier)) + 1;
+							for (int64_t t = t0; t <= t1; t++) {
+								const float tb0 = (float(t) + 0.3f * (u01(bed_hash(t, 0x1a7eu)) - 0.5f)) * kit_tier;
+								const float tb1 = (float(t + 1) + 0.3f * (u01(bed_hash(t + 1, 0x1a7eu)) - 0.5f)) * kit_tier;
+								const float tier = tb1 - tb0;
+								const float yk = 0.5f * (tb0 + tb1);
+								const float along = (yk - float(hc)) / glk;
+								if (Math::abs(along) > khalf) {
+									continue;
+								}
+								const uint32_t tid = bed_hash(t, 0x4c11u);
+								const float width = tier * (0.33f + 0.27f * u01(tid));
+								const float spacing = width / MAX(Math::abs(kcomp), 0.7f);
+								const Vector2 pxz = Vector2(c.x, c.z) + kup * along;
+								const float s_here = kalong_x ? pxz.x : pxz.y;
+								const int64_t j0 = int64_t(Math::floor((s_here - float(sub)) / spacing)) - 1;
+								const int64_t j1 = int64_t(Math::floor((s_here + float(sub)) / spacing)) + 1;
+								for (int64_t j = j0; j <= j1; j++) {
+									const float ja = (float(j) + 0.5f * (u01(bed_hash(j, tid)) - 0.5f)) * spacing;
+									const float jb = (float(j + 1) + 0.5f * (u01(bed_hash(j + 1, tid)) - 0.5f)) * spacing;
+									const Vector2 bp = pxz + kstrike * ((0.5f * (ja + jb) - s_here) / kcomp);
+									if (!ksub.has_point(bp) || !p_rect.has_point(bp)) {
+										continue;
+									}
+									const float span = (jb - ja) * Math::abs(kcomp);
+									const Vector3 pos3(bp.x, 0, bp.y);
+									const RockGenerator::RockType type = _type_at(gen, pos3 + Vector3(0, yk, 0));
+									const uint32_t key = _library_key(type, RockGenerator::FAMILY_CLIFF_BLOCK, 0);
+									Library *lib = _ensure_library(key);
+									if (!lib) {
+										continue;
+									}
+									// Of three shapes, the one whose long axis to short axis best matches the tier to the span:
+									// stood on end, x up the face, the short axis along the strike, the middle one into the wall.
+									uint16_t var = 0;
+									{
+										const float want = tier / MAX(span, 0.05f);
+										float best = 1e9f;
+										for (int q = 0; q < 3; q++) {
+											const uint16_t v = pick_variant(lib);
+											const Vector3 ax = lib->axes[v];
+											const float d = Math::abs(Math::log(MAX(ax.x, 0.01f) / MAX(ax.y, 0.01f) / want));
+											if (d < best) {
+												best = d;
+												var = v;
+											}
+										}
+									}
+									const Vector3 axes = lib->axes[var];
+									const float sc = (0.9f + 0.08f * rng.randf()) * MIN(tier / MAX(2.0f * axes.x, 0.05f), 1.2f * span / MAX(2.0f * axes.y, 0.05f));
+									const float ext_up = axes.x * sc, ext_str = axes.y * sc, ext_in = axes.z * sc;
+									// The face over the piece's footprint, measured square to the fitted plane: + where the ground
+									// stands in front of it (a ridge between flutes), - behind it (a groove).
+									const Vector3 surface(bp.x, yk, bp.y);
+									float tmax = -1e9f, tmin = 1e9f;
+									bool off = false;
+									for (int a = -1; a <= 1 && !off; a++) {
+										for (int b2 = -1; b2 <= 1; b2++) {
+											const Vector3 q = surface + kface_up * (0.9f * ext_up * a) + kx3 * (0.9f * ext_str * b2);
+											const real_t hq = rf_height(gen, q);
+											if (!Math::is_finite(hq)) {
+												off = true;
+												break;
+											}
+											const float tq = float(hq - q.y) * kn.y;
+											tmax = MAX(tmax, tq);
+											tmin = MIN(tmin, tq);
+										}
+									}
+									// A convex corner or a ledge over the footprint (a piece there would stand out as a slab), or a
+									// groove deeper than the piece's depth (its back would hang in the air).
+									// The front a little proud of the highest ridge: the drawn face (the terrain mesh, its relief)
+									// stands off the bilinear heights by some decimetres on a steep face.
+									const float front = tmax + 0.3f;
+									if (off || tmax > 2.0f || front - 2.0f * ext_in > tmin - 0.15f) {
+										continue;
+									}
+									if (rng.randf() > 0.9f * float(density)) {
+										continue;
+									}
+									Basis kb;
+									const Vector3 kz = kface_up.cross(kx3).normalized();
+									kb.set_column(0, kface_up);
+									kb.set_column(1, kx3);
+									kb.set_column(2, kz);
+									kb = Basis(kn, (rng.randf() - 0.5f) * 0.08f) * kb; // a pillar leaning a little off the dip
+									Stone st;
+									st.layer = p_layer;
+									st.library = key;
+									st.variant = var;
+									st.scale = sc;
+									st.basis = kb * Basis().scaled(Vector3(sc, sc, sc));
+									st.position = surface + kn * (front - ext_in);
+									st.ground = yk - 50.0f;
+									st.footprint = 0.0f;
+									r_stones.push_back(st);
+									// Blocks of the beds behind it would be buried: they test against these.
+									const uint32_t ki = kits.size();
+									kits.push_back({ st.position, kface_up, kx3, kn, ext_up, ext_str, ext_in });
+									const Vector2i g0(int(Math::floor((bp.x - 8.0f) / 8.0f)), int(Math::floor((bp.y - 8.0f) / 8.0f)));
+									for (int gy = 0; gy < 3; gy++) {
+										for (int gx = 0; gx < 3; gx++) {
+											kit_grid[Vector2i(g0.x + gx, g0.y + gy)].push_back(ki);
+										}
+									}
+									if (int(r_stones.size()) >= max_stones_per_cell) {
+										return;
+									}
+								}
+							}
+						}
+					}
 					// Only where the terrain mesh really has this face: across one terrain cell up and down the fall
 					// line the face must stay near planar. Where the heightfield cannot hold the wall (a near-vertical
 					// step between two vertices) the mesh and the bilinear height part by metres, and blocks set into
@@ -1649,6 +1805,9 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_cell_rect, uint32_t p_see
 								}
 								if (rng.randf() > (sheer ? 0.72f + 0.26f * hard : 0.75f * rock - 0.1f) * float(density)) {
 									continue; // a gap: a block weathered out, the wall shows behind
+								}
+								if (!kits.is_empty() && in_kit(Vector3(bp.x, yk, bp.y))) {
+									continue; // inside a kit piece
 								}
 								const float span = (jb - ja) * Math::abs(strike_comp); // along the strike, metres
 								const Vector3 pos3(bp.x, 0, bp.y);
@@ -10252,6 +10411,9 @@ void RockField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("load_scan_set", "dir"), &RockField3D::load_scan_set);
 	ClassDB::bind_method(D_METHOD("set_cliff_block_max_slope", "degrees"), &RockField3D::set_cliff_block_max_slope);
 	ClassDB::bind_method(D_METHOD("get_cliff_block_max_slope"), &RockField3D::get_cliff_block_max_slope);
+	ClassDB::bind_method(D_METHOD("set_cliff_kit", "enabled"), &RockField3D::set_cliff_kit);
+	ClassDB::bind_method(D_METHOD("is_cliff_kit"), &RockField3D::is_cliff_kit);
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "cliff_kit"), "set_cliff_kit", "is_cliff_kit");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "cliff_block_max_slope", PROPERTY_HINT_RANGE, "50,89,0.5,suffix:°"), "set_cliff_block_max_slope", "get_cliff_block_max_slope");
 	ClassDB::bind_method(D_METHOD("get_scan_dir"), &RockField3D::get_scan_dir);
 	ClassDB::bind_method(D_METHOD("get_ground_material"), &RockField3D::get_ground_material);

@@ -223,6 +223,7 @@ private:
 	Ref<ShaderMaterial> ground_material;
 	RockScan stone_scans[2]; // scans.cfg [stone] and [stone_variant] (load_scan_set): detail on the stones
 	String scan_dir;
+	bool cliff_kit = true; // tall joint-bounded pillars wrap the fluted 55 degree and steeper faces (fitted to each footprint)
 	real_t cliff_block_max_slope = 88.0; // the wall's block courses up to this face angle (76: the courses before 25 Nov)
 	mutable Ref<ShaderMaterial> auto_ground; // the landscape's TerrainMaterial3D when ground_material is unset
 	mutable bool auto_ground_found = false;
@@ -888,6 +889,11 @@ public:
 		rebuild();
 	}
 	real_t get_cliff_block_max_slope() const { return cliff_block_max_slope; }
+	void set_cliff_kit(bool p_enabled) {
+		cliff_kit = p_enabled;
+		rebuild();
+	}
+	bool is_cliff_kit() const { return cliff_kit; }
 	String get_scan_dir() const { return scan_dir; }
 	Ref<ShaderMaterial> get_ground_material() const { return ground_material; }
 	void set_layer_enabled(int p_layer, bool p_enabled);

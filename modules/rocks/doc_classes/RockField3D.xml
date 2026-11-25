@@ -369,6 +369,9 @@
 		<member name="cliff_block_max_slope" type="float" setter="set_cliff_block_max_slope" getter="get_cliff_block_max_slope" default="88.0">
 			Steepest terrain face, in degrees, that the cliff layer's wall blocks cover. Above about 60 degrees a heightfield face is a stretched step that draws vertical bands, and the blocks cover it with real geometry: beds of uneven thickness cut by joints, nearly closed, the hard beds standing proud of the soft ones. 76 keeps the blocks off sheer walls.
 		</member>
+		<member name="cliff_kit" type="bool" setter="set_cliff_kit" getter="is_cliff_kit" default="true">
+			Tall joint-bounded rock pillars wrap the cliff faces of 55 degrees and steeper where they are rounded or fluted. Each piece is fitted to the face over its own footprint: its front stands at the ridges and its back reaches behind the grooves, so the flutes of the heightfield are covered by real rock geometry and no piece floats. The bed blocks a piece would bury are left out.
+		</member>
 		<member name="cliff_density" type="float" setter="set_layer_density" getter="get_layer_density" default="1.0">
 			Scales how many blocks are set into cliff faces.
 		</member>

@@ -1502,3 +1502,31 @@ along bedding and joint sets:
 
 Rocks bench cliff view: 362k to 368k stones. --slope-map=cx,cz,half,step prints a slope map, to find the faces past
 60 degrees.
+
+## Cliff kit on fluted walls (25 Nov)
+
+A rounded or fluted wall of 50 to 75 degrees turns away the bed blocks. Their fit tests need the face near planar
+across a block, so the heightfield's vertical flutes stayed bare. Terrain tried joint-bounded pillars as offset relief
+on these faces, and offset relief does not hold past about 60 degrees. Open worlds on heightfields cover such faces
+with placed kit meshes, fitted to the terrain they stand over:
+- Horizon Zero Dawn placed rock and cliff pieces by density maps and fitted each piece to the terrain (Guerrilla,
+  GDC 2017, "GPU-Based Run-Time Procedural Placement in Horizon Zero Dawn").
+- Far Cry 5 placed cliff meshes along steep terrain and sank them in, so the heightfield's stretched faces sit behind
+  real geometry (Carrier, GDC 2018, "Procedural World Generation of Far Cry 5").
+
+Here the kit pieces are the cliff layer's own joint blocks, stood on end as pillars. This is how a sheer jointed face
+breaks: vertical joint sets cut each bed into columns.
+- **Tiers.** Pillars come in tiers of about 5.5 m up the face, with jittered tops.
+- **Width.** Each tier's pillars are a third to three fifths of its height wide. Their joints are spaced along a world
+  axis so neighbouring cells agree.
+- **Fitted plane.** Each piece's plane comes from the face's gradient over 5 m, across a flute rather than one flank of
+  it. The face is sampled at 9 points over the piece's footprint and measured square to that plane.
+- **Placement.** The piece's front stands 0.3 m proud of the highest ridge, because the drawn face sits decimetres off
+  the bilinear heights on a steep face. Its back must reach 0.15 m behind the deepest groove, so no piece floats.
+- **Rejected.** A footprint whose ridge stands more than 2 m out of the plane gets no piece; that is a convex corner or
+  a ledge, where a piece reads as a slab.
+- **Bed blocks.** The bed blocks a piece would bury are left out, so the stone count barely changes (cliff-foot view:
+  357k to 363k).
+
+On the cliff-foot view the fit tests pass 88 percent of the tried pieces. `cliff_kit` (on by default) and the bench's
+--no-cliff-kit give the before frame. The path tracer draws the same full meshes.

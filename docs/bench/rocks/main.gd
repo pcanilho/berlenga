@@ -20,6 +20,7 @@ extends Node3D
 #   --mat-prop=name:value[;...]  any TerrainMaterial3D property or tm_ shader uniform (tm_sand_color:Color(1,0,1) marks a layer)
 #   --hide=Node[,Node...]  hide those children of the bench (A/B which object draws something)
 #   --lod-error=px        Landscape3D.lod_error
+#   --no-cliff-kit        RockField3D.cliff_kit off (the fluted walls bare of their pillars: a before frame)
 #   --slope-map=cx,cz,half,step  print the terrain slope round that point (tens of degrees, '#' past 80)
 #   --face-spot=north|south  a rock wall facing that way, from its foot with the sky over it (--view=cliff);
 #                         --face-side=k moves the camera along the wall (k times --dist)
@@ -629,6 +630,8 @@ func _world() -> void:
 		rocks.generator = rocks.get_path_to(gen)
 		rocks.follow_target = rocks.get_path_to(focus)
 		rocks.ground_material = tm # the stones' feet blend into these layers
+		if args.has("no-cliff-kit"):
+			rocks.cliff_kit = false # --no-cliff-kit: the fluted walls without their kit pieces (the before frame)
 		if args.has("cliff-max"):
 			rocks.cliff_block_max_slope = float(args["cliff-max"]) # --cliff-max=76: the wall's courses stop there (the before frame)
 		if args.get("stone-scans", "1") != "0" and not args.has("test"): # --stone-scans=0: no scan detail on stones and caves (A/B)
