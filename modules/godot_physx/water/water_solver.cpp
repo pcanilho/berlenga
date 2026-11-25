@@ -1215,7 +1215,7 @@ void WaterSolverGPU::rt_step(Ref<WaterSolverGPU> p_self, PackedFloat64Array p_de
 		const float period = MAX(advected_period, 0.05f);
 		const bool restart = p_rest || flow_clock_last < 0.0f || clock_now < flow_clock_last || clock_now - flow_clock_last > 0.5f * period;
 		float op[8] = { period, restart ? clock_now : flow_clock_last, clock_now, (float)step_delta,
-			flow_grid_center.x, flow_grid_center.y, domain_size.x, domain_size.y };
+			(float)flow_grid_center.x, (float)flow_grid_center.y, (float)domain_size.x, (float)domain_size.y };
 		int32_t orr[4] = { n, advected_ripples ? 1 : 0, 0, restart ? 1 : 0 };
 		if (advected_ripples || flow_clock_last >= 0.0f) { // (once more after turning off, to clear it)
 			Vector<uint8_t> ob;
@@ -1244,8 +1244,8 @@ void WaterSolverGPU::rt_step(Ref<WaterSolverGPU> p_self, PackedFloat64Array p_de
 		if (surface_wave_n > 0 && rd->uniform_set_is_valid(uset_sw[0]) && rd->uniform_set_is_valid(uset_sw_inv_cols)) {
 			surface_wave_time += (float)step_delta;
 			const float dt = MIN((float)step_delta, 0.1f);
-			float sp[12] = { dt, domain_size.x / (float)surface_wave_n, _init_gravity, fmodf(surface_wave_time, 3600.0f),
-				domain_size.x, domain_size.y, surface_wave_strength, 0.3f,
+			float sp[12] = { dt, (float)domain_size.x / (float)surface_wave_n, _init_gravity, fmodf(surface_wave_time, 3600.0f),
+				(float)domain_size.x, (float)domain_size.y, surface_wave_strength, 0.3f,
 				0.15f, 0.4f, 1.0f, 2.5f };
 			Vector<uint8_t> pb;
 			pb.resize(SURFACE_WAVES_PARAMS_BYTES);
@@ -1407,8 +1407,8 @@ void WaterSolverGPU::rt_step(Ref<WaterSolverGPU> p_self, PackedFloat64Array p_de
 	{
 		float sp[12] = {
 			Math::exp(-(float)step_delta / MAX(foam_persistence * 1.5f, 0.01f)), shore_foam_band, 0.2f, p_water_level,
-			domain_size.x, domain_size.y, ocean_domain_size.x, ocean_domain_size.y,
-			(float)step_delta, domain_size.x / (float)n, shore_undertow, p_gravity
+			(float)domain_size.x, (float)domain_size.y, (float)ocean_domain_size.x, (float)ocean_domain_size.y,
+			(float)step_delta, (float)domain_size.x / (float)n, shore_undertow, p_gravity
 		};
 		int32_t sr[4] = { n, (foam_enabled && shore_foam_band > 0.0f) ? 1 : 0, 0, 0 };
 		Vector<uint8_t> sb;
@@ -1431,14 +1431,14 @@ void WaterSolverGPU::rt_step(Ref<WaterSolverGPU> p_self, PackedFloat64Array p_de
 		const float dt = (float)step_delta;
 		float wp[12] = {
 			dt, swash_run_up, swash_drain_speed, Math::exp(-dt / MAX(wet_sand_dry_time, 0.05f)),
-			domain_size.x, domain_size.y, ocean_domain_size.x, ocean_domain_size.y,
+			(float)domain_size.x, (float)domain_size.y, (float)ocean_domain_size.x, (float)ocean_domain_size.y,
 			p_water_level, (float)Math::fmod(ocean_time_accum, 10000.0), 0.25f, 1.0f - Math::exp(-dt / 6.0f)
 		};
 		int32_t wr[4] = { n, 0, 0, 0 };
 		const bool shore_live = shore_on && shore_wave_tex.is_valid() && rd->texture_is_valid(shore_wave_tex);
 		float ws[8] = {
 			shore_omega[0], shore_omega[1], (float)Math::fmod(shore_time, 3600.0), shore_live ? 1.0f : 0.0f,
-			shore_center.x, shore_center.y, shore_h0, shore_l0
+			(float)shore_center.x, (float)shore_center.y, shore_h0, shore_l0
 		};
 		Vector<uint8_t> wb;
 		wb.resize(SWASH_PARAMS_BYTES);

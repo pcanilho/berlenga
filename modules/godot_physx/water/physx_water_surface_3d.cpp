@@ -259,6 +259,10 @@ uniform vec3 pathtraced_scattering = vec3(0.05, 0.08, 0.12);
 uniform vec3 sediment_scattering = vec3(0.0);
 uniform float pathtraced_scattering_anisotropy : hint_range(-0.9, 0.95) = 0.85;
 uniform float pathtraced_roughness : hint_range(0.0, 1.0) = 0.02;
+// Under the path tracer the slopes finer than the pixel are drawn one facet per path from their Gaussian
+// (Cox and Munk 1954) instead of widening the GGX lobe, whose long tail of steep facets dimmed the grazing sea
+// (docs/ideas/water.md, "Grazing sea under the path tracer"). This much GGX stays, for the sun's glint.
+uniform float pathtraced_glint_roughness : hint_range(0.0, 1.0) = 0.1;
 // Persistent whitecap foam (0..1) on the ocean grid, injected where the
 // waves fold and fading over the node's foam_persistence (set by
 // PhysXWaterSurface3D).
@@ -644,6 +648,13 @@ vec4 ocean_deriv_all_inc(vec2 world_xz) {
 // carried every wave in the normal on rings metres apart, and at a grazing view those facets sent the rays
 // down into the water or into the next wave, a black band toward the horizon where raster shows the sky's sheen
 // (filtered far sea: Bruneton, Neyret and Holzschuch 2010, as raster does).
+// PCG output permutation (Jarzynski and Olano 2020), for the path tracer's per-path facet draw.
+uint water_rt_hash(uint p_v) {
+	uint state = p_v * 747796405u + 2891336453u;
+	uint word = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
+	return (word >> 22u) ^ word;
+}
+
 float water_pixel_footprint(vec2 p_xz, vec3 p_world, vec3 p_camera, mat4 p_projection, vec2 p_viewport) {
 #if defined(RT)
 	vec3 to = p_world - p_camera;
@@ -2355,7 +2366,45 @@ void fragment() {
 	// (the path tracer tracks the medium between them). Foam is an opaque,
 	// rough white layer on top; where the swash has left the sand, no surface.
 	NORMAL = normalize((VIEW_MATRIX * vec4(world_normal, 0.0)).xyz);
+	float rt_rough = water_roughness;
 	if (FRONT_FACING) {
+		// The pixel's hidden slopes (alpha^2 = 2 sigma^2 per axis, as in water_raster_reflect_ex()): one facet per
+		// path, drawn from the Gaussian and weighted by the area it turns toward the ray (rejection), so the
+		// passes average to Bruneton, Neyret and Holzschuch's filtered sea, as raster draws it. A GGX lobe of
+		// the same variance reflects about a third less of the sky at a grazing view (its steep tail turns the
+		// facets the eye sees toward it, lowering their Fresnel). Faded out toward the swash's rough edge.
+		float a_base = max(pathtraced_roughness, pathtraced_glint_roughness);
+		a_base *= a_base;
+		float a_tot = water_roughness * water_roughness;
+		float slope_var = max(a_tot * a_tot - a_base * a_base, 0.0) * smoothstep(soft * 0.5, soft * 4.0, shore);
+		if (slope_var > 1e-8) {
+			vec3 nn = NORMAL;
+			float nv0 = dot(nn, VIEW);
+			vec3 tv = VIEW - nn * nv0;
+			float tl = length(tv);
+			tv = tl > 1e-5 ? tv / tl : normalize(cross(nn, vec3(0.0, 0.0, 1.0) + vec3(0.3, 0.0, 0.0)));
+			vec3 bv = cross(nn, tv);
+			float sigma = sqrt(0.5 * slope_var);
+			uvec3 hb = floatBitsToUint(VERTEX) ^ uvec3(floatBitsToUint(TIME) * 747796405u);
+			uint st = water_rt_hash(hb.x ^ water_rt_hash(hb.y ^ water_rt_hash(hb.z)));
+			for (int k = 0; k < 6; k++) {
+				st = water_rt_hash(st);
+				float u1 = max(float(st >> 8u) / 16777216.0, 1e-7);
+				st = water_rt_hash(st);
+				float u2 = float(st >> 8u) / 16777216.0;
+				st = water_rt_hash(st);
+				float u3 = float(st >> 8u) / 16777216.0;
+				float rad = sigma * sqrt(-2.0 * log(u1));
+				vec2 sl = rad * vec2(cos(2.0 * PI * u2), sin(2.0 * PI * u2));
+				// Unnormalized facet normal n + s: its projected area toward the ray is linear in the slope.
+				float w = nv0 + sl.x * tl;
+				if (w > 0.0 && u3 * (nv0 + abs(sl.x) * tl) < w) {
+					NORMAL = normalize(nn + sl.x * tv + sl.y * bv);
+					rt_rough = sqrt(a_base);
+					break;
+				}
+			}
+		}
 		// A facet turned away from the ray cannot be what it meets: at a grazing view the waves in front hide
 		// it (masking). The per-pixel normal carries waves the coarse far rings do not, so there it can face
 		// away, and the reflected ray went down into the water, a black band toward the horizon that raster's
@@ -2367,7 +2416,7 @@ void fragment() {
 		}
 	}
 	ALBEDO = mix(vec3(1.0), foam_color.rgb, foam);
-	ROUGHNESS = mix(edge_rough, 0.8, foam);
+	ROUGHNESS = mix(mix(max(water_roughness, 0.32), rt_rough, smoothstep(soft * 0.5, soft * 4.0, shore)), 0.8, foam);
 	SPECULAR = 0.5;
 	METALLIC = 0.0;
 	TRANSMISSION = 1.0 - foam;

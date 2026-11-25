@@ -1890,7 +1890,7 @@ float PhysXRiver3D::_live_height_at(const Vector3 &p_world) const {
 		return 0.0f;
 	}
 	const Vector2 rel = (Vector2(p_world.x, p_world.z) - live_center) / live_domain_size;
-	const float inside = 1.0f - Math::smoothstep(0.44f, 0.5f, MAX(Math::abs(rel.x), Math::abs(rel.y)));
+	const float inside = 1.0f - Math::smoothstep(0.44f, 0.5f, (float)MAX(Math::abs(rel.x), Math::abs(rel.y)));
 	if (inside <= 0.0f) {
 		return 0.0f;
 	}
@@ -1915,7 +1915,7 @@ Vector2 PhysXRiver3D::_live_velocity_at(const Vector3 &p_world) const {
 		return Vector2();
 	}
 	const Vector2 rel = (Vector2(p_world.x, p_world.z) - live_center) / live_domain_size;
-	const float inside = 1.0f - Math::smoothstep(0.44f, 0.5f, MAX(Math::abs(rel.x), Math::abs(rel.y)));
+	const float inside = 1.0f - Math::smoothstep(0.44f, 0.5f, (float)MAX(Math::abs(rel.x), Math::abs(rel.y)));
 	if (inside <= 0.0f) {
 		return Vector2();
 	}
