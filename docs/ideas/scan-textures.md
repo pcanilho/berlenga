@@ -121,6 +121,10 @@ Credits: one line per scan in the README References and CREDIT.txt beside the fi
   alluvium where the drainage area is a hundred times alluvium_area's on gentle ground (bedload channels keep rounded
   gravel, not silt). The layer functions take a second mask vector (om2).
 
+- Mud (25 Nov, mud side): `mud_scan` goes by the patch's own mud (material.cpp `ground_deform_mud()`: worked ground
+  where it is wet mud, wallows of muddy water, laid mud), not by `ground_deform_exposed()`; the mud's own darkening,
+  film and water stay over it. Raster and PT checked on the ground bench's ruts view (docs/ideas/mud.md).
+
 Next on the terrain side: burn scars (WorldBurnScar3D draws its own char), waterline band on banks. Then the owning threads: forest floor and moss (vegetation), stones and caves
 (rocks), snow detail (snow), bark, deadwood and leaves (trees), mud weights from its own maps (mud).
 

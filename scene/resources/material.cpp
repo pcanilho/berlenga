@@ -6377,6 +6377,24 @@ float ground_deform_exposed(vec3 p_world) {
 	float water = d.a < 0.0 ? 1.0 : smoothstep(5e-4, 3e-3, d.g);
 	return max(max(relief, turned), water);
 }
+// Where the deformed ground is mud, 0 to 1 (TerrainMaterial3D's mud_scan slot; docs/ideas/scan-textures.md): ruts,
+// digs and prints pressed a centimetre or more and the rims and laid mud they leave, turned and mud-filmed ground, but
+// only where the worked soil is wet mud (a dry rut stays crumbly soil): the gloss the patch gives freshly worked wet
+// ground (the map's A: mud's 0.35 to 0.7 of the roughness, moist soil's 0.6, dry soil none), or the pore water's
+// saturation past half; wallows of muddy water and fresh mud deposits at any wetness. A rut the sward has grown back over
+// is ground again. The scan is detail only: the mud's own wetness, water and tint stay the patch's.
+float ground_deform_mud(vec3 p_world) {
+	if (!ground_deform_patch || ground_deform_rect.z <= 0.0) {
+		return 0.0;
+	}
+	vec4 d = ground_deform_sample(p_world.xz);
+	float regrown = clamp((d.a - 1.0) / 0.02, 0.0, 1.0);
+	float worked = max(smoothstep(0.008, 0.03, abs(d.r)), smoothstep(0.03, 0.15, abs(1.0 - d.b))) * (1.0 - regrown);
+	float plastic = max(d.a >= 0.0 && d.a <= 1.0 ? 1.0 - smoothstep(0.7, 0.92, d.a) : 0.0, smoothstep(0.35, 0.55, ground_wet_at(p_world, vec3(0.0, 1.0, 0.0)).x));
+	float wallow = d.a < 0.0 ? smoothstep(0.0, 0.02, -d.a) : 0.0;
+	float laid = clamp(ground_deposit_state(p_world.xz).x, 0.0, 1.0);
+	return clamp(max(worked * plastic, max(wallow, laid)), 0.0, 1.0);
+}
 // The clay the standing water carries at a world position, kg/m3 (mud round 3; the map's A under muddy water).
 float ground_deform_water_mud(vec3 p_world) {
 	if (!ground_deform_patch || ground_deform_rect.z <= 0.0) {

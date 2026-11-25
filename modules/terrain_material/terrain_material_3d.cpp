@@ -3050,8 +3050,9 @@ void fragment() {
 )";
 	}
 	c += "}\n";
-	// The mud overlay's mask: GroundSurface3D's turned soil, where the ground deforms at all.
-	c = c.replace("TM_OM_MUD", ground_deform_enabled ? "ground_deform_exposed(wp)" : "0.0");
+	// The mud overlay's mask: GroundSurface3D's own mud (ruts, digs, wallows and laid mud where the soil is wet
+	// enough to be mud; material.cpp ground_deform_mud()), where the ground deforms at all.
+	c = c.replace("TM_OM_MUD", ground_deform_enabled ? "ground_deform_mud(wp)" : "0.0");
 	return c;
 }
 
