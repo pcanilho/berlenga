@@ -2349,7 +2349,12 @@ void TreeGenerator::_shed(int p_year) {
 		// leaving a stub of 0.4-1.6 m (by the branch's own hash, so the generator's random stream is untouched). Long
 		// dead branches kept whole, bare and straight, read inside a stand as wires strung between the stems (docs,
 		// 22 Nov; trees.md 5bm).
-		const float stub = Math::lerp(0.4f, 1.6f, float(hash_murmur3_one_32(uint32_t(i), uint32_t(p_year) * 2654435761u) & 0xffff) / 65535.0f);
+		// Thin dead branches break back further: how long a dead branch persists grows with its diameter (Makinen
+		// 1999, Silva Fennica 33(2): branch persistence and diameter), so a twig a centimetre across keeps a short
+		// stub and only limbs about 4 cm across keep the full 1.6 m. A pencil-thin dead shoot 1.6 m long, tapering to
+		// a point, read as a wire across the sky under an open oak's limbs (docs, 25 Nov).
+		const float stub = Math::lerp(0.4f, 1.6f, float(hash_murmur3_one_32(uint32_t(i), uint32_t(p_year) * 2654435761u) & 0xffff) / 65535.0f) *
+				CLAMP(n.radius / 0.02f, 0.15f, 1.0f);
 		dead_stack.clear();
 		dead_stack.push_back(Pair<int, float>(i, 0.0f));
 		while (!dead_stack.is_empty()) {
