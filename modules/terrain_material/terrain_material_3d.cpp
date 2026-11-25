@@ -632,7 +632,10 @@ float tm_ros_dens(vec2 c, float w3, float shift) {
 	return 0.97 * smoothstep(0.5 - shift, 0.58 - shift, 0.7 * tm_vn(vec3(c * 0.22, w3 * 0.22) + 13.0) + 0.3 * tm_vn(vec3(c * 0.8, w3 * 0.8) + 19.0));
 }
 vec4 tm_rosettes(vec2 q, float w3, float shift, float yellow_bias, float fp) {
-	const float S = 0.4; // one thallus a cell at most (the small thalli crowd closer than the old 0.6 m ones)
+	// One thallus a cell at most, cells of 15 cm: inside a colony thalli of 5 to 11 cm crowd until they touch and fuse into
+	// a mosaic with gaps (Armstrong 2011, crustose colonies). Cells of 0.4 m with mostly 3 to 6 cm thalli scattered
+	// lone round dots evenly 40 cm apart, which read as a regular pattern of white spots across a face.
+	const float S = 0.15;
 	vec2 g = q / S;
 	vec2 i = floor(g);
 	float aa = max(fp, 0.002);
@@ -653,14 +656,14 @@ vec4 tm_rosettes(vec2 q, float w3, float shift, float yellow_bias, float fp) {
 				float h2 = tm_vn_hash(vec3(c, 95.0));
 				float h3 = tm_vn_hash(vec3(c, 97.0));
 				vec2 d = (g - (c + 0.15 + 0.7 * vec2(h1, h2))) * S;
-				// Radii 2.5 cm to 0.22 m, most under 6 cm (thalli of every age; diameter grows about linearly with age, a
-				// fraction of a millimetre a year, so even centuries-old thalli of map lichen stay within 10 to 30 cm across;
-				// Innes 1985, "Lichenometry"). Up to 0.6 m they read as flat painted discs across a face.
-				float rad = 0.025 + 0.2 * h3 * h3 * h3;
+				// Radii 5 to 11 cm, touching their neighbours in 15 cm cells (thalli of every age; diameter grows about linearly with age, a fraction of a
+				// millimetre a year, so even centuries-old thalli of map lichen stay within 10 to 30 cm across; Innes 1985,
+				// "Lichenometry"). Up to 0.6 m they read as flat painted discs across a face.
+				float rad = 0.05 + 0.06 * h3;
 				float ei = length(d) - rad + lobe * min(rad * 2.5, 1.0);
-				// Fuse (smooth minimum over 8 cm).
-				float hk = clamp(0.5 + 0.5 * (e - ei) / 0.08, 0.0, 1.0);
-				e = mix(e, ei, hk) - 0.08 * hk * (1.0 - hk);
+				// Fuse (smooth minimum over 4 cm).
+				float hk = clamp(0.5 + 0.5 * (e - ei) / 0.04, 0.0, 1.0);
+				e = mix(e, ei, hk) - 0.04 * hk * (1.0 - hk);
 				if (ei < best) {
 					best = ei;
 					yel = step(1.0 - yellow_bias, fract(h0 * 17.3 + h3)) * step(0.35, h3);
@@ -678,7 +681,7 @@ vec4 tm_rosettes(vec2 q, float w3, float shift, float yellow_bias, float fp) {
 	vec4 r = vec4(cov, yel, band, tone);
 	// Past the cell's size the thalli average out to their mean cover.
 	float far = smoothstep(0.15, 0.6, fp / S);
-	return far > 0.0 ? mix(r, vec4(0.35 * tm_ros_dens(q, w3, shift), yellow_bias * 0.6, 0.0, 1.0), far) : r;
+	return far > 0.0 ? mix(r, vec4(0.55 * tm_ros_dens(q, w3, shift), yellow_bias * 0.6, 0.0, 1.0), far) : r; // a colony's crowded cover
 }
 
 // Sand glitter (docs/ideas/terrain-material.md, "Sand glitter"): a few of the quartz grains (clean cleavage and
@@ -2431,7 +2434,8 @@ void fragment() {
 			float lc = ros.x * fw_face;
 			float yellow = ros.y;
 			float fw_l = dot(albedo, vec3(0.3, 0.59, 0.11));
-			vec3 lcol = mix(vec3(0.86, 0.88, 0.8) * max(fw_l * 1.15, 0.2), vec3(0.38, 0.4, 0.17), yellow);
+			// The map lichen a dull yellow-green (Rhizocarpon geographicum, about 5Y 6/6), not a bright yellow fleck.
+			vec3 lcol = mix(vec3(0.86, 0.88, 0.8) * max(fw_l * 1.15, 0.2), vec3(0.36, 0.37, 0.24), yellow);
 			lcol *= ros.w * (0.9 + 0.2 * mix(0.5, tm_vn(wp * 9.0 + 5.0), fw_k));
 			// Close up a crust is a mosaic of areoles split by fine dark cracks (black between the map lichen's yellow ones).
 			float fw_ar = (1.0 - smoothstep(0.0, 0.07, abs(tm_vn(wp * 28.0 + 3.0) - 0.5))) * (1.0 - smoothstep(0.006, 0.02, tm_fp0));

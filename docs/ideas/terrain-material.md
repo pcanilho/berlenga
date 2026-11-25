@@ -524,6 +524,11 @@ concentrates. Established approach:
   catchment); cost of the extra finest-chunk vertices on the cliff-relief path.
 
 ### Relief on moderate slopes
+- (25 Nov) Lichen colonies as mosaics: thalli of 5 to 11 cm in 15 cm cells touch and fuse inside a colony (Armstrong
+  2011 on crustose colonies), and from afar a colony averages to its crowded cover (0.55 of the density). Cells of
+  0.4 m with mostly 3 to 6 cm thalli scattered lone round dots evenly 40 cm apart, a regular pattern of white spots
+  on the cliff (docs review of the ledge frames); smaller thalli in the small cells only turned them into speckle. The
+  map lichen a dull yellow-green (about 5Y 6/6), not a bright fleck.
 Cliff relief starts at 50 degrees (full by 62). Banks and cave mouths at 35-50 degrees stay as flat 4 m triangles with
 long straight silhouette edges. Extend the face weight down to about 35 degrees with a smaller amplitude (a soil bank
 slumps, it does not keep joints), using the same _cliff_offset noise scaled by slope. Watch the triangle budget and
