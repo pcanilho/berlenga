@@ -2311,3 +2311,8 @@ dimensions; not read).
   (GLSL `wc_terracette`, after `climate_bare_shader_code()`): x tread, y phase up the step, z the slope's forming.
   GrassField3D.get_terracette_at exposes it. Check: vegetation `--test=deer` (none at 15 degrees, 3.4 m at 35).
 - View: grass `--steep` (GRASS_TERRACETTES=0 the before frame).
+- (25 Nov) On the ground's steps: the terrain now draws terracettes as relief (WorldContracts::terracette_step, treads
+  0.3 of each 2 m rise). Blades are placed on map texels (4 m in the landscape), which cannot hold a 3.4 m step
+  pattern, so their heights take WorldGround.relief_at(p, steps = false) and each blade and crop stem adds
+  wc_terracette_step at its root in the vertex stage (filtered over 0.5 m as the near ground, gated by
+  wc_terracette_soil). Before, the steps sampled at texel centres left blades up to about 0.37 m off the drawn ground.
