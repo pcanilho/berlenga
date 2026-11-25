@@ -2170,9 +2170,10 @@ things: the season's avalanche and a roof slab's puff both ran PhysX Flow powder
 block budgets, the cloud run out of memory before the frame), the pit's 2 m walls gave way (follow-up 54) and the
 failed blocks, cut along the field's axes on a wall turned to the sun's bearing, drew as jagged shards, and the
 thrown lumps were the dots. A study pit is read as soon as it is cut, so the scout now keeps avalanches, roof slabs
-and wall collapse off. Still open: one wall of a deep turned trench draws as a sawtooth even standing (seen edge on;
-the press antialiases its edge, so the mesh's sampling of a 2 m step is the suspect), and collapse should cut its
-blocks along the face's own normal, not the nearest axis.
+and wall collapse off. The far wall still drew as a sawtooth while standing: not shadows and not the vertices'
+sampling, but the thin-pack discard (24 Nov), which read the field at the pixel (already the cut's floor) and cut
+the wall's triangles away. It now spares a deep pack's triangles standing over 10 cm above the ground, which keeps
+the 2 cm scree fix. Still open: collapse should cut its blocks along the face's own normal, not the nearest axis.
 
 ## Next round (proposed 19 Nov 2026, round 3): powder cloud, triggers, sharper flow
 

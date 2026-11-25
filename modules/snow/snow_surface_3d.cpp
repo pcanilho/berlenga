@@ -508,8 +508,11 @@ void fragment() {
 	vec3 hd = snow_height_diff(p, e, false);
 	// Under min_depth the snow is the ground material's: where the surface sinks toward its tuck it is cut away, not
 	// left hovering millimetres over a ground it only knows at the cover's cell size (the ground's own triangles
-	// poked through it in rows of slivers, and over a step it hung down the wall in white streaks).
-	if (hd.x - snow_ground(p) < 0.5 * min_depth) {
+	// poked through it in rows of slivers, and over a step it hung down the wall in white streaks). Not where the
+	// pack is deep and the drawn triangle stands more than 10 cm over the ground: that is a cut's wall, whose triangle
+	// stands high while the field at the pixel already reads the cut's floor, and testing the field alone cut the wall
+	// away in a sawtooth of holes.
+	if (hd.x - snow_ground(p) < 0.5 * min_depth && (pack.r < 0.3 || w_pos.y - snow_ground(p) < max(0.5 * min_depth, 0.1))) {
 		discard;
 	}
 	float hx = hd.y;

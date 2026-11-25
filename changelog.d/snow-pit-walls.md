@@ -1,0 +1,1 @@
+- Snow: deep cut walls (pits, trenches) no longer draw as a sawtooth of holes on SnowSurface3D.
