@@ -425,6 +425,45 @@ void fragment() {
 		o_a += d.xy;
 		o_b += d.zw;
 	}
+#if defined(RT)
+	// The path tracer's any-hit pass: only the coverage (the lapping waterline, the bank's fade, the cross-fade) and
+	// the light let through to shadow rays, as PhysXWaterSurface3D's (NVIDIA's best practice: minimal any-hit
+	// shaders). The ripples, foam structure and live waves stay with the closest hit; the shadow's foam is the mesh's.
+	if (IN_ANY_HIT) {
+		float ah_depth = v_info.r * 4.0 - 1.0;
+		vec2 ah_ea = (v_world.xz - o_a) * edge_lap_scale;
+		vec2 ah_eb = (v_world.xz - o_b) * edge_lap_scale + vec2(3.7, 9.1);
+		float ah_lap = (0.6 * r_noise(ah_ea) + 0.4 * r_noise(ah_ea * 2.9 + 4.0)) * w + (0.6 * r_noise(ah_eb) + 0.4 * r_noise(ah_eb * 2.9 + 4.0)) * (1.0 - w);
+		float ah_breathe = 0.5 + 0.5 * sin(water_time * 1.3 + r_noise(v_world.xz * 0.15) * 6.28318);
+		ah_depth += edge_lap_height * ((ah_lap - 0.5) * 2.0 + (ah_breathe - 0.5));
+		vec2 ah_rq = v_world.xz * 0.35;
+		float ah_relief = 0.5 * r_noise(ah_rq) + 0.3 * r_noise(ah_rq * 3.1 + 17.0) + 0.2 * r_noise(ah_rq * 8.3 - 5.0);
+		ah_depth += edge_relief * (ah_relief - 0.5) * 2.0;
+		float ah_bank = smoothstep(0.0, 0.7, v_info.b * 1.6 - 0.45 + (ah_relief - 0.5) * 0.9);
+		vec3 ah_sed_abs = vec3(0.0);
+		vec3 ah_sed_sca = vec3(0.0);
+		if (sediment_on) {
+			float sx = (v_s - sediment_range.x) / max(sediment_range.y, 1e-3);
+			float half_extent = max(texture(sediment_tex, vec2(sx, 0.5)).b, 1e-3);
+			float lane = clamp((v_n + half_extent) / (2.0 * half_extent), 0.0, 1.0) * float(sediment_lanes - 1);
+			vec2 sc = texture(sediment_tex, vec2(sx, (lane + 0.5) / float(max(sediment_lanes, 1)))).rg;
+			ah_sed_abs = sediment_absorption_of(sc);
+			ah_sed_sca = sediment_scattering_of(sc);
+		}
+		float ah_foam = clamp(max(v_info.g, live_foam), 0.0, 0.85);
+		ALBEDO = mix(vec3(1.0), foam_color.rgb * sediment_foam_tint(ah_sed_abs), ah_foam);
+		SPECULAR = 0.5;
+		METALLIC = 0.0;
+		TRANSMISSION = 1.0 - ah_foam;
+		IOR = 1.33;
+		float ah_film = smoothstep(0.0, 0.12, ah_depth);
+		ABSORPTION = (pathtraced_absorption + ah_sed_abs) * ah_film;
+		SCATTERING = water_medium_scattering(pathtraced_scattering, ah_sed_sca, pathtraced_scattering_anisotropy) * ah_film;
+		SCATTERING_ANISOTROPY = water_medium_g(pathtraced_scattering, ah_sed_sca, pathtraced_scattering_anisotropy);
+		ALPHA = faded ? 0.0 : smoothstep(0.0, max(edge_softness, 1e-3), ah_depth) * ah_bank;
+		ALPHA_SCISSOR_THRESHOLD = 0.5;
+	} else {
+#endif
 	// Surface-gradient blend of the two phases, renormalised so the crossover
 	// doesn't flatten the ripples (phase B is shifted half a tile, so the two are
 	// close to independent).
@@ -728,6 +767,9 @@ void fragment() {
 		ALBEDO = vec3(0.0);
 		ALPHA = max(edge, 0.85 * step(0.01, edge));
 	}
+#endif
+#if defined(RT)
+	} // !IN_ANY_HIT (a fragment() cannot return)
 #endif
 }
 

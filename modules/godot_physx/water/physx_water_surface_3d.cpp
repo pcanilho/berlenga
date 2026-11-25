@@ -1928,6 +1928,33 @@ void fragment() {
 	if (clip_w >= 1.0) {
 		discard;
 	}
+#else
+	// The path tracer's any-hit pass reads only the coverage (the shoreline cut-out) and the light the water lets
+	// through to shadow rays: it skips the waves, foam and rings the closest hit shades with (NVIDIA's ray tracing
+	// best practices: keep any-hit shaders minimal). Every ray crossing the sea ran the whole surface here before,
+	// for each candidate: the camera's, each bounce's and each shadow ray's. The foam's share of the shadow comes
+	// from the mesh's own foam (v_foam), the per-pixel lace being finer than a shadow shows.
+	if (IN_ANY_HIT) {
+		float ah_foam = clamp(v_foam, 0.0, 1.0);
+		ALBEDO = mix(vec3(1.0), foam_color.rgb, ah_foam);
+		SPECULAR = 0.5;
+		METALLIC = 0.0;
+		TRANSMISSION = 1.0 - ah_foam;
+		IOR = 1.33;
+		ABSORPTION = (pathtraced_absorption + sediment_absorption);
+		SCATTERING = water_medium_scattering(pathtraced_scattering, sediment_scattering, pathtraced_scattering_anisotropy);
+		SCATTERING_ANISOTROPY = water_medium_g(pathtraced_scattering, sediment_scattering, pathtraced_scattering_anisotropy);
+#if defined(UNDERWATER_SURFACE)
+		ALPHA = 0.0; // the path tracer has the real surface
+		ALPHA_SCISSOR_THRESHOLD = 0.5;
+#elif !defined(BREAKER_LIP)
+		float ah_shore = v_lip > 0.5 ? 1.0 : shore_signal(v_rest_xz, water_time);
+		vec2 ah_cuv = clamp((v_rest_xz - grid_center) / ripple_domain_size + 0.5, vec2(0.0), vec2(1.0));
+		float ah_soft = max(shore_edge_softness, 1e-3) * mix(0.2, 1.0, smoothstep(-0.05, 0.1, depth_r(v_rest_xz, ah_cuv)));
+		ALPHA = clipped ? 0.0 : smoothstep(0.0, ah_soft, ah_shore);
+		ALPHA_SCISSOR_THRESHOLD = 0.5;
+#endif
+	} else {
 #endif
 	// Draw only the side of the surface facing the camera's side of the
 	// water: the top from above, the underside from below. The surface is
@@ -2439,6 +2466,9 @@ void fragment() {
 	ALPHA = refl.a * (1.0 - clip_w);
 #endif
 #endif // UNDERWATER_SURFACE
+#if defined(RT)
+	} // !IN_ANY_HIT (a fragment() cannot return)
+#endif
 }
 #endif // UNDERWATER_FOG
 
@@ -3694,7 +3724,7 @@ void PhysXWaterSurface3D::_bake_shore_waves() {
 					const float deep_fade = 1.0f - Math::smoothstep(0.25f * wavelength_deep, 0.5f * wavelength_deep, h);
 					// From all sides: the swell's own direction still sets how much reaches a coast (the wind's
 					// side full, the lee a little under half, as the spread swell bends round into it).
-					const float face = open_from_all_sides ? 0.45f + 0.55f * Math::smoothstep(-0.3f, 0.7f, (g / k).dot(dir)) : 1.0f;
+					const float face = open_from_all_sides ? 0.45f + 0.55f * Math::smoothstep(-0.3f, 0.7f, float((g / k).dot(dir))) : 1.0f;
 					const float unbroken = h0 * shoal * deep_fade * face;
 					height = MIN(unbroken, BREAKER_INDEX * h);
 					stage = unbroken / (BREAKER_INDEX * h);
@@ -3849,7 +3879,7 @@ float PhysXWaterSurface3D::_shore_eta_at(float p_x, float p_z, float *r_rate) co
 	if (!shore_waves || shore_phase[0].size() != n * n || shore_phase[1].size() != n * n) {
 		return 0.0f;
 	}
-	const float inside = 1.0f - Math::smoothstep(0.46f, 0.5f, MAX(Math::abs(p_x / active_domain_size.x), Math::abs(p_z / active_domain_size.y)));
+	const float inside = 1.0f - Math::smoothstep(0.46f, 0.5f, float(MAX(Math::abs(p_x / active_domain_size.x), Math::abs(p_z / active_domain_size.y))));
 	if (inside <= 0.0f) {
 		return 0.0f;
 	}
@@ -3883,7 +3913,7 @@ float PhysXWaterSurface3D::_shore_eta_at(float p_x, float p_z, float *r_rate) co
 			drop_w = plunging * vary * Math::smoothstep(0.3f, 0.75f, stage) * (1.0f - Math::smoothstep(0.8f, 1.0f, stage));
 			skew = MIN(skew + 0.3f * throw_w, 0.92f);
 			const float steep = plunging * vary * Math::smoothstep(0.0f, 0.3f, stage) * (1.0f - 0.5f * Math::smoothstep(0.8f, 1.0f, stage));
-			front = Math::lerp(0.5f, CLAMP(Vector2(_bilinear_sample(shore_grad_x[t], n, active_domain_size, p_x, p_z), _bilinear_sample(shore_grad_z[t], n, active_domain_size, p_x, p_z)).length() * 3.0f * amp / (float)Math::TAU, 0.02f, 0.5f), CLAMP(steep, 0.0f, 1.0f));
+			front = Math::lerp(0.5f, float(CLAMP(Vector2(_bilinear_sample(shore_grad_x[t], n, active_domain_size, p_x, p_z), _bilinear_sample(shore_grad_z[t], n, active_domain_size, p_x, p_z)).length() * 3.0f * amp / (float)Math::TAU, 0.02f, 0.5f)), CLAMP(steep, 0.0f, 1.0f));
 		}
 		float dps;
 		const float ps = _shore_front_warp(th - skew * Math::cos(th), 1.0f - front, dps);
@@ -4071,7 +4101,7 @@ void PhysXWaterSurface3D::_update_breakers() {
 	};
 	// How much lip there is at grid-relative p for train t (add_ring's own measure), without the surface.
 	auto alive_at = [&](int p_t, const Vector2 &p_rel) {
-		const float inside = 1.0f - Math::smoothstep(0.46f, 0.5f, MAX(Math::abs(p_rel.x / dom.x), Math::abs(p_rel.y / dom.y)));
+		const float inside = 1.0f - Math::smoothstep(0.46f, 0.5f, float(MAX(Math::abs(p_rel.x / dom.x), Math::abs(p_rel.y / dom.y))));
 		float height, stage, xi_w;
 		wave_at(p_t, p_rel, height, stage, xi_w);
 		const float s = CLAMP(stage - 0.95f, 0.0f, 1.0f);
@@ -4085,7 +4115,7 @@ void PhysXWaterSurface3D::_update_breakers() {
 		const float wz = p_rel.y + grid_center.y;
 		float height, stage, xi_w;
 		wave_at(p_t, p_rel, height, stage, xi_w);
-		const float inside = 1.0f - Math::smoothstep(0.46f, 0.5f, MAX(Math::abs(p_rel.x / dom.x), Math::abs(p_rel.y / dom.y)));
+		const float inside = 1.0f - Math::smoothstep(0.46f, 0.5f, float(MAX(Math::abs(p_rel.x / dom.x), Math::abs(p_rel.y / dom.y))));
 		const float vary = vary_at(wx, wz);
 		const float s = CLAMP(stage - 0.95f, 0.0f, 1.0f);
 		const float w = plunge_of(xi_w) * vary * inside;
@@ -6536,7 +6566,7 @@ Vector2 PhysXWaterSurface3D::_flow_at(float p_x, float p_z) const {
 	const float fz = CLAMP(gz - z0, 0.0f, 1.0f);
 	const Vector2 *f = flow_cells.ptr();
 	const Vector2 v = f[z0 * n + x0].lerp(f[z0 * n + x1], fx).lerp(f[z1 * n + x0].lerp(f[z1 * n + x1], fx), fz);
-	const float out = Math::smoothstep(0.46f, 0.5f, MAX(Math::abs(p_x / active_domain_size.x), Math::abs(p_z / active_domain_size.y)));
+	const float out = Math::smoothstep(0.46f, 0.5f, float(MAX(Math::abs(p_x / active_domain_size.x), Math::abs(p_z / active_domain_size.y))));
 	return (v + live).lerp(current, out);
 }
 
@@ -8450,7 +8480,7 @@ float PhysXWaterSurface3D::_ripple_height_at(const Vector<float> &p_height, floa
 float PhysXWaterSurface3D::_ocean_fade_at(float p_x, float p_z) const {
 	const float fade = cell_fade.is_empty() ? 1.0f : _bilinear_sample(cell_fade, grid_resolution, active_domain_size, p_x, p_z);
 	// Open sea past the square: full chop there, not the edge cell's (the shader's fade_r()).
-	const float beyond = (open_sea_beyond && _open_beyond()) ? Math::smoothstep(0.46f, 0.5f, MAX(Math::abs(p_x / active_domain_size.x), Math::abs(p_z / active_domain_size.y))) : 0.0f;
+	const float beyond = (open_sea_beyond && _open_beyond()) ? Math::smoothstep(0.46f, 0.5f, float(MAX(Math::abs(p_x / active_domain_size.x), Math::abs(p_z / active_domain_size.y)))) : 0.0f;
 	// Sheltered behind a stack or a cliff (the lee's factor, as the shader's).
 	return Math::lerp(fade, 1.0f, beyond) * _obstacle_lee_at(p_x + grid_center.x, p_z + grid_center.y);
 }
@@ -8594,7 +8624,7 @@ float PhysXWaterSurface3D::_sample_height_at(Vector3 p_world_pos, ObjectID p_wak
 			ocean += kr * _ocean_height_at(false, mx, mz, _ocean_fade_at(mx, mz));
 		}
 	}
-	const float beyond = (open_sea_beyond && _open_beyond()) ? Math::smoothstep(0.46f, 0.5f, MAX(Math::abs(x / active_domain_size.x), Math::abs(z / active_domain_size.y))) : 0.0f;
+	const float beyond = (open_sea_beyond && _open_beyond()) ? Math::smoothstep(0.46f, 0.5f, float(MAX(Math::abs(x / active_domain_size.x), Math::abs(z / active_domain_size.y)))) : 0.0f;
 	// Wakes, everywhere (as the shader draws them).
 	float wake = 0.0f;
 	for (int i = 0; i < MAX_WAKES; i++) {
@@ -8603,7 +8633,7 @@ float PhysXWaterSurface3D::_sample_height_at(Vector3 p_world_pos, ObjectID p_wak
 		}
 		const PhysXWaterWake3D *w = ObjectDB::get_instance<PhysXWaterWake3D>(wakes[i]);
 		if (w != nullptr) {
-			const float out = Math::smoothstep(0.46f, 0.5f, MAX(Math::abs(x / active_domain_size.x), Math::abs(z / active_domain_size.y)));
+			const float out = Math::smoothstep(0.46f, 0.5f, float(MAX(Math::abs(x / active_domain_size.x), Math::abs(z / active_domain_size.y))));
 			wake += w->sample_height(p_world_pos) * Math::lerp(1.0f, out, w->get_shore_grid_fade());
 		}
 	}

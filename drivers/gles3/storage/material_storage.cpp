@@ -1300,6 +1300,7 @@ MaterialStorage::MaterialStorage() {
 		actions.renames["PREVIOUS_FRAME"] = "false";
 		actions.renames["IN_PATH_TRACER"] = "false";
 		actions.renames["CAMERA_CUTOUT_REACH"] = "true";
+		actions.renames["IN_ANY_HIT"] = "false";
 		actions.renames["VIEWPORT_SIZE"] = "scene_data_block.data.viewport_size";
 
 		actions.renames["FRAGCOORD"] = "gl_FragCoord";
