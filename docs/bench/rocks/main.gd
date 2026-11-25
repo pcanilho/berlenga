@@ -628,6 +628,8 @@ func _world() -> void:
 		rocks.generator = rocks.get_path_to(gen)
 		rocks.follow_target = rocks.get_path_to(focus)
 		rocks.ground_material = tm # the stones' feet blend into these layers
+		if args.has("cliff-max"):
+			rocks.cliff_block_max_slope = float(args["cliff-max"]) # --cliff-max=76: the wall's courses stop there (the before frame)
 		if args.get("stone-scans", "1") != "0" and not args.has("test"): # --stone-scans=0: no scan detail on stones and caves (A/B)
 			print("stone scans: %d" % rocks.load_scan_set(_rock_scan_dir()))
 		# Real scree stones out to the layer's radius: the ground shader keeps only their bed there (--shader-scree

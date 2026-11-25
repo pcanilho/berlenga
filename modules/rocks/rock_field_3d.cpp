@@ -1528,8 +1528,13 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_cell_rect, uint32_t p_see
 			}
 			const float course = 1.4f; // m, course thickness
 			const float min_tan = Math::tan(Math::deg_to_rad(50.0f));
-			// Steeper than this a heightfield face is a stretched step, not a wall with courses in it.
-			const float max_tan = Math::tan(Math::deg_to_rad(76.0f));
+			// Up to near vertical: past about 60 degrees a heightfield face is a stretched step whose few vertices
+			// draw long vertical bands (draped folds) that no texture hides, so the wall's own blocks cover it there
+			// as real geometry (cliff kit pieces placed over steep heightfield faces: Guerrilla, GDC 2017, "GPU-Based
+			// Run-Time Procedural Placement in Horizon Zero Dawn"; Carrier, GDC 2018, "Procedural World Generation of
+			// Far Cry 5"). docs/ideas/rocks.md, "Wall blocks on steep faces".
+			const float max_tan = Math::tan(Math::deg_to_rad(float(CLAMP(cliff_block_max_slope, real_t(50.0), real_t(89.0)))));
+			const float sheer_tan = Math::tan(Math::deg_to_rad(68.0f));
 			const real_t gen_cell = gen->get_cell_size();
 			if (ledge_slabs) {
 				_place_ledges(gen, p_layer, p_rect, p_seed, r_stones);
@@ -1557,9 +1562,14 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_cell_rect, uint32_t p_see
 					// step between two vertices) the mesh and the bilinear height part by metres, and blocks set into
 					// the one float in front of the other.
 					{
-						const Vector3 u(up_dir.x * gen_cell, 0, up_dir.y * gen_cell);
+						// Measured square to the face: on a steep face metres of height between the bilinear surface and
+						// the mesh's triangles are only centimetres across the face, which a block set into it covers.
+						// Over the face's own extent: a near-vertical wall is only a metre or two across in plan, and a
+						// whole terrain cell up and down the fall line lands on the bench above and the foot below.
+						const real_t span = MIN(gen_cell, MAX(real_t(1.0), real_t(6.0f * course / gl)));
+						const Vector3 u(up_dir.x * span, 0, up_dir.y * span);
 						const real_t bend = rf_height(gen, c + u) + rf_height(gen, c - u) - 2.0 * hc;
-						if (!(Math::abs(bend) <= course * 0.5f)) {
+						if (!(Math::abs(bend) / Math::sqrt(1.0f + gl * gl) <= course * 0.32f)) {
 							continue;
 						}
 					}
@@ -1574,7 +1584,10 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_cell_rect, uint32_t p_see
 						if (Math::abs(along) > half) {
 							continue;
 						}
-						if (rng.randf() > (0.75f * rock - 0.1f) * float(density)) {
+						// Past about 68 degrees the face is the stretched heightfield step the blocks are there to cover:
+						// courses nearly closed there, gaps only now and then.
+						const bool sheer = gl > sheer_tan;
+						if (rng.randf() > (sheer ? 0.95f : 0.75f * rock - 0.1f) * float(density)) {
 							continue; // a gap: the wall shows between blocks
 						}
 						const Vector2 pxz = Vector2(c.x, c.z) + up_dir * along;
@@ -1634,7 +1647,9 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_cell_rect, uint32_t p_see
 							for (int e = -1; e <= 1 && !out; e++) {
 								const Vector3 q = surface + x_axis * (ext * e);
 								const real_t gap = (q.y - rf_height(gen, q)) * n.y; // + where the face lies under the block's face
-								out = gap > 0.2f * course;
+								// On a sheer wall a block may stand proud of a fold (a joint block jutting from a wall);
+								// on a sloping face it would read as a shelf.
+								out = gap > (sheer ? 0.45f : 0.2f) * course;
 							}
 							if (out) {
 								continue;
@@ -10150,6 +10165,9 @@ void RockField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_ground_blend_height"), &RockField3D::get_ground_blend_height);
 	ClassDB::bind_method(D_METHOD("set_ground_material", "material"), &RockField3D::set_ground_material);
 	ClassDB::bind_method(D_METHOD("load_scan_set", "dir"), &RockField3D::load_scan_set);
+	ClassDB::bind_method(D_METHOD("set_cliff_block_max_slope", "degrees"), &RockField3D::set_cliff_block_max_slope);
+	ClassDB::bind_method(D_METHOD("get_cliff_block_max_slope"), &RockField3D::get_cliff_block_max_slope);
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "cliff_block_max_slope", PROPERTY_HINT_RANGE, "50,89,0.5,suffix:°"), "set_cliff_block_max_slope", "get_cliff_block_max_slope");
 	ClassDB::bind_method(D_METHOD("get_scan_dir"), &RockField3D::get_scan_dir);
 	ClassDB::bind_method(D_METHOD("get_ground_material"), &RockField3D::get_ground_material);
 	ClassDB::bind_method(D_METHOD("set_lichen_cover", "cover"), &RockField3D::set_lichen_cover);
