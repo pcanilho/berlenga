@@ -7617,10 +7617,19 @@ func _snow_strata() -> void:
 	# surface hoar, a gale's wind slab and a fresh fall), then a trench --strata-w (1.2) m wide pressed to the ground,
 	# running along the sun's bearing so the low light rakes the far wall. The camera stands --strata-dist (1.5) m from
 	# that wall at --strata-eye (1.7) m over the snow, looking down into it.
+	# A pit study: the season's avalanches and falling roof slabs stay off (--strata-avalanches=1 keeps them), so the
+	# deepest gentle snow is not a debris cone and no powder cloud hangs in the frame.
+	if args.get("strata-avalanches", "0") != "1":
+		snow.set("avalanches_enabled", false)
+		snow.set("bodies_enabled", false)
 	var wr: Rect2 = gen.get_world_rect()
 	var best := Vector3.INF
 	var mind := float(args.get("strata-min", "0.8"))
-	var xx := wr.position.x + 200.0
+	if args.has("strata-at"):
+		# --strata-at=X,Z: the pit here instead of the highest gentle deep snow.
+		var sa := _vec2_arg(args["strata-at"])
+		best = Vector3(sa.x, gen.get_height(Vector3(sa.x, 0, sa.y)), sa.y)
+	var xx := wr.position.x + 200.0 if not args.has("strata-at") else wr.end.x
 	while xx < wr.end.x - 200.0:
 		var zz := wr.position.y + 200.0
 		while zz < wr.end.y - 200.0:
@@ -7678,6 +7687,9 @@ func _snow_strata() -> void:
 	var g: float = snow.get_ground_height_at(best) if snow.has_method("get_ground_height_at") else best.y
 	var w := float(args.get("strata-w", "1.2"))
 	surf.set("rim_share", 0.0) # dug: the snow is thrown out, no pressed rim
+	# A study pit is cut and read at once, its walls standing (--strata-collapse=1 lets them give way as a rut's do;
+	# the collapsing wall is drawn as jagged spikes for now, see docs/ideas/snow.md).
+	surf.set("wall_collapse", args.get("strata-collapse", "0") == "1")
 	surf.set("compacted_density", 900.0)
 	surf.call("press_box", Vector3(best.x, g, best.z), Vector2(w, 8.0), atan2(sf.x, sf.z), g + 0.01)
 	for i in 30:
@@ -7688,6 +7700,20 @@ func _snow_strata() -> void:
 	c3.global_position = Vector3(cp.x, top + float(args.get("strata-eye", "1.7")), cp.z)
 	c3.look_at(Vector3(wall.x, g + 0.5 * (top - g), wall.z) + sf * 0.8)
 	_log("snow strata: %.2f m of snow at %s (%.0f m), trench %.1f m wide along the sun, cam %s" % [top - g, str(best.round()), best.y, w, str(c3.global_position.snapped(Vector3.ONE * 0.1))])
+	for o in [Vector3.ZERO, nrm * 3.0, nrm * 6.0, sf * 4.0]:
+		var q: Vector3 = best + o
+		_log("snow strata surface at %s: depth %.2f m, sastrugi %s, suncups %s m, hoar %s, new %s m" % [str(q.round()), snow.get_depth_at(q), str(snow.call("get_sastrugi_at", q)), str(snow.call("get_suncup_relief_at", q)), str(snow.call("get_hoar_at", q)), str(snow.call("get_new_snow_at", q))])
+	var av: Node = snow.find_child("*SnowAvalanche3D*", true, false)
+	if av != null:
+		_log("snow strata: avalanches released %d, deposited %.0f m3, run-out %s" % [av.call("get_release_count"), av.call("get_deposited_volume"), str(av.call("get_run_out"))])
+	var rows := PackedStringArray()
+	for j in 9:
+		var row := PackedStringArray()
+		for i in 9:
+			var q2 := best + Vector3(i - 4, 0, j - 4) * 1.0
+			row.append("%4d" % int(snow.get_depth_at(q2) * 100.0))
+		rows.append(" ".join(row))
+	_log("snow strata depth (cm, 1 m grid round the pit):\n" + "\n".join(rows))
 
 
 # Tripo's lobster pots come with their netting as sparse wire strands: each of the three stacked pots gets an alpha-cut

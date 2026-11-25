@@ -2165,6 +2165,15 @@ wetness. The terrain material publishes it as the `snow_grain_*` shader globals,
 samples turned 37 degrees and blended by a 3 m noise; trodden, slushy, pooled and glazed snow and the strata walls
 keep none). The source normal map leans about 9 degrees on average, so it is recentred before it goes in.
 
+Strata scout (25 Nov, scene): the 2 m pit at (264, -1560) showed a field of spikes with lumps on the floor. Three
+things: the season's avalanche and a roof slab's puff both ran PhysX Flow powder clouds through the scout (full
+block budgets, the cloud run out of memory before the frame), the pit's 2 m walls gave way (follow-up 54) and the
+failed blocks, cut along the field's axes on a wall turned to the sun's bearing, drew as jagged shards, and the
+thrown lumps were the dots. A study pit is read as soon as it is cut, so the scout now keeps avalanches, roof slabs
+and wall collapse off. Still open: one wall of a deep turned trench draws as a sawtooth even standing (seen edge on;
+the press antialiases its edge, so the mesh's sampling of a 2 m step is the suspect), and collapse should cut its
+blocks along the face's own normal, not the nearest axis.
+
 ## Next round (proposed 19 Nov 2026, round 3): powder cloud, triggers, sharper flow
 
 **Triggers from people and vehicles.**
