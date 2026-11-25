@@ -1941,13 +1941,14 @@
     "cliff_",
     "layer_enabled",
     "cliff_block_max_slope",
+    "cliff_kit",
     "far_thinning",
     "far_radius",
     "far_min_size",
     "far_widen"
    ],
    "note": "",
-   "what": "rocks placed by the processes that put them there: rockfall, scree, glacial till, river beds, shores and cliff courses, the coursed wall blocks covering even sheer faces, streamed round the camera with colliders near it; past the near field, only the larger rocks carry on out to the horizon, grown so the slope keeps its stone cover.",
+   "what": "rocks placed by the processes that put them there: rockfall, scree, glacial till, river beds, shores and cliff courses, the coursed wall blocks covering even sheer faces and tall jointed pillars wrapping the steep cliff walls, streamed round the camera with colliders near it; past the near field, only the larger rocks carry on out to the horizon, grown so the slope keeps its stone cover.",
    "page": "rocks",
    "title": "Rocks",
    "topic": "Placement"
