@@ -27,6 +27,9 @@
 		<member name="age_years" type="float" setter="set_age_years" getter="get_age_years" default="5.0">
 			Years since the burn.
 		</member>
+		<member name="burnt_share" type="float" setter="set_burnt_share" getter="get_burnt_share" default="1.0">
+			How burnt the ground is over the scar, 0 to 1: the share of the fuel the old fire took. [method WorldFire.burnt_at] answers it over the scar's area whatever its age; readers weigh the recovery by [method WorldFire.burn_age_at].
+		</member>
 		<member name="polygon" type="PackedVector2Array" setter="set_polygon" getter="get_polygon" default="PackedVector2Array()">
 			The scar's outline in the node's local x and z, metres. Fewer than three points: [member size] is used.
 		</member>

@@ -89,6 +89,11 @@ void WorldBurnScar3D::set_age_years(float p_years) {
 	_report();
 }
 
+void WorldBurnScar3D::set_burnt_share(float p_share) {
+	burnt_share = CLAMP(p_share, 0.0f, 1.0f);
+	_report();
+}
+
 void WorldBurnScar3D::set_size(const Vector2 &p_size) {
 	size = Vector2(MAX(p_size.x, 0.0f), MAX(p_size.y, 0.0f));
 	_report();
@@ -114,6 +119,8 @@ bool WorldBurnScar3D::covers(const Vector3 &p_position) const {
 void WorldBurnScar3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_age_years", "years"), &WorldBurnScar3D::set_age_years);
 	ClassDB::bind_method(D_METHOD("get_age_years"), &WorldBurnScar3D::get_age_years);
+	ClassDB::bind_method(D_METHOD("set_burnt_share", "share"), &WorldBurnScar3D::set_burnt_share);
+	ClassDB::bind_method(D_METHOD("get_burnt_share"), &WorldBurnScar3D::get_burnt_share);
 	ClassDB::bind_method(D_METHOD("set_size", "size"), &WorldBurnScar3D::set_size);
 	ClassDB::bind_method(D_METHOD("get_size"), &WorldBurnScar3D::get_size);
 	ClassDB::bind_method(D_METHOD("set_polygon", "polygon"), &WorldBurnScar3D::set_polygon);
@@ -121,6 +128,7 @@ void WorldBurnScar3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("covers", "position"), &WorldBurnScar3D::covers);
 	ClassDB::bind_method(D_METHOD("get_area"), &WorldBurnScar3D::get_area);
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "age_years", PROPERTY_HINT_RANGE, "0,200,0.1,or_greater,suffix:years"), "set_age_years", "get_age_years");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "burnt_share", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_burnt_share", "get_burnt_share");
 	ADD_PROPERTY(PropertyInfo(Variant::VECTOR2, "size", PROPERTY_HINT_NONE, "suffix:m"), "set_size", "get_size");
 	ADD_PROPERTY(PropertyInfo(Variant::PACKED_VECTOR2_ARRAY, "polygon"), "set_polygon", "get_polygon");
 }

@@ -1,0 +1,1 @@
+- WorldBurnScar3D.burnt_share (1): a scar answers WorldFire.burnt_at over its area, so rocks, litter and debris flows see an authored burn; litter builds back over about five years and debris-flow severity fades with the burn age.

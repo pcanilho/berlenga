@@ -22,7 +22,7 @@ copy of shared state is listed under "Private copies" until it moves onto the so
 | `SkyClock` | weather | date, time, sun and moon |
 | `GroundSurface3D` | ground | soil per point (`get_soil`), deformation field (`ground_deform_map`), standing water, puddle ice, frost |
 | `SnowCover3D` | snow | `snow_cover` maps, depth, air at height (`get_air_temperature_at`) |
-| `fire_state_map`, `WorldFire` | fire | burnt share and glow per cell; `heat_at` (W/m2), `burnt_at` |
+| `fire_state_map`, `WorldFire` | fire | burnt share and glow per cell; `heat_at` (W/m2), `burnt_at` (fires in play and WorldBurnScar3D `burnt_share`, whatever the age: readers weigh recovery by `burn_age_at`) |
 | `WeatherLightning3D` | weather | `struck` signal and `get_ground_strikes_after()` |
 | `WorldWeather.cloud_base_at` | weather (clouds) | cloud base, m above sea level: `WeatherMap3D.get_cloud_base_now`, LCL 125 m x (T - Td), at least ground + 30 m; `cloud_base_height` without weather (20 Nov) |
 | Contact groups | each system | `world_contact` (every physics body and wheel) read by all, plus the old `grass_trample`, `tree_touch`, `ground_deform`, `snow_deform` |

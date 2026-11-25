@@ -716,7 +716,10 @@ void GroundSurface3D::_update_cells() {
 			// A fire burnt the litter off and left the soil water-repellent (WorldFire).
 			in.repel = 0.0f;
 			if (fire && fire->has_provider()) {
-				in.litter *= 1.0f - CLAMP(fire->burnt_at(p), 0.0f, 1.0f);
+				// The litter builds back from leaf fall over the years after (about five to its old depth).
+				const float age = fire->burn_age_at(p);
+				const float back = age < 0.0f ? 0.0f : Math::smoothstep(0.5f, 5.0f, age);
+				in.litter *= 1.0f - CLAMP(fire->burnt_at(p), 0.0f, 1.0f) * (1.0f - back);
 				in.repel = CLAMP(fire->water_repellency_at(p), 0.0f, 1.0f);
 			}
 			in.compacted = worn_tracks && _wear_any() ? wear_compaction(get_wear_at(p)) * (1.0f - 0.5f * sand) : 0.0f;

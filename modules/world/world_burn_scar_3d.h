@@ -39,11 +39,13 @@
 // An old burn authored into a scene (docs/ideas/world-links.md, fire → regrowth): ground that burnt age_years before
 // the scene's present, as a WorldFire producer answering burn_age_at() over its area. The area is the polygon (local
 // x, z, metres) when it has three or more points, else a size.x by size.y rectangle centred on the node; both turn
-// with the node. Vegetation reads the age for its regrowth stage; fires in play answer for the burns they make.
+// with the node. Vegetation reads the age for its regrowth stage; burnt_at() answers burnt_share over the same area
+// (rocks, litter, debris flows weigh it by the age). Fires in play answer for the burns they make.
 class WorldBurnScar3D : public Node3D, public WorldFireProvider {
 	GDCLASS(WorldBurnScar3D, Node3D);
 
 	float age_years = 5.0f;
+	float burnt_share = 1.0f;
 	Vector2 size = Vector2(40.0f, 40.0f);
 	PackedVector2Array polygon;
 
@@ -57,6 +59,8 @@ protected:
 public:
 	void set_age_years(float p_years);
 	float get_age_years() const { return age_years; }
+	void set_burnt_share(float p_share);
+	float get_burnt_share() const { return burnt_share; }
 	void set_size(const Vector2 &p_size);
 	Vector2 get_size() const { return size; }
 	void set_polygon(const PackedVector2Array &p_polygon);
@@ -67,4 +71,7 @@ public:
 
 	float contract_fire_heat_at(const Vector3 &p_position) const override { return 0.0f; }
 	float contract_fire_burn_age_at(const Vector3 &p_position) const override { return covers(p_position) ? age_years : -1.0f; }
+	// How burnt the ground is: the share of the fuel the old fire took, whatever its age (readers weigh the recovery
+	// by burn_age_at, as for a fire in play).
+	float contract_fire_burnt_at(const Vector3 &p_position) const override { return covers(p_position) ? burnt_share : 0.0f; }
 };
