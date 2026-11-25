@@ -4042,3 +4042,29 @@ Result (sky only, horizon rows): calm sea, raster 121 / PT 84 before, 135 after;
 before, 123 after, and within 10% of raster from 40 px below the horizon down. The sun's path narrows to its
 waves in both renderers. The last strip at the horizon of a windy sea is now brighter in PT than raster;
 raster there hides more slope (its footprint is unbounded at grazing, the path tracer's caps at 50 pixels).
+
+## Sky light in the water under the path tracer (25 Nov, same mismatch)
+
+Seen from above with the sun off, the path traced water was nearly black (raster: teal), and a rock's shade on
+the sea kept 13% of the lit water against raster's 50%. A land surface lit by the same sky matched raster
+exactly, so the sky was right and the water lost it. A debug colouring of the sky by bounce showed no path
+leaving the water upward ever reached it.
+
+- **The surface met from below.** The water shader writes NORMAL for both faces facing up. The engine flips a
+  back face's normal before the shader's code, as raster does, so a shader that replaces NORMAL must flip it
+  itself. Left facing up, the refraction lobe saw the ray arrive from behind and dropped the path: nothing left
+  the water by refraction, so the bed and the water saw no sky, and the sun's light off the bed never left
+  either. Fixed in the shader.
+- **Next event estimation of the sky through the interface.** Forward-scattering water (g ~ 0.85) needs
+  several scatters to turn a downward ray round, so the sky reached its scattering events rarely within the
+  bounce budget. Each scattering event in a medium now samples one cosine-weighted direction up to the
+  surface's back face (its geometric normal), refracts it out with the exact Fresnel transmittance and traces on
+  to the sky as a diffuse bounce, so the miss shader gives the sky exactly as an escaping path gets it.
+  The path's own escape straight after that event (out through the surface, then a miss) is dropped in
+  raygen, so the sky is not counted twice. This is the environment's share of what manifold next event
+  estimation (Hanika, Droske and Fascione 2015) does for lights behind a refracting surface; the lamps
+  already have their own (`rt_volume_bent()`).
+
+Result: the sky-only water from above went from (4, 5, 6) to (6, 24, 27), and the rock's shade from 13% to 28% of
+the lit water. Against the level land surface's sky share, the path tracer now reads about 0.6 of the
+expected sky-lit water and raster about 1.6.

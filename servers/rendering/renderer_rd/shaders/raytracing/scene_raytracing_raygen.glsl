@@ -609,6 +609,71 @@ bool rt_caustics_trace(vec3 p_origin, vec3 p_dir, float p_width, uint p_rng, out
 	return r_ps.hit_t >= 0.0;
 }
 
+// The sky's light reaching a scattering point in water through the surface over it: next event estimation of the
+// environment through the interface (docs/ideas/water.md, "Sky light in the water under the path tracer"). Paths only
+// found the sky by phase sampling their way back up through the surface, and the water's forward-peaked phase function
+// (g ~ 0.85) needs several scatters to turn a downward ray round, so under the bounce budget the sky lit almost none
+// of the water: the shade of a rock on the sea, and the whole sea at night, went black. One cosine-weighted direction
+// up, to the surface's back face (its geometric normal), refracted out with the exact Fresnel transmittance, then on
+// to the sky. The air leg is traced as a bounce that left a diffuse vertex, so the miss shader gives the sky exactly
+// as a path's escape gets it (clouds, fog, ambient light off). The path's own escape straight after this scattering
+// event is dropped in raygen (rt_sky_nee_open), so the sky is not counted twice.
+vec3 rt_water_sky_direct(vec3 x, vec3 p_dir, float g, vec3 p_sigma_t, inout uint rng) {
+	if ((scene_data_block.data.flags & SCENE_DATA_FLAGS_USE_AMBIENT_LIGHT) == 0u) {
+		return vec3(0.0);
+	}
+	vec2 u = rand2(rng);
+	float r = sqrt(u.x);
+	float phi = 2.0 * PI * u.y;
+	vec3 d = vec3(r * cos(phi), sqrt(max(1.0 - u.x, 0.0)), r * sin(phi));
+	float pdf = d.y / PI;
+	if (pdf < 1e-4) {
+		return vec3(0.0);
+	}
+	PathState ps;
+	// Out through the back face of a medium's surface (photon report: a negative bsdf_pdf), not a rock overhead.
+	if (!rt_caustics_trace(x, d, 0.0, 0u, ps) || (ps.packed_bounces_flags & MEDIUM_CHANGE_FLAG) == 0u || ps.bsdf_pdf >= 0.0) {
+		return vec3(0.0);
+	}
+	vec3 n_out = ps.offset_normal;
+	float ci = dot(d, n_out);
+	if (ci <= 0.0) {
+		return vec3(0.0);
+	}
+	const float n = 1.333;
+	vec3 t = refract(d, -n_out, n);
+	if (dot(t, t) <= 0.0) {
+		return vec3(0.0); // total internal reflection
+	}
+	t = normalize(t);
+	float ct = max(dot(t, n_out), 0.0);
+	float rs = (n * ci - ct) / (n * ci + ct);
+	float rp = (ci - n * ct) / (ci + n * ct);
+	float tf = 1.0 - 0.5 * (rs * rs + rp * rp);
+	vec3 e = exp(-p_sigma_t * ps.hit_t) * (tf * rt_volume_hg(dot(d, p_dir), g) / pdf);
+	if (max(e.r, max(e.g, e.b)) <= 1e-5) {
+		return vec3(0.0);
+	}
+	vec3 s = x + d * ps.hit_t;
+	PathState sky;
+	sky.bsdf_pdf = 0.0;
+	sky.radiance = vec3(0.0);
+	sky.throughput = vec3(1.0);
+	sky.packed_bounces_flags = inc_total_bounce(0u) | CAUSTIC_PHOTON_FLAG | LAST_BOUNCE_DIFFUSE_FLAG | NON_SINGULAR_PATH_FLAG;
+	sky.rng_state = 0u;
+	sky.hit_t = -1.0;
+	sky.offset_normal = vec3(0.0, 0.0, 1.0);
+	sky.next_ray_dir = t;
+	path_pack(payload, sky);
+	payload_set_cone_width(payload, 0.0);
+	traceRayEXT(tlas, RT_RAY_FLAGS, RT_BOUNCE_MASK, 0, 0, 0, offset_ray_origin(s, n_out, ps.hit_t), 0.001, t, 10000.0, 0);
+	sky = path_unpack(payload);
+	if (sky.hit_t >= 0.0) {
+		return vec3(0.0);
+	}
+	return sky.radiance * e;
+}
+
 // A path into or through a medium leaves each surface from offset_ray_origin()'s start, up to 256 ulps of the
 // position off it: about 1.5 cm a kilometre from the origin. Water thinner than that (a pool's or a beach's
 // shallow edge) fits inside the offset: a ray refracted in at the top started under the floor, and one off the
@@ -1271,6 +1336,9 @@ void main() {
 		// cloud (snow powder, steam) keeps most of its light through tens of scatters, and cutting the path after the
 		// surface budget (3 by default) darkened its inside to grey. Russian roulette still ends the paths.
 		uint volume_scatters = 0u;
+		// Set at a scattering event in water, whose sky rt_water_sky_direct() counted: the path's own way to the sky
+		// from there (out through the surface, then a miss) adds nothing. Cleared by any other surface.
+		bool rt_sky_nee_open = false;
 		[[dont_unroll]] for (uint bounce = 0u; bounce <= segment_limit + volume_scatters; bounce++) {
 			vec3 throughput_entry = ps.throughput;
 			vec3 radiance_pre = ps.radiance;
@@ -1325,6 +1393,13 @@ void main() {
 			}
 
 			ps = path_unpack(payload);
+			if (rt_sky_nee_open) {
+				if (ps.hit_t < 0.0) {
+					ps.radiance = radiance_pre;
+				} else if ((ps.packed_bounces_flags & MEDIUM_CHANGE_FLAG) == 0u || floatBitsToUint(ps.bsdf_pdf) != 0u) {
+					rt_sky_nee_open = false; // not out of the water into the air
+				}
+			}
 			bool in_medium = false;
 			vec3 medium_sigma_t = vec3(0.0);
 			vec3 medium_albedo = vec3(0.0);
@@ -1453,6 +1528,8 @@ void main() {
 					ps.radiance = radiance_pre;
 					ps.throughput = throughput_entry * medium_albedo * medium_sigma_t * tr / max(pdf, 1e-30);
 					ps.radiance += ps.throughput * rt_volume_direct(x, ray_dir, medium_g, false, true, ps.rng_state);
+					ps.radiance += ps.throughput * rt_water_sky_direct(x, ray_dir, medium_g, medium_sigma_t, ps.rng_state);
+					rt_sky_nee_open = true;
 					ps.packed_bounces_flags = inc_total_bounce(flags_entry & ~(PATH_TERMINATED_FLAG | PRIMARY_MISS_FLAG | DLSS_RR_REPLACE_PENDING_FLAG | MEDIUM_CHANGE_FLAG)) |
 							NON_SINGULAR_PATH_FLAG | LAST_BOUNCE_DIFFUSE_FLAG;
 					ps.hit_t = t_coll;

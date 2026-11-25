@@ -2366,6 +2366,13 @@ void fragment() {
 	// (the path tracer tracks the medium between them). Foam is an opaque,
 	// rough white layer on top; where the swash has left the sand, no surface.
 	NORMAL = normalize((VIEW_MATRIX * vec4(world_normal, 0.0)).xyz);
+	if (!FRONT_FACING) {
+		// Met from below (a path leaving the water, or a camera under it): the normal faces the ray, as the
+		// engine's own NORMAL does on a back face before this code replaces it. Left facing up, the refraction
+		// out saw the ray arrive from behind the surface and dropped it: no sky reached the water, and a rock's
+		// shade on the sea went black.
+		NORMAL = -NORMAL;
+	}
 	float rt_rough = water_roughness;
 	if (FRONT_FACING) {
 		// The pixel's hidden slopes (alpha^2 = 2 sigma^2 per axis, as in water_raster_reflect_ex()): one facet per
