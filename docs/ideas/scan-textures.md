@@ -137,3 +137,25 @@ Next on the terrain side: burn scars (WorldBurnScar3D draws its own char), water
 - Grass bench `--forest=in --stand=beech|spruce --floor-scans[=DIR]` (=0 for the before shot). Raster pairs show finer,
   less even humus and duff with no loss; under a full sward most of it is hidden, as it should be.
 - Not yet: moss detail on the 3D cushion and carpet meshes (plant material).
+
+## Built (25 Nov, trees)
+
+- `TreeGenerator.load_scan_set(dir)` reads `scans.cfg` beside the scans (art repository trees/scans, art 3eb3c00;
+  fetch_art.sh puts them in art/trees_scans). A section per scan: scan, tile (metres, x round the stem, y along it),
+  presets (by name), cut, strength, rotate; `[wood]` is the wood under lost bark for every species. Both benches call
+  it; `--bark-scans=0` draws the generated bark alone. A missing folder warns.
+- Detail only, as the ground layers: each scan is stored as its luminance over a 5 cm box mean (r) and its normal's
+  slope over the same mean (gb), so the generator keeps each species' colour, plates, furrows, lichen and modelled
+  relief, and the scan adds what is finer (fibres, cracks, lenticels). The slope is added to the bark's own normal map
+  (Barre-Brisebois and Hill 2012, "Blending in Detail", partial-derivative blend).
+- Repeats: two samples a fifth apart in scale mixed by the lichen noise at a low frequency, and an offset per tree from
+  its position, so neighbours of one species never line up.
+- Eleven bark scans for 44 presets (smooth grey for beech and hornbeam, lenticelled for hazel, rowan, alder and aspen,
+  plates for the pines and larch, scaly for spruce, fir and hemlock, furrowed for ash, lime, poplar and willow, oak and
+  chestnut, flaking plates for sycamore, olive, cherry). None for birches (papery bark), cork oak, palms and the
+  small shrubs: no scan fitted, they keep the generated bark. Wood 059 (rotated, grain along the stem) on snags, logs
+  and stripped stems, not on char.
+- Raster and path traced at 100% crop on an oak trunk and a fallen log's butt: the scans'
+  fibres stay under the path tracer.
+
+Next on the tree side: leaf atlases (ambientCG LeafSet) against the procedural leaf textures and their atlas UVs.

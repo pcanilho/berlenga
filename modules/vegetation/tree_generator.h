@@ -542,9 +542,25 @@ private:
 		PackedInt32Array indices;
 	};
 	static LocalVector<ClimberLeafShape> plant_climber_shapes[CLIMBER_MAX + 1];
+	// Per preset: the scan's detail (r: luminance over its local mean, x0.5; gb: normal slope over the local mean
+	// slope, +0.5), the metres one tile covers, and how strongly it applies (0: no scan).
+	static Ref<Texture2D> bark_scan_detail[PRESET_MAX];
+	static Vector2 bark_scan_tile[PRESET_MAX];
+	static float bark_scan_strength[PRESET_MAX];
+	static Ref<Texture2D> wood_scan_detail;
+	static Vector2 wood_scan_tile;
+	static float wood_scan_strength;
 
 public:
+	// Scanned bark and wood detail (docs/ideas/scan-textures.md): reads scans.cfg in p_dir (art repository
+	// trees/scans), one section per bark scan naming the presets it serves, and [wood] for the wood under lost bark;
+	// returns the presets given a bark scan, plus one for the wood. Call before generating.
+	static int load_scan_set(const String &p_dir, int p_max_size = 2048);
 	static void free_climber_leaves() {
+		for (Ref<Texture2D> &t : bark_scan_detail) {
+			t.unref();
+		}
+		wood_scan_detail.unref();
 		for (Array &a : plant_climber_cache) {
 			a.clear();
 		}

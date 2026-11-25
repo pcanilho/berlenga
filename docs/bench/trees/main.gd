@@ -80,6 +80,11 @@ var day := -1
 var fails := 0
 
 func _ready() -> void:
+	# Scanned bark detail (TreeGenerator.load_scan_set), from the art the landscape bench fetches (fetch_art.sh:
+	# art/trees_scans); --bark-scans=0 draws the generated bark alone.
+	if not ("--bark-scans=0" in OS.get_cmdline_user_args()):
+		var bdir := ProjectSettings.globalize_path("res://").path_join("../landscape/art/trees_scans").simplify_path()
+		print("bark scans: %d presets from %s" % [TreeGenerator.load_scan_set(bdir), bdir])
 	if OS.has_environment("CUTOUT"):
 		# env CUTOUT="x,y,z,radius[,floor]": the camera cut-out (BaseMaterial3D camera_cutout globals) to that target.
 		var cv := OS.get_environment("CUTOUT").split_floats(",")

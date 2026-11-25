@@ -175,6 +175,9 @@ func _ready() -> void:
 	_phys_steps = Engine.max_physics_steps_per_frame
 	if not (args.has("test") or args.has("checks")):
 		Engine.max_physics_steps_per_frame = 1
+	# Scanned bark detail on the generated trees (art/trees_scans, fetch_art.sh); --bark-scans=0: generated bark alone.
+	if args.get("bark-scans", "1") != "0":
+		_log("bark scans: %d presets" % TreeGenerator.load_scan_set(ProjectSettings.globalize_path("res://art/trees_scans")))
 	if args.get("shadow-filter", "high") == "high":
 		# Stills have no TAA: soft-low shadow filtering leaves dithered penumbras in one frame; soft high does not.
 		RenderingServer.directional_soft_shadow_filter_set_quality(RenderingServer.SHADOW_QUALITY_SOFT_HIGH)
