@@ -5766,7 +5766,8 @@ Color TerrainGenerator3D::get_material_geology_at(const Vector3 &p_global_positi
 	const float sand = MAX(MAX(opt(beach), opt(dune_cover)), opt(sea_cover));
 	const float till = CLAMP(opt(till_cover) / 2.0f, 0.0f, 1.0f);
 	const float t = opt(talus);
-	return Color(sand > 0.0f ? -sand : s, opt(rock), till > t ? -till : t, float(TerrainDMath::log10(MAX(double(opt(drainage)), 1.0))));
+	// The soil depth is never negative: the cubic sample overshoots below 0 beside a deep fill, which read as sand.
+	return Color(sand > 0.0f ? -sand : MAX(s, 0.0f), opt(rock), till > t ? -till : t, float(TerrainDMath::log10(MAX(double(opt(drainage)), 1.0))));
 }
 
 // RGBA float: soil depth (m), rock exposure, talus (or -1..0 moraine till), log10 drainage area (m^2).
@@ -7353,7 +7354,12 @@ void TerrainGenerator3D::_shape_coast(const LocalVector<uint8_t> &p_sea) {
 				const double blend = t * t * (3.0 - 2.0 * t);
 				const double beach_h = water + MAX(beach_slope * x, 0.15);
 				heights[i] = float(MIN(double(heights[i]), Math::lerp(beach_h, double(heights[i]), blend)));
-				beach[i] = float(1.0 - blend);
+				// Sand only on the backshore that stays low: where the land behind rises well over the beach face
+				// (a valley floor or cliff foot inland, the blend keeping it tens of metres up) it is that land's ground,
+				// not beach. Storm swash and wind lift sand a few metres over the berm (backshore and foredune), not 15
+				// (a beige sand floor drew at a snowy cliff foot 15 m up, 60 m inland).
+				const double over = double(heights[i]) - beach_h;
+				beach[i] = float((1.0 - blend) * (1.0 - Math::smoothstep(2.0, 6.0, over)));
 			}
 		}
 	}
