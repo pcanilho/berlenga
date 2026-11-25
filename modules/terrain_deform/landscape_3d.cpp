@@ -2397,28 +2397,141 @@ Dictionary Landscape3D::get_stats() const {
 // middle half, easing to the edge) times the wear their passes give. Trampling takes the field layer's cover off
 // roughly as 1 - exp(-passes / P) (Cole 1995, Liddle 1997: a few hundred passes a year keep a line bare in most
 // field layers), P = 300 here. Rooting: the freshness of turned soil, 1 up to a season after the boar, gone by two
-// years as litter and the field layer close over it. Rebuilt when the camera crosses a 64 m step or the stand changes.
+// years as litter and the field layer close over it. Burn scars: years since the ground last burnt (WorldFire's
+// burn_age_at, a fire in play or an authored WorldBurnScar3D), for the material's char overlay. Rebuilt when the
+// camera crosses a 64 m step or the stand changes; the burn channel also when the fire reports burnt ground changed
+// (only the area it names).
 void Landscape3D::_update_stand_map(const Vector3 &p_camera) {
 	WorldStand *st = WorldContracts::stand();
-	if (!st) {
+	WorldFire *fire = WorldContracts::fire();
+	const bool has_fire = fire && fire->has_provider();
+	if (!st && !has_fire) {
 		_clear_stand_map();
 		return;
 	}
 	const real_t step = 64.0;
 	const Vector2 origin = Vector2(Math::round(p_camera.x / step) * step, Math::round(p_camera.z / step) * step) - Vector2(STAND_SIZE, STAND_SIZE) * 0.5;
-	const uint64_t gen = st->get_stand_generation();
-	if (origin == stand_origin && gen == stand_generation && st->get_instance_id() == stand_id) {
+	const uint64_t gen = st ? st->get_stand_generation() : 0;
+	const ObjectID sid = st ? st->get_instance_id() : ObjectID();
+	const uint64_t fgen = has_fire ? fire->get_burn_generation() : 0;
+	const bool moved = origin != stand_origin;
+	const bool stand_changed = moved || gen != stand_generation || sid != stand_id;
+	const bool fire_changed = moved || has_fire != stand_fire || fgen != stand_burn_generation;
+	if (!stand_changed && !fire_changed) {
 		return;
 	}
-	stand_origin = origin;
-	stand_generation = gen;
-	stand_id = st->get_instance_id();
 	const int R = STAND_RES;
 	const real_t texel = STAND_SIZE / real_t(R);
+	const int G = int(STAND_SIZE / 2.0) + 1;
+	if (stand_changed) {
+		stand_origin = origin;
+		stand_generation = gen;
+		stand_id = sid;
+		stand_trail.resize(R * R);
+		memset(stand_trail.ptr(), 0, stand_trail.size());
+		stand_rooting.resize(G * G);
+		for (float &v : stand_rooting) {
+			v = 0.0f;
+		}
+		stand_any = false;
+		if (st) {
+			stand_any = _raster_stand(st, origin, texel);
+		}
+	}
+	if (fire_changed) {
+		// Burn scars: years since the ground last burnt (WorldFire.burn_age_at), sampled every 2 m like the rooting.
+		// Only the area the fire's change log names is read again when the map has not moved (a fire in play reports
+		// a few times a second); everything after a move, or once the log no longer reaches back.
+		Rect2i cells(0, 0, G, G);
+		if (!moved && has_fire && stand_fire && stand_burn.size() == uint32_t(G * G)) {
+			Rect2 area;
+			if (fire->burn_changes_since(stand_burn_generation, area)) {
+				const Rect2 g = Rect2(area.position - origin, area.size).grow(2.0);
+				const Vector2i c0 = Vector2i(CLAMP(int(Math::floor(g.position.x / 2.0)), 0, G), CLAMP(int(Math::floor(g.position.y / 2.0)), 0, G));
+				const Vector2i c1 = Vector2i(CLAMP(int(Math::ceil(g.get_end().x / 2.0)) + 1, 0, G), CLAMP(int(Math::ceil(g.get_end().y / 2.0)) + 1, 0, G));
+				cells = Rect2i(c0, (c1 - c0).maxi(0));
+			}
+		}
+		stand_burn.resize(G * G);
+		if (cells.size.x == G && cells.size.y == G) {
+			for (float &v : stand_burn) {
+				v = -1.0f;
+			}
+		}
+		if (has_fire) {
+			for (int z = cells.position.y; z < cells.get_end().y; z++) {
+				for (int x = cells.position.x; x < cells.get_end().x; x++) {
+					stand_burn[z * G + x] = fire->burn_age_at(Vector3(origin.x + x * 2.0, 0.0, origin.y + z * 2.0));
+				}
+			}
+		}
+		stand_fire = has_fire;
+		stand_burn_generation = fgen;
+		stand_any_burn = false;
+		for (const float b : stand_burn) {
+			stand_any_burn = stand_any_burn || b >= 0.0f;
+		}
+	}
+	if (!stand_any && !stand_any_burn) {
+		_unpublish_stand_map();
+		return;
+	}
+	// RGBA8: r trail wear, g fresh rooting, b burn: 1 - years / BURN_YEARS (0 never burnt, so a scar as old as that
+	// still reads as burnt; TerrainMaterial3D fades the char over those years), a unused.
+	Vector<uint8_t> data;
+	data.resize(R * R * 4);
+	uint8_t *w = data.ptrw();
+	auto bilerp = [&](const LocalVector<float> &p_grid, real_t p_gx, real_t p_gz, float &r_v) {
+		const int ix = MIN(int(p_gx), G - 2);
+		const int iz = MIN(int(p_gz), G - 2);
+		const float fx = float(p_gx - ix), fz = float(p_gz - iz);
+		const float r0 = Math::lerp(p_grid[iz * G + ix], p_grid[iz * G + ix + 1], fx);
+		const float r1 = Math::lerp(p_grid[(iz + 1) * G + ix], p_grid[(iz + 1) * G + ix + 1], fx);
+		r_v = Math::lerp(r0, r1, fz);
+	};
+	auto burn_v = [](float p_age) { return p_age < 0.0f ? 0.0f : 1.0f - MIN(p_age, BURN_YEARS) / (BURN_YEARS * 1.02f); };
+	for (int z = 0; z < R; z++) {
+		const real_t gz = ((z + 0.5) * texel) / 2.0;
+		for (int x = 0; x < R; x++) {
+			const real_t gx = ((x + 0.5) * texel) / 2.0;
+			float g = 0.0f;
+			if (stand_any) {
+				bilerp(stand_rooting, gx, gz, g);
+			}
+			float b = 0.0f;
+			if (stand_any_burn) {
+				// The four corners' burn values, not their ages (an unburnt corner is 0, not an age of -1).
+				const int ix = MIN(int(gx), G - 2);
+				const int iz = MIN(int(gz), G - 2);
+				const float fx = float(gx - ix), fz = float(gz - iz);
+				const float b0 = Math::lerp(burn_v(stand_burn[iz * G + ix]), burn_v(stand_burn[iz * G + ix + 1]), fx);
+				const float b1 = Math::lerp(burn_v(stand_burn[(iz + 1) * G + ix]), burn_v(stand_burn[(iz + 1) * G + ix + 1]), fx);
+				b = Math::lerp(b0, b1, fz);
+			}
+			const int i = (z * R + x) * 4;
+			w[i] = stand_any ? stand_trail[z * R + x] : 0;
+			w[i + 1] = uint8_t(CLAMP(g * 255.0f, 0.0f, 255.0f));
+			w[i + 2] = uint8_t(CLAMP(b * 255.0f + 0.5f, 0.0f, 255.0f));
+			w[i + 3] = 0;
+		}
+	}
+	Ref<Image> img = Image::create_from_data(R, R, false, Image::FORMAT_RGBA8, data);
+	if (stand_texture.is_valid() && stand_texture->get_width() == R && stand_texture->get_format() == Image::FORMAT_RGBA8) {
+		stand_texture->update(img);
+	} else {
+		stand_texture = ImageTexture::create_from_image(img);
+	}
+	RenderingServer *rs = RenderingServer::get_singleton();
+	rs->global_shader_parameter_set("terrain_stand_map", stand_texture->get_rid());
+	rs->global_shader_parameter_set("terrain_stand_rect", Vector4(origin.x, origin.y, STAND_SIZE, STAND_SIZE));
+	stand_published = true;
+}
+
+// The stand's trails and rooting into stand_trail (bytes, STAND_RES square) and stand_rooting (2 m grid); true if any.
+bool Landscape3D::_raster_stand(WorldStand *st, const Vector2 &origin, real_t texel) {
+	const int R = STAND_RES;
 	const bool scripted = st->get_script_instance() != nullptr;
-	LocalVector<uint8_t> trail;
-	trail.resize(R * R);
-	memset(trail.ptr(), 0, trail.size());
+	LocalVector<uint8_t> &trail = stand_trail;
 	bool any = false;
 	auto wear = [](float p_passes) { return 1.0f - Math::exp(-MAX(p_passes, 0.0f) / 300.0f); };
 	if (scripted) {
@@ -2484,8 +2597,7 @@ void Landscape3D::_update_stand_map(const Vector3 &p_camera) {
 	}
 	// Rooting: sampled every 2 m (the discs are metres across), bilinear over the texels.
 	const int G = int(STAND_SIZE / 2.0) + 1;
-	LocalVector<float> fresh;
-	fresh.resize(G * G);
+	LocalVector<float> &fresh = stand_rooting;
 	bool any_rooting = false;
 	for (int z = 0; z < G; z++) {
 		for (int x = 0; x < G; x++) {
@@ -2495,54 +2607,26 @@ void Landscape3D::_update_stand_map(const Vector3 &p_camera) {
 			any_rooting = any_rooting || f > 0.0f;
 		}
 	}
-	if (!any && !any_rooting) {
-			_clear_stand_map();
-		stand_origin = origin;
-		stand_generation = gen;
-		stand_id = st->get_instance_id();
-		return;
-	}
-	Vector<uint8_t> data;
-	data.resize(R * R * 2);
-	uint8_t *w = data.ptrw();
-	for (int z = 0; z < R; z++) {
-		const real_t gz = ((z + 0.5) * texel) / 2.0;
-		const int iz = MIN(int(gz), G - 2);
-		const real_t fz = gz - iz;
-		for (int x = 0; x < R; x++) {
-			float g = 0.0f;
-			if (any_rooting) {
-				const real_t gx = ((x + 0.5) * texel) / 2.0;
-				const int ix = MIN(int(gx), G - 2);
-				const real_t fx = gx - ix;
-				const float r0 = Math::lerp(fresh[iz * G + ix], fresh[iz * G + ix + 1], float(fx));
-				const float r1 = Math::lerp(fresh[(iz + 1) * G + ix], fresh[(iz + 1) * G + ix + 1], float(fx));
-				g = Math::lerp(r0, r1, float(fz));
-			}
-			w[(z * R + x) * 2] = trail[z * R + x];
-			w[(z * R + x) * 2 + 1] = uint8_t(CLAMP(g * 255.0f, 0.0f, 255.0f));
-		}
-	}
-	Ref<Image> img = Image::create_from_data(R, R, false, Image::FORMAT_RG8, data);
-	if (stand_texture.is_valid() && stand_texture->get_width() == R) {
-		stand_texture->update(img);
-	} else {
-		stand_texture = ImageTexture::create_from_image(img);
-	}
-	RenderingServer *rs = RenderingServer::get_singleton();
-	rs->global_shader_parameter_set("terrain_stand_map", stand_texture->get_rid());
-	rs->global_shader_parameter_set("terrain_stand_rect", Vector4(origin.x, origin.y, STAND_SIZE, STAND_SIZE));
-	stand_published = true;
+	return any || any_rooting;
 }
 
-void Landscape3D::_clear_stand_map() {
+void Landscape3D::_unpublish_stand_map() {
 	if (stand_published) {
 		RenderingServer::get_singleton()->global_shader_parameter_set("terrain_stand_rect", Vector4());
 		stand_published = false;
 	}
+}
+
+void Landscape3D::_clear_stand_map() {
+	_unpublish_stand_map();
 	stand_origin = Vector2(1e30, 1e30);
 	stand_generation = UINT64_MAX;
 	stand_id = ObjectID();
+	stand_fire = false;
+	stand_burn_generation = UINT64_MAX;
+	stand_burn.clear();
+	stand_any = false;
+	stand_any_burn = false;
 }
 
 // The drawn ground over the heightfield at a point's xz (landscape space): x metres up, y the relief's share. Cliff and

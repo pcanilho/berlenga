@@ -54,6 +54,7 @@ summary: "A snowpack from the weather map that falls, settles, melts, slides and
 
   *Melt-freeze crust: soft prints without plates, then the crust broken into flat plates tipped into each print.*
 
+- **Snow grain** (`TerrainMaterial3D.snow_scan`): a scanned snow surface gives fresh snow its grain and crust.
 - **Suncups** (`SnowCover3D.suncups_enabled`): sunny spring melt digs cups into deep snow; warm cloud, rain or new snow smooths them out.
 
 - **Rotten snow and slush** (`SnowCover3D.slush_enabled`): a wet spring pack bears less, so boots and wheels posthole deeper; melt water it cannot hold ponds at its base over frozen ground as grey-blue glossy slush, drains only downslope and refreezes in frost; prints in it fill with water.

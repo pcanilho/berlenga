@@ -2980,6 +2980,32 @@ uint8_t CaveNetwork3D::_fade_faces(const Vector3i &p_key, F p_cell_of) const {
 	return m;
 }
 
+void CaveNetwork3D::_apply_wall_scan() {
+	if (default_wall.is_null()) {
+		return;
+	}
+	default_wall->set_shader_parameter("cave_scan", wall_scan.is_valid());
+	if (wall_scan.is_valid()) {
+		default_wall->set_shader_parameter("cave_scan_albedo", wall_scan.albedo);
+		default_wall->set_shader_parameter("cave_scan_mean", wall_scan.mean);
+		default_wall->set_shader_parameter("cave_scan_scale", 1.0f / wall_scan.tile);
+		default_wall->set_shader_parameter("cave_scan_normal", wall_scan.normal);
+		default_wall->set_shader_parameter("cave_scan_normal_strength", wall_scan.normal.is_valid() ? wall_scan.normal_strength : 0.0f);
+	}
+}
+
+// Scanned detail on the default walls: the art folder's scans.cfg section [cave] (system="rocks"). Returns 1 when
+// loaded.
+int CaveNetwork3D::load_scan_set(const String &p_dir) {
+	if (!rock_scan_load(p_dir, "cave", wall_scan)) {
+		WARN_PRINT(vformat("CaveNetwork3D: no [cave] scan in '%s' (fetch the art first): the walls keep their procedural surface only.", p_dir.path_join("scans.cfg")));
+		_apply_wall_scan();
+		return 0;
+	}
+	_apply_wall_scan();
+	return 1;
+}
+
 Ref<Material> CaveNetwork3D::_wall_material() {
 	if (wall_material.is_valid()) {
 		return wall_material;
@@ -3000,6 +3026,14 @@ uniform vec3 sand_color = vec3(0.4, 0.3, 0.17);
 uniform float sea_level = -1e9;
 uniform int debug_view = 0; // CAVE_WALL_DEBUG: 1 streak/wet/floor, 2 shells/crack/foot, 3 chunks, 4 COLOR, 5 normal, 6 bumped
 uniform float scallops_amount = 1.0;
+// Scanned detail on the walls (CaveNetwork3D.load_scan_set, docs/ideas/scan-textures.md): triplanar in world space at
+// the scan's real size, its colour over its mean (the walls keep their own colour) and its normal on the relief's.
+uniform bool cave_scan = false;
+uniform sampler2D cave_scan_albedo : source_color, filter_linear_mipmap_anisotropic, repeat_enable;
+uniform sampler2D cave_scan_normal : hint_normal, filter_linear_mipmap_anisotropic, repeat_enable;
+uniform vec3 cave_scan_mean = vec3(1.0);
+uniform float cave_scan_scale = 0.37;
+uniform float cave_scan_normal_strength = 0.0;
 varying vec3 w_pos;
 varying vec3 w_nrm;
 float h3(vec3 p) { return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453); }
@@ -3202,6 +3236,23 @@ void fragment() {
 		float pr = mix(0.08, 0.22, h3(pid + 5.0));
 		col *= 1.0 - near_c * (1.0 - floor_w) * 0.45 * step(0.8, h3(pid + 2.0)) * (1.0 - smoothstep(pr - 0.06, pr, pw.x));
 	}
+	// The scan on the rock (not the fill, flowstone or the bed: their own surfaces are drawn above and below).
+	vec3 scan_dn = vec3(0.0);
+	float scan_w = cave_scan ? (1.0 - floor_w) * (1.0 - clamp(COLOR.r, 0.0, 1.0)) : 0.0;
+	if (scan_w > 0.0) {
+		vec3 tw = pow(abs(w_nrm), vec3(4.0));
+		tw /= max(tw.x + tw.y + tw.z, 1e-4);
+		vec3 sg = sign(w_nrm) + vec3(equal(sign(w_nrm), vec3(0.0)));
+		vec2 ux = w_pos.zy * cave_scan_scale * vec2(sg.x, 1.0);
+		vec2 uy = w_pos.xz * cave_scan_scale * vec2(sg.y, 1.0);
+		vec2 uz = w_pos.xy * cave_scan_scale * vec2(-sg.z, 1.0);
+		vec3 scan = (texture(cave_scan_albedo, ux).rgb * tw.x + texture(cave_scan_albedo, uy).rgb * tw.y + texture(cave_scan_albedo, uz).rgb * tw.z) / cave_scan_mean;
+		col *= mix(vec3(1.0), scan, scan_w);
+		vec2 nx = (texture(cave_scan_normal, ux).xy * 2.0 - 1.0) * cave_scan_normal_strength;
+		vec2 ny = (texture(cave_scan_normal, uy).xy * 2.0 - 1.0) * cave_scan_normal_strength;
+		vec2 nz = (texture(cave_scan_normal, uz).xy * 2.0 - 1.0) * cave_scan_normal_strength;
+		scan_dn = scan_w * (vec3(0.0, nx.y, nx.x * sg.x) * tw.x + vec3(ny.x * sg.y, 0.0, ny.y) * tw.y + vec3(-nz.x * sg.z, nz.y, 0.0) * tw.z);
+	}
 	// Flowstone streaks: water runs down the walls in sheets, leaving smooth, paler calcite in vertical streaks
 	// (noise stretched along the fall line).
 	float wall = 1.0 - abs(w_nrm.y);
@@ -3270,7 +3321,7 @@ void fragment() {
 	// normal past the light and leaves black blots, or a groove's lit side a white wire.
 	vec3 tilt = amount * g + mg_g;
 	tilt *= min(1.0, 0.45 / max(length(tilt), 1e-5));
-	vec3 nb = normalize(n - tilt);
+	vec3 nb = normalize(n - tilt + scan_dn * (1.0 - 0.7 * streak));
 	NORMAL = normalize((VIEW_MATRIX * vec4(nb, 0.0)).xyz);
 	// A bumped normal turned away from the eye (a wall seen at grazing angles) shades black in flecks: bend it back
 	// until it faces the eye a little (the usual view-facing clamp of normal-mapped shading).
@@ -3327,6 +3378,7 @@ void fragment() {
 	if (const TerrainGenerator3D *gen = _get_generator(); gen && gen->has_sea_result()) {
 		default_wall->set_shader_parameter("sea_level", float(gen->get_sea_level()));
 	}
+	_apply_wall_scan();
 	return default_wall;
 }
 
@@ -4871,6 +4923,7 @@ void CaveNetwork3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_wall_material", "material"), &CaveNetwork3D::set_wall_material);
 	ClassDB::bind_method(D_METHOD("get_wall_material"), &CaveNetwork3D::get_wall_material);
 	ClassDB::bind_method(D_METHOD("set_ground_material", "material"), &CaveNetwork3D::set_ground_material);
+	ClassDB::bind_method(D_METHOD("load_scan_set", "dir"), &CaveNetwork3D::load_scan_set);
 	ClassDB::bind_method(D_METHOD("get_ground_material"), &CaveNetwork3D::get_ground_material);
 
 	ClassDB::bind_method(D_METHOD("set_generator", "path"), &CaveNetwork3D::set_generator);

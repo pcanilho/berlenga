@@ -31,6 +31,7 @@
 #pragma once
 
 #include "rock_generator.h"
+#include "rock_scans.h"
 #include "rock_moss.h"
 
 #include "modules/world/world_contracts.h"
@@ -218,6 +219,8 @@ private:
 	void _remeasure_sea();
 	real_t ground_blend_height = 0.45;
 	Ref<ShaderMaterial> ground_material;
+	RockScan stone_scans[2]; // scans.cfg [stone] and [stone_variant] (load_scan_set): detail on the stones
+	String scan_dir;
 	mutable Ref<ShaderMaterial> auto_ground; // the landscape's TerrainMaterial3D when ground_material is unset
 	mutable bool auto_ground_found = false;
 	Ref<ShaderMaterial> _ground_source() const;
@@ -872,6 +875,8 @@ public:
 	void set_ground_blend_height(real_t p_height);
 	real_t get_ground_blend_height() const { return ground_blend_height; }
 	void set_ground_material(const Ref<ShaderMaterial> &p_material);
+	int load_scan_set(const String &p_dir);
+	String get_scan_dir() const { return scan_dir; }
 	Ref<ShaderMaterial> get_ground_material() const { return ground_material; }
 	void set_layer_enabled(int p_layer, bool p_enabled);
 	bool is_layer_enabled(int p_layer) const;

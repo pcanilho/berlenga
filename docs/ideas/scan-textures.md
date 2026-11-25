@@ -121,8 +121,16 @@ Credits: one line per scan in the README References and CREDIT.txt beside the fi
   alluvium where the drainage area is a hundred times alluvium_area's on gentle ground (bedload channels keep rounded
   gravel, not silt). The layer functions take a second mask vector (om2).
 
-Next on the terrain side: burn scars (WorldBurnScar3D draws its own char), waterline band on banks. Then the owning threads: forest floor and moss (vegetation), stones and caves
-(rocks), snow detail (snow), bark, deadwood and leaves (trees), mud weights from its own maps (mud).
+- Mud (25 Nov, mud side): `mud_scan` goes by the patch's own mud (material.cpp `ground_deform_mud()`: worked ground
+  where it is wet mud, wallows of muddy water, laid mud), not by `ground_deform_exposed()`; the mud's own darkening,
+  film and water stay over it. Raster and PT checked on the ground bench's ruts view (docs/ideas/mud.md).
+
+Hand-offs (25 Nov): burn scars done (terrain, 23fb8f8c: OVERLAY_BURN, burned_ground_01, char tint fading over one to
+three years; raster and PT agree). Stones and cave rock done (rocks, ca70039d; rock_wall_02 refused, p98/mean 2.5).
+Forest floor (vegetation, 81e3fda4), bark and wood (trees, 4deb04c9), leaf atlases (trees, b87f9ec6: ambientCG LeafSet
+009/010 on hazel and maples), mud weights (mud, 9cb0572b: mud_scan by the patch's wet mud). Snow detail (snow, 7cee2529:
+snow_02 in a TerrainMaterial3D snow_scan slot that SnowSurface3D reads). Open: waterline band on banks (terrain). Follow-up from terrain: PhysXFireSpread3D's char Decal could
+retire once fires report through WorldFire burn_changed / burn_age_at.
 
 ## Built (25 Nov, vegetation side)
 
@@ -142,3 +150,37 @@ Next on the terrain side: burn scars (WorldBurnScar3D draws its own char), water
   scan at its tile (strength 0.7) and seven times larger (0.55) for metre-scale damp/dry drifts. The ground takes the
   seven-times layer too, past the litter. Checker test confirmed it reaches the leaves. Mean brightness unchanged.
 - Not yet: moss detail on the 3D cushion and carpet meshes (plant material).
+
+## Built (25 Nov, trees)
+
+- `TreeGenerator.load_scan_set(dir)` reads `scans.cfg` beside the scans (art repository trees/scans, art 3eb3c00;
+  fetch_art.sh puts them in art/trees_scans). A section per scan: scan, tile (metres, x round the stem, y along it),
+  presets (by name), cut, strength, rotate; `[wood]` is the wood under lost bark for every species. Both benches call
+  it; `--bark-scans=0` draws the generated bark alone. A missing folder warns.
+- Detail only, as the ground layers: each scan is stored as its luminance over a 5 cm box mean (r) and its normal's
+  slope over the same mean (gb), so the generator keeps each species' colour, plates, furrows, lichen and modelled
+  relief, and the scan adds what is finer (fibres, cracks, lenticels). The slope is added to the bark's own normal map
+  (Barre-Brisebois and Hill 2012, "Blending in Detail", partial-derivative blend).
+- Repeats: two samples a fifth apart in scale mixed by the lichen noise at a low frequency, and an offset per tree from
+  its position, so neighbours of one species never line up.
+- Eleven bark scans for 44 presets (smooth grey for beech and hornbeam, lenticelled for hazel, rowan, alder and aspen,
+  plates for the pines and larch, scaly for spruce, fir and hemlock, furrowed for ash, lime, poplar and willow, oak and
+  chestnut, flaking plates for sycamore, olive, cherry). None for birches (papery bark), cork oak, palms and the
+  small shrubs: no scan fitted, they keep the generated bark. Wood 059 (rotated, grain along the stem) on snags, logs
+  and stripped stems, not on char.
+- Raster and path traced at 100% crop on an oak trunk and a fallen log's butt: the scans'
+  fibres stay under the path tracer.
+
+- Leaves (art 2b41030): ambientCG Leaf Set 009 (hazel) and 010 (maple) are the only CC0 leaf atlases that fit a
+  species. `docs/bench/trees/leaf_atlas.py` unwraps each scanned leaf into the blade's UV frame (u margin to margin
+  across each row, the two halves either side of the midline, v base to tip; for maples the central lobe, as every
+  lobe is its own blade) as its luminance over a local mean. The scans hardly show their veins in colour (a hazel
+  midrib is 3% brighter than the lamina beside it; the relief carries them), so `_leaf_albedo` multiplies the scan
+  over the drawn venation (strength 0.6 as an exponent) rather than replacing it: the veins stay, each leaf gains a
+  real lamina's mottling and spots. Each leaf takes one of the atlas's leaves by a hash of where it grows (the blade's
+  u into that column, the flutter shader reads u back), so neighbours differ. Hazel; sycamore, sugar, red and field
+  maple (palmate venation is shared across Acer).
+- Dead stubs: a kept dead branch's stub scales with its radius (a thin one 1.6 m long read as a wire).
+
+Next on the tree side: a leaf normal map from the scans (leaves carry no tangents yet), more species as CC0 leaf
+scans appear.

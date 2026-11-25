@@ -175,6 +175,12 @@ func _ready() -> void:
 	_phys_steps = Engine.max_physics_steps_per_frame
 	if not (args.has("test") or args.has("checks")):
 		Engine.max_physics_steps_per_frame = 1
+	# Scanned bark detail on the generated trees (art/trees_scans, fetch_art.sh); --bark-scans=0: generated bark alone.
+	if args.get("bark-scans", "1") != "0" and ClassDB.class_has_method("TreeGenerator", "load_scan_set"):
+		_log("bark scans: %d presets" % ClassDB.class_call_static("TreeGenerator", "load_scan_set", ProjectSettings.globalize_path("res://art/trees_scans")))
+	# Scanned forest floor detail (vegetation 81e3fda4, art terrain/layers); --floor-scans=0: generated floor alone.
+	if args.get("floor-scans", "1") != "0" and ClassDB.class_has_method("VegetationField3D", "load_floor_scans"):
+		_log("floor scans: %d" % ClassDB.class_call_static("VegetationField3D", "load_floor_scans", ProjectSettings.globalize_path("res://art/terrain_layers")))
 	if args.get("shadow-filter", "high") == "high":
 		# Stills have no TAA: soft-low shadow filtering leaves dithered penumbras in one frame; soft high does not.
 		RenderingServer.directional_soft_shadow_filter_set_quality(RenderingServer.SHADOW_QUALITY_SOFT_HIGH)
@@ -1246,6 +1252,19 @@ func _ready() -> void:
 			await RenderingServer.frame_post_draw
 			get_viewport().get_texture().get_image().save_png(args["rock-pair"])
 			_log("saved %s (rocks %s, paused)" % [args["rock-pair"], args.get("rock-pair-prop", "")])
+		if args.has("mat-pair") and landscape != null and landscape.material != null:
+			# --mat-pair=PATH --mat-pair-prop=name:value[;...]: the same moment with the ground's TerrainMaterial3D
+			# properties changed (e.g. mud_scan:null for the mud scan's before frame): paused, --mat-pair-frames (12) more.
+			process_mode = Node.PROCESS_MODE_ALWAYS
+			get_tree().paused = true
+			for kv in String(args.get("mat-pair-prop", "")).split(";", false):
+				var pv := kv.split(":")
+				landscape.material.set(pv[0], str_to_var(pv[1]))
+			for i in int(args.get("mat-pair-frames", "12")):
+				await get_tree().process_frame
+			await RenderingServer.frame_post_draw
+			get_viewport().get_texture().get_image().save_png(args["mat-pair"])
+			_log("saved %s (ground material %s, paused)" % [args["mat-pair"], args.get("mat-pair-prop", "")])
 		if args.has("land-pair") and landscape != null:
 			# --land-pair=PATH --land-pair-prop=name:value[;...]: the same moment with Landscape3D properties changed
 			# (e.g. terracette_relief:0.0): the scene paused, the landscape rebuilt over --land-pair-frames (90).
@@ -2407,6 +2426,8 @@ func _generate() -> void:
 			rocks.name = "Rocks"
 			rocks.streaming = false
 			add_child(rocks)
+			if args.get("stone-scans", "1") != "0": # --stone-scans=0: the stones without scan detail (A/B)
+				_log("stone scans: %d" % rocks.load_scan_set(ProjectSettings.globalize_path("res://art/terrain_layers")))
 			rocks.generator = rocks.get_path_to(gen)
 			if "close_up_enabled" in rocks:
 				rocks.close_up_enabled = args.get("rock-closeup", "1") != "0" # real close-up detail near the camera
@@ -4300,9 +4321,12 @@ func _build_camera() -> void:
 						continue
 					var down := Vector2(-gx, -gz).normalized()
 					# Raking: the contour along the sun (down the slope square to it), the face still lit.
+					# Lit: the slope faces the sun at least --tc-lit (0.2) of the way, so the treads catch light and the
+					# risers' shade reads; raking within that.
+					if down.dot(to_sun_t) < float(args.get("tc-lit", "0.2")):
+						continue
 					var rake := 1.0 - absf(down.dot(to_sun_t))
-					var lit := 1.0 if down.dot(to_sun_t) > -0.2 else 0.0
-					var score := rake * 2.0 + lit - absf(sl - 30.0) / 10.0 - Vector2(xx, zz).length() / 4000.0
+					var score := rake * 2.0 - absf(sl - 30.0) / 10.0 - Vector2(xx, zz).length() / 4000.0
 					if score > best_tc:
 						best_tc = score
 						tspot = Vector3(xx, hp, zz)

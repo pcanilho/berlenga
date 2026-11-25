@@ -35,6 +35,9 @@
 #include "tree_bark_detail.h"
 #include "vegetation_fire.h"
 
+#include "core/io/config_file.h"
+#include "core/io/dir_access.h"
+#include "core/io/file_access.h"
 #include "core/os/mutex.h"
 #include "core/templates/sort_array.h"
 #include "core/object/class_db.h"
@@ -2346,7 +2349,12 @@ void TreeGenerator::_shed(int p_year) {
 		// leaving a stub of 0.4-1.6 m (by the branch's own hash, so the generator's random stream is untouched). Long
 		// dead branches kept whole, bare and straight, read inside a stand as wires strung between the stems (docs,
 		// 22 Nov; trees.md 5bm).
-		const float stub = Math::lerp(0.4f, 1.6f, float(hash_murmur3_one_32(uint32_t(i), uint32_t(p_year) * 2654435761u) & 0xffff) / 65535.0f);
+		// Thin dead branches break back further: how long a dead branch persists grows with its diameter (Makinen
+		// 1999, Silva Fennica 33(2): branch persistence and diameter), so a twig a centimetre across keeps a short
+		// stub and only limbs about 4 cm across keep the full 1.6 m. A pencil-thin dead shoot 1.6 m long, tapering to
+		// a point, read as a wire across the sky under an open oak's limbs (docs, 25 Nov).
+		const float stub = Math::lerp(0.4f, 1.6f, float(hash_murmur3_one_32(uint32_t(i), uint32_t(p_year) * 2654435761u) & 0xffff) / 65535.0f) *
+				CLAMP(n.radius / 0.02f, 0.15f, 1.0f);
 		dead_stack.clear();
 		dead_stack.push_back(Pair<int, float>(i, 0.0f));
 		while (!dead_stack.is_empty()) {
@@ -4471,7 +4479,7 @@ Ref<ArrayMesh> TreeGenerator::make_leaf_mesh(Preset p_preset, const Dictionary &
 			m->set_alpha_antialiasing(BaseMaterial3D::ALPHA_ANTIALIASING_ALPHA_TO_COVERAGE);
 			m->set_albedo(Color(1.28f, 1.28f, 1.28f));
 		} else {
-			m->set_texture(BaseMaterial3D::TEXTURE_ALBEDO, g->_leaf_texture());
+			m->set_texture(BaseMaterial3D::TEXTURE_ALBEDO, g->_leaf_albedo());
 			m->set_albedo(Color(1.17f, 1.17f, 1.17f));
 		}
 	}
@@ -4681,6 +4689,11 @@ void TreeGenerator::_add_blade(Builder &r_b, const Vector3 &p_start, const Vecto
 	// pair at the tip would split into a sliver.
 	LocalVector<int> row;
 	row.resize(p_steps + 1);
+	// A scanned leaf atlas (_leaf_albedo): u into the leaf's column, inside the gutter leaf_atlas.py leaves round it.
+	const int cols = blade_col >= 0 && preset >= 0 && preset < PRESET_MAX ? leaf_scan_cols[preset] : 1;
+	auto bu = [&](float p_u) {
+		return cols > 1 ? (float(blade_col % cols) + 0.03f + 0.94f * p_u) / float(cols) : p_u;
+	};
 	for (int i = 0; i <= p_steps; i++) {
 		const float t = float(i) / p_steps;
 		float w = p_half_width * Math::sin(Math::PI * Math::pow(t, p_shape));
@@ -4698,18 +4711,18 @@ void TreeGenerator::_add_blade(Builder &r_b, const Vector3 &p_start, const Vecto
 		row[i] = r_b.verts.size();
 		r_b.verts.push_back(mid);
 		r_b.normals.push_back(p_n);
-		r_b.uvs.push_back(Vector2(0.5f, t));
+		r_b.uvs.push_back(Vector2(bu(0.5f), t));
 		r_b.colors.push_back(p_color);
 		if (i == 0 || i == p_steps) {
 			continue;
 		}
 		r_b.verts.push_back(mid + p_side * w + fold);
 		r_b.normals.push_back((p_n - p_side * 0.2f).normalized());
-		r_b.uvs.push_back(Vector2(1.0f, t));
+		r_b.uvs.push_back(Vector2(bu(1.0f), t));
 		r_b.colors.push_back(p_color);
 		r_b.verts.push_back(mid - p_side * w + fold);
 		r_b.normals.push_back((p_n + p_side * 0.2f).normalized());
-		r_b.uvs.push_back(Vector2(0.0f, t));
+		r_b.uvs.push_back(Vector2(bu(0.0f), t));
 		r_b.colors.push_back(p_color);
 	}
 	auto tri = [&](int a, int b, int c) {
@@ -4791,6 +4804,16 @@ void TreeGenerator::_add_leaf(Builder &r_b, const Vector3 &p_base, const Vector3
 	const Vector3 start = p_base + p_out * (p_size * 0.15f);
 	const float hw = params[PARAM_LEAF_WIDTH] * p_size;
 	const LeafFormSpec &form = LEAF_FORMS[preset];
+	// Each leaf one of the scanned atlas's leaves, by a hash of where it grows (the generator's random stream is
+	// untouched); the blades below take its column, then it is cleared.
+	struct BladeCol {
+		int &c;
+		~BladeCol() { c = -1; }
+	} blade_col_reset{ blade_col };
+	if (species_leaf_forms && leaf_scan_cols[preset] > 1) {
+		const Vector3i q = Vector3i((p_base * 997.0f).floor());
+		blade_col = int(hash_murmur3_one_32(uint32_t(q.x) * 73856093u ^ uint32_t(q.y) * 19349663u ^ uint32_t(q.z) * 83492791u) % uint32_t(leaf_scan_cols[preset]));
+	}
 	if (!species_leaf_forms || form.kind == LEAF_SIMPLE || form.kind == LEAF_NEEDLE) {
 		_add_blade(r_b, start, along, side, n, p_size, hw, 3, 0, 0.0f, p_color);
 		return;
@@ -14825,6 +14848,220 @@ void TreeGenerator::_climber_stem(Builder &r_bark, const LocalVector<Vector3> &p
 	tube_carry_nrm = Vector3();
 }
 
+Ref<Texture2D> TreeGenerator::bark_scan_detail[PRESET_MAX];
+Ref<Texture2D> TreeGenerator::wood_scan_detail;
+Vector2 TreeGenerator::wood_scan_tile = Vector2(1, 1);
+float TreeGenerator::wood_scan_strength = 0.0f;
+Vector2 TreeGenerator::bark_scan_tile[PRESET_MAX];
+float TreeGenerator::bark_scan_strength[PRESET_MAX] = {};
+Ref<Image> TreeGenerator::leaf_scan_image[PRESET_MAX];
+Ref<Texture2D> TreeGenerator::leaf_scan_composite[PRESET_MAX];
+int TreeGenerator::leaf_scan_cols[PRESET_MAX] = {};
+float TreeGenerator::leaf_scan_strength[PRESET_MAX] = {};
+
+// A bark scan as detail (docs/ideas/scan-textures.md; the detail-map technique of scanned material libraries over a
+// procedural base, and Barre-Brisebois and Hill 2012, "Blending in Detail", for the normal): the scan's luminance over
+// its own local mean and its normal's slope over the local mean slope, the mean a box p_cut metres wide, wrapped so the
+// tile stays seamless. Only the scan's fibres, cracks and lenticels are left: the generator's plates, furrows (real
+// relief) and colour stay. r = ratio x 0.5, gb = slope x 0.5 + 0.5.
+static Ref<Texture2D> _bark_scan_texture(const String &p_base, const Vector2 &p_tile, float p_cut, int p_max_size, bool p_rotate) {
+	if (!FileAccess::exists(p_base + "_albedo.jpg")) {
+		return Ref<Texture2D>();
+	}
+	Ref<Image> a = Image::load_from_file(p_base + "_albedo.jpg");
+	if (a.is_null() || a->is_empty()) {
+		return Ref<Texture2D>();
+	}
+	a->convert(Image::FORMAT_RGB8);
+	if (p_rotate) {
+		// Grain across the image (most wood scans): turned a quarter so it runs along the stem (v).
+		a->rotate_90(CLOCKWISE);
+	}
+	while (MAX(a->get_width(), a->get_height()) > p_max_size) {
+		a->resize(a->get_width() / 2, a->get_height() / 2, Image::INTERPOLATE_BILINEAR);
+	}
+	const int w = a->get_width();
+	const int h = a->get_height();
+	Ref<Image> n;
+	if (FileAccess::exists(p_base + "_normal.jpg")) {
+		n = Image::load_from_file(p_base + "_normal.jpg");
+		if (n.is_valid() && !n->is_empty()) {
+			n->convert(Image::FORMAT_RGB8);
+			if (p_rotate) {
+				n->rotate_90(CLOCKWISE);
+			}
+			if (n->get_width() != w || n->get_height() != h) {
+				n->resize(w, h, Image::INTERPOLATE_BILINEAR);
+			}
+		} else {
+			n.unref();
+		}
+	}
+	// Levels of 2x2 halving to the box: a texel covers p_tile / size metres.
+	const float texel = p_tile.x / float(w);
+	int levels = int(Math::floor(Math::log2(MAX(p_cut / MAX(texel, 1e-6f), 2.0f))));
+	while (levels > 1 && ((w >> levels) < 2 || (h >> levels) < 2 || (w % (1 << levels)) != 0 || (h % (1 << levels)) != 0)) {
+		levels--;
+	}
+	LocalVector<float> ch[3];
+	for (int c = 0; c < 3; c++) {
+		ch[c].resize(w * h);
+	}
+	const uint8_t *ad = a->get_data().ptr();
+	const uint8_t *nd = n.is_valid() ? n->get_data().ptr() : nullptr;
+	for (int i = 0; i < w * h; i++) {
+		const float r = Math::pow(ad[i * 3 + 0] / 255.0f, 2.2f);
+		const float g = Math::pow(ad[i * 3 + 1] / 255.0f, 2.2f);
+		const float b = Math::pow(ad[i * 3 + 2] / 255.0f, 2.2f);
+		ch[0][i] = 0.2126f * r + 0.7152f * g + 0.0722f * b;
+		const float nx = nd ? nd[i * 3 + 0] / 127.5f - 1.0f : 0.0f;
+		const float ny = nd ? nd[i * 3 + 1] / 127.5f - 1.0f : 0.0f;
+		// A turned normal map turns its slopes too (OpenGL green up): x' = y, y' = -x.
+		ch[1][i] = p_rotate ? ny : nx;
+		ch[2][i] = p_rotate ? -nx : ny;
+	}
+	// The box means: halved levels times (each texel the mean of its 2x2), then read back bilinearly with wrap.
+	LocalVector<float> lo[3];
+	int lw = w;
+	int lh = h;
+	for (int c = 0; c < 3; c++) {
+		lo[c] = ch[c];
+	}
+	for (int l = 0; l < levels; l++) {
+		const int nw = lw / 2;
+		const int nh = lh / 2;
+		for (int c = 0; c < 3; c++) {
+			LocalVector<float> nx;
+			nx.resize(nw * nh);
+			for (int y = 0; y < nh; y++) {
+				for (int x = 0; x < nw; x++) {
+					nx[y * nw + x] = 0.25f * (lo[c][(2 * y) * lw + 2 * x] + lo[c][(2 * y) * lw + 2 * x + 1] + lo[c][(2 * y + 1) * lw + 2 * x] + lo[c][(2 * y + 1) * lw + 2 * x + 1]);
+				}
+			}
+			lo[c] = nx;
+		}
+		lw = nw;
+		lh = nh;
+	}
+	Vector<uint8_t> out;
+	out.resize(w * h * 3);
+	uint8_t *od = out.ptrw();
+	const float sx = float(lw) / float(w);
+	const float sy = float(lh) / float(h);
+	for (int y = 0; y < h; y++) {
+		const float fy = (y + 0.5f) * sy - 0.5f;
+		const int y0 = int(Math::floor(fy));
+		const float ty = fy - y0;
+		const int ya = (y0 % lh + lh) % lh;
+		const int yb = (ya + 1) % lh;
+		for (int x = 0; x < w; x++) {
+			const float fx = (x + 0.5f) * sx - 0.5f;
+			const int x0 = int(Math::floor(fx));
+			const float tx = fx - x0;
+			const int xa = (x0 % lw + lw) % lw;
+			const int xb = (xa + 1) % lw;
+			float m[3];
+			for (int c = 0; c < 3; c++) {
+				const LocalVector<float> &L = lo[c];
+				m[c] = Math::lerp(Math::lerp(L[ya * lw + xa], L[ya * lw + xb], tx), Math::lerp(L[yb * lw + xa], L[yb * lw + xb], tx), ty);
+			}
+			const int i = y * w + x;
+			const float ratio = ch[0][i] / MAX(m[0], 1e-4f);
+			od[i * 3 + 0] = uint8_t(CLAMP(ratio * 0.5f, 0.0f, 1.0f) * 255.0f + 0.5f);
+			od[i * 3 + 1] = uint8_t(CLAMP(0.5f + 0.5f * (ch[1][i] - m[1]), 0.0f, 1.0f) * 255.0f + 0.5f);
+			od[i * 3 + 2] = uint8_t(CLAMP(0.5f + 0.5f * (ch[2][i] - m[2]), 0.0f, 1.0f) * 255.0f + 0.5f);
+		}
+	}
+	Ref<Image> img = Image::create_from_data(w, h, false, Image::FORMAT_RGB8, out);
+	img->generate_mipmaps();
+	return ImageTexture::create_from_image(img);
+}
+
+int TreeGenerator::load_scan_set(const String &p_dir, int p_max_size) {
+	const String cfg_path = p_dir.path_join("scans.cfg");
+	Ref<ConfigFile> cfg;
+	cfg.instantiate();
+	if (!DirAccess::dir_exists_absolute(p_dir) || cfg->load(cfg_path) != OK) {
+		WARN_PRINT(vformat("TreeGenerator: no scan set at '%s' (fetch the art first): bark and wood are drawn from the generated textures alone.", cfg_path));
+		return 0;
+	}
+	int n = 0;
+	const Vector<String> sections = cfg->get_sections();
+	for (const String &sec : sections) {
+		if (cfg->has_section_key(sec, "leaf_atlas")) {
+			// Scanned leaves unwrapped into the blade's frame (docs/bench/trees/leaf_atlas.py): a grey venation factor
+			// as _leaf_texture's, one leaf a column.
+			const String file = p_dir.path_join(String(cfg->get_value(sec, "leaf_atlas", "")));
+			const int cols = MAX(1, int(cfg->get_value(sec, "cols", 1)));
+			// The scan's share as an exponent of its ratio (1: all of its mottling; less keeps the drawn veins clear).
+			const float strength = cfg->get_value(sec, "strength", 0.6f);
+			Ref<Image> img = Image::load_from_file(file);
+			if (img.is_null() || img->is_empty()) {
+				WARN_PRINT(vformat("TreeGenerator: leaf atlas '%s' for [%s] not found.", file, sec));
+				continue;
+			}
+			img->convert(Image::FORMAT_RGB8);
+			const PackedStringArray lp = cfg->get_value(sec, "presets", PackedStringArray());
+			for (const String &pn : lp) {
+				int found = -1;
+				for (int i = 0; i < PRESET_MAX; i++) {
+					if (String(preset_names[i]).to_lower() == pn.strip_edges().to_lower()) {
+						found = i;
+					}
+				}
+				if (found < 0) {
+					WARN_PRINT(vformat("TreeGenerator: unknown preset '%s' in [%s] of %s.", pn, sec, cfg_path));
+					continue;
+				}
+				leaf_scan_image[found] = img;
+				leaf_scan_composite[found].unref();
+				leaf_scan_cols[found] = cols;
+				leaf_scan_strength[found] = strength;
+				n++;
+			}
+			continue;
+		}
+		const String scan = cfg->get_value(sec, "scan", sec);
+		const Variant tv = cfg->get_value(sec, "tile", 1.0f);
+		const Vector2 tile = tv.get_type() == Variant::VECTOR2 ? Vector2(tv) : Vector2(float(tv), float(tv));
+		// The box the local mean is taken over: the scan keeps what is finer than this (fibres, cracks, lenticels).
+		const float cut = cfg->get_value(sec, "cut", 0.05f);
+		const float strength = cfg->get_value(sec, "strength", 1.0f);
+		const PackedStringArray presets = cfg->get_value(sec, "presets", PackedStringArray());
+		const bool rotate = cfg->get_value(sec, "rotate", false);
+		const Ref<Texture2D> tex = _bark_scan_texture(p_dir.path_join(scan).path_join(scan), tile, cut, p_max_size, rotate);
+		if (tex.is_null()) {
+			WARN_PRINT(vformat("TreeGenerator: scan '%s' for [%s] not found under %s.", scan, sec, p_dir));
+			continue;
+		}
+		if (sec == "wood") {
+			// The wood under lost bark (snags, logs, stripped and gnawed stems), every species.
+			wood_scan_detail = tex;
+			wood_scan_tile = tile;
+			wood_scan_strength = strength;
+			n++;
+			continue;
+		}
+		for (const String &pn : presets) {
+			int found = -1;
+			for (int i = 0; i < PRESET_MAX; i++) {
+				if (String(preset_names[i]).to_lower() == pn.strip_edges().to_lower()) {
+					found = i;
+				}
+			}
+			if (found < 0) {
+				WARN_PRINT(vformat("TreeGenerator: unknown preset '%s' in [%s] of %s.", pn, sec, cfg_path));
+				continue;
+			}
+			bark_scan_detail[found] = tex;
+			bark_scan_tile[found] = tile;
+			bark_scan_strength[found] = strength;
+			n++;
+		}
+	}
+	return n;
+}
+
 // Liana stands for clematis (old man's beard), the hanging climber of rich lowland woods.
 Array TreeGenerator::plant_climber_cache[CLIMBER_MAX + 1];
 LocalVector<TreeGenerator::ClimberLeafShape> TreeGenerator::plant_climber_shapes[CLIMBER_MAX + 1];
@@ -15283,6 +15520,13 @@ Ref<Texture2D> TreeGenerator::_leaf_texture() {
 	if (leaf_texture.is_valid()) {
 		return leaf_texture;
 	}
+	Ref<Image> img = _leaf_venation_image();
+	img->generate_mipmaps();
+	leaf_texture = ImageTexture::create_from_image(img);
+	return leaf_texture;
+}
+
+Ref<Image> TreeGenerator::_leaf_venation_image() {
 	const int w = 128, h = 256;
 	Vector<uint8_t> px;
 	px.resize(w * h * 3);
@@ -15307,10 +15551,56 @@ Ref<Texture2D> TreeGenerator::_leaf_texture() {
 			}
 		}
 	}
+	return Image::create_from_data(w, h, false, Image::FORMAT_RGB8, px);
+}
+
+// The procedural venation times the scanned leaves (leaf_atlas.py), column by column: the veins stay drawn on the
+// geometry's midrib (a scan under soft light hardly shows its veins in colour) and each leaf takes one scanned leaf's
+// lamina, mottling and spots. Both are factors about a mean of 0.85, so the product is the scan's ratio over the
+// venation. Built once per atlas, shared by the presets that use it.
+Ref<Texture2D> TreeGenerator::_leaf_albedo() {
+	if (preset < 0 || preset >= PRESET_MAX || leaf_scan_image[preset].is_null()) {
+		return _leaf_texture();
+	}
+	static Mutex composite_mutex;
+	MutexLock lock(composite_mutex);
+	if (leaf_scan_composite[preset].is_valid()) {
+		return leaf_scan_composite[preset];
+	}
+	const Ref<Image> scan = leaf_scan_image[preset];
+	const Ref<Image> vein = _leaf_venation_image();
+	const int w = scan->get_width(), h = scan->get_height();
+	const int cols = MAX(1, leaf_scan_cols[preset]);
+	const int vw = vein->get_width(), vh = vein->get_height();
+	Vector<uint8_t> px;
+	px.resize(w * h * 3);
+	uint8_t *o = px.ptrw();
+	for (int y = 0; y < h; y++) {
+		const float v = (y + 0.5f) / h;
+		for (int x = 0; x < w; x++) {
+			// u across this column's blade (inside the 3% gutter), as _add_blade maps it.
+			const float cx = (x + 0.5f) * cols / float(w);
+			const float u = CLAMP((cx - Math::floor(cx) - 0.03f) / 0.94f, 0.0f, 1.0f);
+			const float fx = u * vw - 0.5f, fy = v * vh - 0.5f;
+			const int x0 = CLAMP(int(Math::floor(fx)), 0, vw - 1), y0 = CLAMP(int(Math::floor(fy)), 0, vh - 1);
+			const int x1 = MIN(x0 + 1, vw - 1), y1 = MIN(y0 + 1, vh - 1);
+			const float ax = CLAMP(fx - x0, 0.0f, 1.0f), ay = CLAMP(fy - y0, 0.0f, 1.0f);
+			const float f = Math::lerp(Math::lerp(vein->get_pixel(x0, y0).r, vein->get_pixel(x1, y0).r, ax), Math::lerp(vein->get_pixel(x0, y1).r, vein->get_pixel(x1, y1).r, ax), ay);
+			const float vf = Color(f, f, f).srgb_to_linear().r;
+			const float sf = Math::pow(MAX(scan->get_pixel(x, y).srgb_to_linear().r / 0.85f, 0.01f), leaf_scan_strength[preset]);
+			const uint8_t b = uint8_t(Math::round(CLAMP(Color(vf * sf, 0, 0).linear_to_srgb().r, 0.0f, 1.0f) * 255.0f));
+			o[(y * w + x) * 3 + 0] = o[(y * w + x) * 3 + 1] = o[(y * w + x) * 3 + 2] = b;
+		}
+	}
 	Ref<Image> img = Image::create_from_data(w, h, false, Image::FORMAT_RGB8, px);
 	img->generate_mipmaps();
-	leaf_texture = ImageTexture::create_from_image(img);
-	return leaf_texture;
+	const Ref<Texture2D> tex = ImageTexture::create_from_image(img);
+	for (int i = 0; i < PRESET_MAX; i++) {
+		if (leaf_scan_image[i] == scan) {
+			leaf_scan_composite[i] = tex;
+		}
+	}
+	return tex;
 }
 
 Ref<Texture2D> TreeGenerator::_spray_texture() {
@@ -21891,7 +22181,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 				m->set_texture(BaseMaterial3D::TEXTURE_NORMAL, bs.normal);
 			}
 			mesh->surface_set_name(mesh->get_surface_count() - 1, "bark");
-			if (lichen_uv2 || bark_custom) {
+			if (lichen_uv2 || bark_custom || bark_scan_strength[preset] > 0.0f) {
 				mesh->surface_set_material(mesh->get_surface_count() - 1, _lichen_material(m));
 				if (rigged) {
 					static_materials.push_back(_lichen_material(twin(m)));
@@ -22005,7 +22295,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 					// Its venation factor averages about 0.78.
 					m->set_albedo(Color(1.28f, 1.28f, 1.28f));
 				} else {
-					m->set_texture(BaseMaterial3D::TEXTURE_ALBEDO, _leaf_texture());
+					m->set_texture(BaseMaterial3D::TEXTURE_ALBEDO, _leaf_albedo());
 					m->set_albedo(Color(1.17f, 1.17f, 1.17f));
 				}
 			}
@@ -22233,6 +22523,18 @@ Ref<Material> TreeGenerator::_lichen_material(const Ref<StandardMaterial3D> &p_b
 		return p_base;
 	}
 	const String body = R"(
+	// Scanned bark detail (TreeGenerator.load_scan_set): the scan's fine texture as a ratio to its local mean (r)
+	// and a slope (gb), so the bark keeps its colour, plates and furrows. Two samples a fifth apart in scale, mixed by
+	// a slow noise along the stem, so a tall stem shows no repeat; each tree slides its own way.
+	if (bark_scan_strength > 0.0) {
+		vec2 suv = base_uv * bark_scan_scale + bark_scan_off;
+		vec3 s1 = texture(bark_scan, suv).rgb;
+		vec3 s2 = texture(bark_scan, suv * 0.81 + vec2(0.43, 0.61)).rgb;
+		float smx = smoothstep(0.3, 0.7, texture(lichen_map, base_uv * vec2(0.31, 0.07) + vec2(0.52, 0.18)).g);
+		vec3 sd = mix(s1, s2, smx);
+		ALBEDO *= mix(1.0, sd.r * 2.0, bark_scan_strength);
+		bark_scan_slope = (sd.gb - 0.5) * 2.0 * bark_scan_strength;
+	}
 	float bark_bare = 0.0;
 	vec3 bark_wood_n = vec3(0.5, 0.5, 1.0);
 	{
@@ -22427,6 +22729,19 @@ Ref<Material> TreeGenerator::_lichen_material(const Ref<StandardMaterial3D> &p_b
 				char_h0 = 0.5 * blk + 0.3 * dome;
 				char_h1 = 0.5 * blk1 + 0.3 * (1.0 - 2.0 * ex1) * (1.0 - 2.0 * ey);
 			}
+			// Scanned wood detail (TreeGenerator.load_scan_set [wood]): the scan's fibres and checks over the drawn ones,
+			// as a ratio to its local mean, so the weathering colours stay; not on char.
+			vec2 wood_scan_slope = vec2(0.0);
+			if (wood_scan_strength > 0.0) {
+				vec2 wuv = wood_uv * wood_scan_scale + bark_scan_off.yx;
+				vec3 w1 = texture(wood_scan, wuv).rgb;
+				vec3 w2 = texture(wood_scan, wuv * 0.83 + vec2(0.29, 0.71)).rgb;
+				float wmx = smoothstep(0.3, 0.7, texture(lichen_map, wood_uv * vec2(0.27, 0.06) + vec2(0.11, 0.83)).g);
+				vec3 wd = mix(w1, w2, wmx);
+				float wk = wood_scan_strength * (1.0 - char_w);
+				wood *= mix(1.0, wd.r * 2.0, wk);
+				wood_scan_slope = (wd.gb - 0.5) * 2.0 * wk;
+			}
 			float rim = smoothstep(0.25, 0.47, bare_field) * (1.0 - bark_bare);
 			ALBEDO *= 1.0 - 0.45 * rim;
 			ALBEDO = mix(ALBEDO, wood, bark_bare);
@@ -22444,6 +22759,7 @@ Ref<Material> TreeGenerator::_lichen_material(const Ref<StandardMaterial3D> &p_b
 			// The fibres' own ridges from their analytic slope (they repeat faster than du).
 			float fib_n = 0.1 * cos(6.2832 * fx) * (1.0 - smoothstep(0.25, 0.6, fw));
 			bark_wood_n = vec3(clamp(0.5 - (h1 - h0) * 4.0 - fib_n, 0.0, 1.0), 0.5, 1.0);
+			bark_wood_n.xy = clamp(bark_wood_n.xy + 0.5 * wood_scan_slope, 0.0, 1.0);
 		}
 	}
 	{
@@ -22496,7 +22812,9 @@ Ref<Material> TreeGenerator::_lichen_material(const Ref<StandardMaterial3D> &p_b
 	const String nanchor = "	NORMAL_MAP_DEPTH = normal_scale;\n";
 	const int na = code.find(nanchor);
 	if (na > ra) {
-		code = code.insert(na + nanchor.length(), "	NORMAL_MAP = mix(NORMAL_MAP, bark_wood_n, bark_bare * 0.85);\n");
+		// The scan's slope over the bark's normal map (partial derivatives add), before the wood under lost bark
+		// takes its own.
+		code = code.insert(na + nanchor.length(), "	NORMAL_MAP.xy = clamp(NORMAL_MAP.xy + 0.5 * bark_scan_slope, 0.0, 1.0);\n	NORMAL_MAP = mix(NORMAL_MAP, bark_wood_n, bark_bare * 0.85);\n");
 	}
 	code = code.insert(ra + anchor.length(), body);
 	{
@@ -22514,7 +22832,7 @@ Ref<Material> TreeGenerator::_lichen_material(const Ref<StandardMaterial3D> &p_b
 		}
 		if (end > 0) {
 			code = code.insert(end, "	EMISSION += fire_bark_emit;\n");
-			code = code.insert(code.find("{", fr) + 1, "\n	vec3 fire_bark_emit = vec3(0.0);");
+			code = code.insert(code.find("{", fr) + 1, "\n	vec3 fire_bark_emit = vec3(0.0);\n	vec2 bark_scan_slope = vec2(0.0);");
 		}
 	}
 	const String uniforms = R"(uniform sampler2D lichen_map : hint_default_white, filter_linear_mipmap, repeat_enable;
@@ -22526,11 +22844,17 @@ uniform float lichen_orange_share = 0.0;
 uniform vec3 bark_wood_color : source_color = vec3(0.55, 0.53, 0.49);
 uniform float bark_stripped_age = -1.0;
 uniform float wood_spiral = 0.0;
+uniform sampler2D bark_scan : hint_default_white, filter_linear_mipmap_anisotropic, repeat_enable;
+uniform vec2 bark_scan_scale = vec2(1.0);
+uniform float bark_scan_strength = 0.0;
+uniform sampler2D wood_scan : hint_default_white, filter_linear_mipmap_anisotropic, repeat_enable;
+uniform vec2 wood_scan_scale = vec2(1.0);
+uniform float wood_scan_strength = 0.0;
 )";
 	// The tree's foot for the fire's heights, from the vertex stage: in the fragment stage MODEL_MATRIX is the node's,
 	// without a MultiMesh instance's own transform (every tree of a field read the field's origin).
-	code = code.insert(vx + String("void vertex() {").length(), "\n	bark_tree_y = MODEL_MATRIX[3].y;");
-	code = code.insert(vx, uniforms + "varying float bark_tree_y;\n" + VegetationFire::SHADER_CODE + "\n");
+	code = code.insert(vx + String("void vertex() {").length(), "\n	bark_tree_y = MODEL_MATRIX[3].y;\n	bark_scan_off = fract(MODEL_MATRIX[3].xz * vec2(0.1373, 0.0917));");
+	code = code.insert(vx, uniforms + "varying float bark_tree_y;\nvarying vec2 bark_scan_off;\n" + VegetationFire::SHADER_CODE + "\n");
 	Ref<Shader> sh;
 	sh.instantiate();
 	sh->set_code(code);
@@ -22559,6 +22883,20 @@ uniform float wood_spiral = 0.0;
 	}
 	const LichenAffinity &la = LICHEN_AFFINITY[preset];
 	m->set_shader_parameter("lichen_map", _lichen_texture());
+	if (bark_scan_strength[preset] > 0.0f && bark_scan_detail[preset].is_valid()) {
+		// The bark's UV runs in tiles of _bark_tile() metres; the scan's tile is its real size.
+		const float bt = _bark_tile();
+		m->set_shader_parameter("bark_scan", bark_scan_detail[preset]);
+		m->set_shader_parameter("bark_scan_scale", Vector2(bt / MAX(bark_scan_tile[preset].x, 0.01f), bt / MAX(bark_scan_tile[preset].y, 0.01f)));
+		m->set_shader_parameter("bark_scan_strength", bark_scan_strength[preset]);
+	}
+	if (wood_scan_strength > 0.0f && wood_scan_detail.is_valid()) {
+		// wood_uv runs in the bark's tiles too.
+		const float bt = _bark_tile();
+		m->set_shader_parameter("wood_scan", wood_scan_detail);
+		m->set_shader_parameter("wood_scan_scale", Vector2(bt / MAX(wood_scan_tile.x, 0.01f), bt / MAX(wood_scan_tile.y, 0.01f)));
+		m->set_shader_parameter("wood_scan_strength", wood_scan_strength);
+	}
 	m->set_shader_parameter("lichen_leafy_share", la.leafy);
 	// Standing dead wood weathers silver-grey in sun and rain; rotting and on the ground it browns.
 	// Kelo stays silver lying down too: resin-hard heartwood weathers and does not rot for centuries (Niemela et al. 2002).
@@ -22736,7 +23074,7 @@ vec3 plant_wind(vec3 wp, float h) {
 		}
 		wind += l + "\n";
 	}
-	const String uniforms = "uniform float flutter_amount = 1.0;\nuniform float flutter_size = 0.1;\n";
+	const String uniforms = "uniform float flutter_amount = 1.0;\nuniform float flutter_size = 0.1;\nuniform float leaf_cols = 1.0;\n";
 	const String body = R"(
 	// The crown's shade of the sky (TreeGenerator._crown_occlusion, trees.md 5bl): CUSTOM0.r.
 	crown_occ = CUSTOM0.r * crown_occlusion_on;
@@ -22764,7 +23102,12 @@ vec3 plant_wind(vec3 wp, float h) {
 		if (fa > 0.0) {
 			float fph = fract(dot(COLOR.rgb, vec3(91.37, 47.13, 13.71))) * 6.2831853;
 			float fq = 5.0 + 4.0 * fract(fph * 3.17) + 0.25 * fs;
+			// u across the blade; on a scanned leaf atlas (leaf_cols columns, a 3% gutter each side) from its column.
 			float fx = UV.x - 0.5;
+			if (leaf_cols > 1.5) {
+				float fc = UV.x * leaf_cols;
+				fx = (fc - floor(fc) - 0.03) / 0.94 - 0.5;
+			}
 			float ft = UV.y;
 			VERTEX += NORMAL * (flutter_size * fa * (0.07 * ft * ft * sin(TIME * fq + fph) + 0.3 * fx * ft * sin(TIME * fq * 1.31 + fph * 2.3)));
 		}
@@ -22986,6 +23329,9 @@ float fire_age_years(vec2 xz) {
 	const bool poplar = preset == PRESET_ASPEN || preset == PRESET_BLACK_POPLAR;
 	m->set_shader_parameter("flutter_amount", leaf_flutter * (poplar ? 2.5f : 1.0f));
 	m->set_shader_parameter("flutter_size", p_leaf_size);
+	if (preset >= 0 && preset < PRESET_MAX && leaf_scan_cols[preset] > 1 && leaf_scan_composite[preset].is_valid() && p_base->get_texture(BaseMaterial3D::TEXTURE_ALBEDO) == leaf_scan_composite[preset]) {
+		m->set_shader_parameter("leaf_cols", float(leaf_scan_cols[preset]));
+	}
 	m->set_shader_parameter("leaf_underside", leaf_underside);
 	m->set_shader_parameter("fire_crown_q", Vector4(fire_crown[0], fire_crown[1], fire_crown[2], fire_crown[3]));
 	m->set_shader_parameter("fire_crown_top", fire_crown[4]);
@@ -28211,6 +28557,7 @@ void TreeGenerator::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_limb_breakage", "breakage"), &TreeGenerator::set_limb_breakage);
 	ClassDB::bind_method(D_METHOD("get_limb_breakage"), &TreeGenerator::get_limb_breakage);
 	ClassDB::bind_static_method("TreeGenerator", D_METHOD("get_leaf_form", "preset"), &TreeGenerator::get_leaf_form);
+	ClassDB::bind_static_method("TreeGenerator", D_METHOD("load_scan_set", "dir", "max_size"), &TreeGenerator::load_scan_set, DEFVAL(2048));
 	ClassDB::bind_static_method("TreeGenerator", D_METHOD("get_leaf_season", "preset", "season"), &TreeGenerator::get_leaf_season);
 	ClassDB::bind_static_method("TreeGenerator", D_METHOD("make_leaf_mesh", "preset", "season", "variant"), &TreeGenerator::make_leaf_mesh, DEFVAL(Dictionary()), DEFVAL(0));
 	ClassDB::bind_static_method("TreeGenerator", D_METHOD("get_leaf_physics", "preset"), &TreeGenerator::get_leaf_physics);

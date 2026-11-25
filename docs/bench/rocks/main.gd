@@ -31,6 +31,7 @@ extends Node3D
 #   --type=granite|limestone|sandstone|basalt|slate   the world's rock (default granite; soft beds limestone)
 #   --stand-ins           with --world: the old grey spheres at the rockfall blocks instead of the field (before shots)
 #   --no-rocks            with --world: no rocks at all
+#   --burn=years[,r]      with --world: a burn scar that old, r m round (6), 2 m beyond the spot (the terrain's char overlay)
 #   --cell=m              with --world: the generator's cell size (8; 4 for close shore and cliff shots)
 #   --form=stack|arch     with --view=coast: frame the biggest stack or arch; --form=ledge with --view=cliff: the ledge slabs; --form=ledge-run: their longest run along a lip; --form=pavement|fin|hoodoo|pothole|goblin|cave_mouth with --view=landform
 #   --seaward [--side=f --cam-height=m --look-height=m] with --view=coast: from the land side, looking out to sea
@@ -231,6 +232,10 @@ func _ready() -> void:
 # Real ground scans (Poly Haven CC0, art repository terrain/layers, fetched by docs/bench/landscape/fetch_art.sh into
 # docs/bench/landscape/art/terrain_layers). Each layer keeps the geology's colour (detail_only: the scan adds detail
 # only, to colour and roughness) and tiles at the scan's real size. Loaded from the files directly (the folder is .gdignore'd, no import step).
+# The scan set's folder (the stones' and caves' sections in it too: RockField3D and CaveNetwork3D load_scan_set).
+func _rock_scan_dir() -> String:
+	return ProjectSettings.globalize_path("res://").path_join("../landscape/art/terrain_layers")
+
 func _apply_ground_scans(tm: TerrainMaterial3D, dir: String, only := "1") -> int:
 	# The whole scan set (layers and overlay scans) from the art folder's scans.cfg (TerrainMaterial3D.load_scan_set).
 	# --ground-scans=rock,scree: scans on those slots only; --overlay-scans=0: the five layers' scans only (A/B);
@@ -621,6 +626,8 @@ func _world() -> void:
 		rocks.generator = rocks.get_path_to(gen)
 		rocks.follow_target = rocks.get_path_to(focus)
 		rocks.ground_material = tm # the stones' feet blend into these layers
+		if args.get("stone-scans", "1") != "0" and not args.has("test"): # --stone-scans=0: no scan detail on stones and caves (A/B)
+			print("stone scans: %d" % rocks.load_scan_set(_rock_scan_dir()))
 		# Real scree stones out to the layer's radius: the ground shader keeps only their bed there (--shader-scree
 		# for the old parallax blocks under them, a before frame).
 		if not args.has("shader-scree"):
@@ -957,6 +964,17 @@ func _world() -> void:
 	spot.y = gen.get_height(spot)
 	focus.global_position = spot
 	spot_pos = spot
+	if args.has("burn"):
+		# --burn=years[,r]: a burn scar that old (WorldBurnScar3D, r m round, 6) centred 2 m beyond the spot: the
+		# terrain's burn overlay (Landscape3D's stand map, TerrainMaterial3D's char) over the soil.
+		var bp: PackedStringArray = str(args["burn"]).split(",")
+		var scar := WorldBurnScar3D.new()
+		scar.age_years = float(bp[0])
+		var br := float(bp[1]) if bp.size() > 1 else 6.0
+		scar.size = Vector2(br, br) * 2.0
+		add_child(scar)
+		scar.global_position = spot + Vector3(0, 0, 2)
+		print("burn scar %.1f years, %.0f m across, burn age at the spot %.2f" % [scar.age_years, br * 2.0, WorldContracts.get_fire().burn_age_at(spot)])
 	if args.has("stand-test"):
 		var stand: WorldStand = WorldContracts.get_stand()
 		var at := spot
@@ -1247,6 +1265,8 @@ func _world() -> void:
 func _caves(cam: Camera3D) -> void:
 	var net := CaveNetwork3D.new()
 	net.name = "Caves"
+	if args.get("stone-scans", "1") != "0":
+		print("cave scans: %d" % net.load_scan_set(_rock_scan_dir()))
 	if args.has("scallops"):
 		net.scallops = float(args["scallops"]) # --scallops=k: the walls' dish hollows (0 off, a before frame)
 	add_child(net)
@@ -2611,6 +2631,8 @@ func _test() -> void:
 	# and joins its key points; the same seed gives the same cave.
 	var net := CaveNetwork3D.new()
 	net.rimstone_water = false # the pools' live water costs frames and checks nothing here
+	if args.get("stone-scans", "1") != "0":
+		net.load_scan_set(_rock_scan_dir())
 	add_child(net)
 	net.generator = net.get_path_to(gen)
 	net.rock_field = net.get_path_to(rocks)

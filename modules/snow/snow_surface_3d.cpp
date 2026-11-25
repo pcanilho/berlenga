@@ -105,6 +105,10 @@ uniform float coarse_step = 0.5;
 uniform float micro_relief = 1.0;
 uniform vec3 tint = vec3(1.0);
 global uniform bool snow_exact_glints;
+// The snow scan's grain and crust (TerrainMaterial3D's snow_scan): normal, roughness, (1 / tile, strength, roughness mean, on).
+global uniform sampler2D snow_grain_normal : hint_normal, filter_linear_mipmap_anisotropic, repeat_enable;
+global uniform sampler2D snow_grain_roughness : hint_default_white, filter_linear_mipmap_anisotropic, repeat_enable;
+global uniform vec4 snow_grain_params;
 
 varying vec3 w_pos;
 varying vec3 w_n;
@@ -124,8 +128,12 @@ vec4 snow_pack(vec2 p) {
 	}
 	vec4 v = textureLod(snow_tex, uv, 0.0);
 	// Under a roof the pack lies on the roof (the cover's catch map): none on the ground here.
-	if (has_catch && textureLod(catch_tex, uv, 0.0).r > snow_ground(p) + 0.5) {
-		v.r = 0.0;
+	if (has_catch) {
+		vec4 c = textureLod(catch_tex, uv, 0.0);
+		// Alpha 100 up: a roof, overhang or water surface (elsewhere the catch height is the ground's cell mean).
+		if (c.a >= 100.0 && c.r > snow_ground(p) + 0.5) {
+			v.r = 0.0;
+		}
 	}
 	return v;
 }
@@ -529,6 +537,30 @@ void fragment() {
 	ALBEDO *= mix(vec3(1.0), vec3(0.86, 0.85, 0.83), packed) * mix(vec3(1.0), vec3(0.55, 0.6, 0.66), polish);
 	ROUGHNESS = mix(mix(clamp(mix(0.7, 0.35, wet) - 0.15 * compact, 0.05, 1.0), 0.08, slush), 0.02, pool);
 	ROUGHNESS = mix(mix(ROUGHNESS, 0.45, packed), 0.04, polish);
+	// The pack's grain and crust from the snow scan, the one the ground's snow draws (docs/ideas/scan-textures.md):
+	// its normal over the surface's and its roughness as a ratio round the pack's. Two samples, one turned 37
+	// degrees and shifted, blended by a 3 m noise, so the 2 m tile does not repeat. Trodden, slushy, pooled or
+	// glazed snow has lost that grain, and walls keep their strata's own.
+	if (snow_grain_params.w > 0.5) {
+		float g_pix = 2.0 / (abs(PROJECTION_MATRIX[1][1]) * VIEWPORT_SIZE.y);
+		float g_fp = (PROJECTION_MATRIX[3][3] != 0.0 ? g_pix : distance(w_pos, INV_VIEW_MATRIX[3].xyz) * g_pix) * snow_grain_params.x;
+		mat2 g_rot = mat2(vec2(0.799, 0.602), vec2(-0.602, 0.799));
+		vec2 g_u0 = p * snow_grain_params.x;
+		vec2 g_u1 = g_rot * g_u0 + vec2(0.37, 0.61);
+		vec2 g_dx = vec2(g_fp, 0.0);
+		vec2 g_dy = vec2(0.0, g_fp / max(abs(dot(normalize(w_pos - INV_VIEW_MATRIX[3].xyz), nf)), 0.2));
+		float g_k = smoothstep(0.3, 0.7, snow_vnoise(vec3(p / 3.0, 7.0)));
+		vec2 g_n0 = textureGrad(snow_grain_normal, g_u0, g_dx, g_dy).xy * 2.0 - 1.0;
+		vec2 g_n1 = transpose(g_rot) * (textureGrad(snow_grain_normal, g_u1, g_rot * g_dx, g_rot * g_dy).xy * 2.0 - 1.0);
+		vec2 g_n = mix(g_n0, g_n1, g_k) * snow_grain_params.y;
+		float g_keep = (1.0 - compact) * (1.0 - slush) * (1.0 - pool) * (1.0 - polish) * smoothstep(0.35, 0.65, nf.y);
+		nf = normalize(nf + vec3(g_n.x, 0.0, g_n.y) * g_keep);
+		tn = vec3(dot(nf, normalize(w_t)), dot(nf, normalize(w_b)), dot(nf, normalize(w_n)));
+		if (snow_grain_params.z > 0.0) {
+			float g_r = mix(textureGrad(snow_grain_roughness, g_u0, g_dx, g_dy).g, textureGrad(snow_grain_roughness, g_u1, g_rot * g_dx, g_rot * g_dy).g, g_k) / snow_grain_params.z;
+			ROUGHNESS = clamp(ROUGHNESS * mix(1.0, g_r, g_keep * (1.0 - wet)), 0.02, 1.0);
+		}
+	}
 	// The pack's layers in the walls of ruts and prints (follow-up 53): a steep face at depth d under the
 	// untouched surface shows the band the cover's layers put there, as a snow pit's wall is read (Fierz et al.
 	// 2009; SWAG): by colour, by grain and by relief. New snow bright, fine and soft; wind slab chalky and smooth;
@@ -649,13 +681,13 @@ void fragment() {
 	// them away.
 	float pix = 2.0 / (abs(PROJECTION_MATRIX[1][1]) * VIEWPORT_SIZE.y);
 	float fp = PROJECTION_MATRIX[3][3] != 0.0 ? pix : distance(w_pos, INV_VIEW_MATRIX[3].xyz) * pix;
-	// Surface hoar (mm) from the cover's catch map alpha (1 + mm / 10); trodden snow has none left.
+	// Surface hoar (mm) from the cover's catch map alpha (1 + mm / 10, plus 100 under shelter); trodden snow has none left.
 	float hoar = 0.0;
 	if (has_catch) {
 		vec2 huv = (p - snow_rect.xy) / max(snow_rect.zw, vec2(1e-4));
 		vec4 hc = snow_inside(huv) ? textureLod(catch_tex, huv, 0.0) : vec4(0.0);
 		// Under a roof the hoar is on the roof, not here.
-		hoar = hc.r > snow_ground(p) + 0.5 ? 0.0 : max(hc.a - 1.0, 0.0) * 10.0 * (1.0 - compact);
+		hoar = (hc.a >= 100.0 && hc.r > snow_ground(p) + 0.5) ? 0.0 : max(mod(hc.a, 100.0) - 1.0, 0.0) * 10.0 * (1.0 - compact);
 	}
 	if (IN_PATH_TRACER && snow_exact_glints) {
 		// Under the path tracer: the ice specular lies on the facet of the grain hit, for every grain (the
@@ -1828,9 +1860,9 @@ void SnowSurface3D::_update_collision() {
 	const float sp = _texel() * 2.0f;
 	const int cells = MAX(int(Math::round(collision_extent / sp)), 2);
 	const int w = cells + 1;
-	PackedFloat32Array heights;
+	Vector<real_t> heights;
 	heights.resize(w * w);
-	float *hw = heights.ptrw();
+	real_t *hw = heights.ptrw();
 	for (int z = 0; z < w; z++) {
 		for (int x = 0; x < w; x++) {
 			const float wx = mesh_center.x + (x - cells * 0.5f) * sp;
@@ -2432,9 +2464,9 @@ void SnowSurface3D::GPUSink::stamp(const GroundDeformField::Columns &p_columns, 
 	float seed_f;
 	memcpy(&seed_f, &seed, 4);
 	const float v[12] = {
-		p_position.x, p_position.y, p_position.z, p_radius,
-		p_half.x, p_half.y, p_yaw, p_bottom,
-		p_sink, p_contact_tolerance, p_velocity.x, p_velocity.y
+		float(p_position.x), float(p_position.y), float(p_position.z), float(p_radius),
+		float(p_half.x), float(p_half.y), float(p_yaw), float(p_bottom),
+		float(p_sink), float(p_contact_tolerance), float(p_velocity.x), float(p_velocity.y)
 	};
 	const float d[4] = { crack, float(flags), seed_f, 0.0f };
 	surface->gpu_host.add_stamp(f, v, d, x0, x1, z0, z1);
@@ -2637,7 +2669,16 @@ void SnowSurface3D::_gpu_take() {
 				collision_shape->set_map_width(w);
 				collision_shape->set_map_depth(w);
 			}
+#ifdef REAL_T_IS_DOUBLE
+			Vector<real_t> heights_r;
+			heights_r.resize(heights.size());
+			for (int i = 0; i < heights.size(); i++) {
+				heights_r.write[i] = heights[i];
+			}
+			collision_shape->set_map_data(heights_r);
+#else
 			collision_shape->set_map_data(heights);
+#endif
 			collision_dirty = false;
 		}
 	}

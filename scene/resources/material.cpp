@@ -651,6 +651,11 @@ void BaseMaterial3D::init_shaders() {
 		exact["type"] = "bool";
 		exact["value"] = true;
 		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/snow_exact_glints", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), exact);
+		// The snowpack's grain scan (TerrainMaterial3D's snow_scan publishes it): normal, roughness and
+		// (1 / tile, normal strength, roughness mean, on); w 0 = none, the snow keeps its own smooth surface.
+		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/snow_grain_normal", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), state_map);
+		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/snow_grain_roughness", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), state_map);
+		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/snow_grain_params", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), map_rect);
 		// Ground deformation reads GroundSurface3D's (rect width 0 = none: nothing lowered, nothing moved).
 		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/ground_deform_map", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), state_map);
 		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/ground_deform_rect", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), map_rect);
@@ -1149,7 +1154,9 @@ vec4 snow_cover_at(vec3 p_world_pos) {
 			vec4 c = textureLod(snow_catch_map, clamp(nuv, half_texel, 1.0 - half_texel), 0.0);
 			if (c.a > 0.5) {
 				float dy = p_world_pos.y - c.r;
-				under = (1.0 - smoothstep(-0.8, -0.4, dy)) * nw;
+				// Only under a roof, an overhang or water (alpha 100 up): elsewhere the cell's surface is the ground's
+				// mean, and the drawn ground's hollows lie under it.
+				under = (1.0 - smoothstep(-0.8, -0.4, dy)) * step(100.0, c.a) * nw;
 				crown = smoothstep(1.5, 3.0, dy) * step(0.05, c.b) * nw;
 				crown_load = c.g;
 			}
@@ -1213,11 +1220,13 @@ float snow_hoar_at(vec3 p_world_pos) {
 	}
 	vec2 half_texel = 0.5 / vec2(textureSize(snow_map, 0));
 	vec4 c = textureLod(snow_catch_map, clamp(nuv, half_texel, 1.0 - half_texel), 0.0);
-	if (c.a <= 1.0) {
+	float hoar = mod(c.a, 100.0) - 1.0; // alpha: 1 + cm of hoar, plus 100 under shelter
+	if (hoar <= 0.0) {
 		return 0.0;
 	}
 	float dy = p_world_pos.y - c.r;
-	return (c.a - 1.0) * 10.0 * smoothstep(-0.8, -0.4, dy) * (1.0 - smoothstep(1.0, 1.5, dy));
+	float below = c.a >= 100.0 ? smoothstep(-0.8, -0.4, dy) : 1.0;
+	return hoar * 10.0 * below * (1.0 - smoothstep(1.0, 1.5, dy));
 }
 )";
 	} else {
@@ -6376,6 +6385,24 @@ float ground_deform_exposed(vec3 p_world) {
 	float turned = smoothstep(0.03, 0.15, abs(1.0 - d.b));
 	float water = d.a < 0.0 ? 1.0 : smoothstep(5e-4, 3e-3, d.g);
 	return max(max(relief, turned), water);
+}
+// Where the deformed ground is mud, 0 to 1 (TerrainMaterial3D's mud_scan slot; docs/ideas/scan-textures.md): ruts,
+// digs and prints pressed a centimetre or more and the rims and laid mud they leave, turned and mud-filmed ground, but
+// only where the worked soil is wet mud (a dry rut stays crumbly soil): the gloss the patch gives freshly worked wet
+// ground (the map's A: mud's 0.35 to 0.7 of the roughness, moist soil's 0.6, dry soil none), or the pore water's
+// saturation past half; wallows of muddy water and fresh mud deposits at any wetness. A rut the sward has grown back over
+// is ground again. The scan is detail only: the mud's own wetness, water and tint stay the patch's.
+float ground_deform_mud(vec3 p_world) {
+	if (!ground_deform_patch || ground_deform_rect.z <= 0.0) {
+		return 0.0;
+	}
+	vec4 d = ground_deform_sample(p_world.xz);
+	float regrown = clamp((d.a - 1.0) / 0.02, 0.0, 1.0);
+	float worked = max(smoothstep(0.008, 0.03, abs(d.r)), smoothstep(0.03, 0.15, abs(1.0 - d.b))) * (1.0 - regrown);
+	float plastic = max(d.a >= 0.0 && d.a <= 1.0 ? 1.0 - smoothstep(0.7, 0.92, d.a) : 0.0, smoothstep(0.35, 0.55, ground_wet_at(p_world, vec3(0.0, 1.0, 0.0)).x));
+	float wallow = d.a < 0.0 ? smoothstep(0.0, 0.02, -d.a) : 0.0;
+	float laid = clamp(ground_deposit_state(p_world.xz).x, 0.0, 1.0);
+	return clamp(max(worked * plastic, max(wallow, laid)), 0.0, 1.0);
 }
 // The clay the standing water carries at a world position, kg/m3 (mud round 3; the map's A under muddy water).
 float ground_deform_water_mud(vec3 p_world) {

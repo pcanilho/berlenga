@@ -106,6 +106,12 @@
 #include "servers/rendering/rendering_device.h"
 #include "servers/rendering/rendering_server_default.h" // IWYU pragma: keep. RENDER_TIMESTAMP macro uses RSG.
 
+#include "core/os/os.h"
+
+#ifdef __GLIBC__
+#include <malloc.h>
+#endif
+
 using namespace RendererSceneRenderImplementation;
 
 // The transparent surfaces' own layer under Ray Reconstruction, freed with its
@@ -127,6 +133,21 @@ void RenderForwardClusteredPT::_render_scene(RenderDataRD *p_render_data, const 
 		rb_data = rb->get_custom_data(RB_SCOPE_FORWARD_CLUSTERED);
 	}
 	bool is_reflection_probe = p_render_data->reflection_probe.is_valid();
+
+#ifdef __GLIBC__
+	// A CPU device compiles its pipelines and keeps its GPU memory on the heap: the driver's shader compiles (path
+	// tracing hit groups, raster material pipelines on workers) free gigabytes that glibc keeps in its arenas, and the
+	// next compile or acceleration structure build adds to them. Hand the free pages back every few seconds.
+	static const bool trim_heap = RD::get_singleton()->get_device_type() == RenderingDeviceEnums::DEVICE_TYPE_CPU;
+	if (trim_heap) {
+		static uint64_t last_trim_usec = 0;
+		const uint64_t now_usec = OS::get_singleton()->get_ticks_usec();
+		if (now_usec - last_trim_usec > 5000000) {
+			last_trim_usec = now_usec;
+			malloc_trim(0);
+		}
+	}
+#endif
 
 	bool use_rt = !is_reflection_probe && pathtracing_is_used(p_render_data->environment, p_render_data->viewport) && _setup_rt();
 

@@ -542,9 +542,38 @@ private:
 		PackedInt32Array indices;
 	};
 	static LocalVector<ClimberLeafShape> plant_climber_shapes[CLIMBER_MAX + 1];
+	// Per preset: the scan's detail (r: luminance over its local mean, x0.5; gb: normal slope over the local mean
+	// slope, +0.5), the metres one tile covers, and how strongly it applies (0: no scan).
+	static Ref<Texture2D> bark_scan_detail[PRESET_MAX];
+	static Vector2 bark_scan_tile[PRESET_MAX];
+	static float bark_scan_strength[PRESET_MAX];
+	static Ref<Texture2D> wood_scan_detail;
+	static Vector2 wood_scan_tile;
+	static float wood_scan_strength;
+	// Per preset: scanned leaves unwrapped into the blade's UV frame (docs/bench/trees/leaf_atlas.py), one leaf a
+	// column, multiplied over the procedural venation (_leaf_albedo); and the number of columns.
+	static Ref<Image> leaf_scan_image[PRESET_MAX];
+	static Ref<Texture2D> leaf_scan_composite[PRESET_MAX]; // The scan times the venation (_leaf_albedo).
+	static int leaf_scan_cols[PRESET_MAX];
+	static float leaf_scan_strength[PRESET_MAX];
 
 public:
+	// Scanned bark and wood detail (docs/ideas/scan-textures.md): reads scans.cfg in p_dir (art repository
+	// trees/scans), one section per bark scan naming the presets it serves, and [wood] for the wood under lost bark;
+	// returns the presets given a bark scan, plus one for the wood; sections with leaf_atlas (and cols) give the presets
+	// scanned leaves and count one per preset. Call before generating.
+	static int load_scan_set(const String &p_dir, int p_max_size = 2048);
 	static void free_climber_leaves() {
+		for (Ref<Texture2D> &t : bark_scan_detail) {
+			t.unref();
+		}
+		wood_scan_detail.unref();
+		for (Ref<Image> &t : leaf_scan_image) {
+			t.unref();
+		}
+		for (Ref<Texture2D> &t : leaf_scan_composite) {
+			t.unref();
+		}
 		for (Array &a : plant_climber_cache) {
 			a.clear();
 		}
@@ -1033,6 +1062,11 @@ private:
 	uint32_t compound_slot = 0;
 	Ref<Texture2D> leaf_texture;
 	Ref<Texture2D> _leaf_texture();
+	static Ref<Image> _leaf_venation_image(); // _leaf_texture's venation factor, without mipmaps.
+	// The leaves' albedo: the preset's scanned leaf atlas, or the procedural venation.
+	Ref<Texture2D> _leaf_albedo();
+	// The atlas column the next blades take (_add_leaf sets it per leaf; -1: the whole texture).
+	int blade_col = -1;
 	Ref<Texture2D> leaflet_texture;
 	Ref<Texture2D> leaflet_entire_texture;
 	Ref<Texture2D> _leaflet_texture();

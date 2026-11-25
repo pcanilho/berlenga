@@ -31,6 +31,7 @@
 
 #pragma once
 
+#include "rock_scans.h"
 #include "core/math/random_pcg.h"
 #include "core/templates/hash_map.h"
 #include "core/templates/hash_set.h"
@@ -243,6 +244,8 @@ private:
 	Ref<Material> cave_ground_material; // ground_material without the ground deform skirt (_cave_ground_material)
 	Ref<Material> _cave_ground_material();
 	Ref<ShaderMaterial> default_wall;
+	RockScan wall_scan; // scans.cfg [cave] (load_scan_set): detail on the walls
+	void _apply_wall_scan();
 	uint64_t last_mesh_usec = 0;
 	const TerrainGenerator3D *mesh_gen = nullptr; // resolved on the main thread for the mesh workers
 
@@ -382,6 +385,7 @@ public:
 	bool is_streaming() const { return stream_job != nullptr; }
 	bool has_collision() const { return collision; }
 	void set_wall_material(const Ref<Material> &p_material) { wall_material = p_material; }
+	int load_scan_set(const String &p_dir);
 	Ref<Material> get_wall_material() const { return wall_material; }
 	void set_ground_material(const Ref<Material> &p_material) {
 		ground_material = p_material;

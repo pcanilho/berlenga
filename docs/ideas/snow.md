@@ -2156,6 +2156,15 @@ Pomeroy 1998, about 80 kg/m3 at -4 C), and `--snow-fall-density` still overrides
 fall and the weather lets only part of the rate through, so a fall short of CM at the camera is topped up by
 further falls scaled to the shortfall (up to three), and the frame shows about CM of fresh snow.
 
+Scanned grain (25 Nov, the CC0 texture audit, docs/ideas/scan-textures.md): the pack's surface had only the model's
+own relief (cups, sastrugi, ripples, strata) and a smooth normal between them, so close up fresh snow read as
+plaster. Poly Haven's Snow 02 (Rob Tuytel, CC0, 2 m) now gives its grain and crust, normal and roughness only (the
+colour, sparkle and wetness stay the model's). It is the terrain material's `snow_scan` overlay slot, loaded from
+scans.cfg's [snow] like every scan, hex tiled, drawn over the snow by its share and the roughness ratio held back by
+wetness. The terrain material publishes it as the `snow_grain_*` shader globals, and SnowSurface3D reads those (two
+samples turned 37 degrees and blended by a 3 m noise; trodden, slushy, pooled and glazed snow and the strata walls
+keep none). The source normal map leans about 9 degrees on average, so it is recentred before it goes in.
+
 ## Next round (proposed 19 Nov 2026, round 3): powder cloud, triggers, sharper flow
 
 **Triggers from people and vehicles.**

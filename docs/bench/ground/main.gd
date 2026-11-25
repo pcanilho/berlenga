@@ -47,7 +47,8 @@ extends Node3D
 #                         frame mid-throw, the clods in the air
 #   --test=splash       a 4x4 through rut water past Froude 1 (mud stage 4c): sheets thrown, landed back, volume kept
 #   --test=ruts         kept ruts (mud round 3): a print back after the field drives 600 m off and in a new node
-#   --meadow            --view=ruts: the patch drawn with a TerrainMaterial3D under a full sward (its grass globals set by hand)
+#   --meadow            --view=ruts: the patch drawn with a TerrainMaterial3D under a full sward (its grass globals set by hand);
+#                         --scans=dir its soil and mud scans (scans.cfg), --scans-mud=0 without the mud's
 #   --test=burnscar    rain on a burn scar: water-repellent burnt soil (WorldFire) sheds most of the rain as runoff
 #   --test=runoff       runoff channels: a falling tide's soaked beach seeps, the water cuts rills down the face
 #                         and lays the sand at the waterline; volume kept; cost of the step
@@ -638,6 +639,12 @@ func _meadow(p_surface: GroundSurface3D) -> void:
 	soil.roughness = 0.9
 	tm.soil_layer = soil
 	tm.set_shader_parameter("ground_deform_patch", true)
+	# --scans=dir: the soil layer's and the mud overlay's ground scans from a scan set (scans.cfg; the landscape bench's
+	# art/terrain_layers, fetch_art.sh), so the mud's scan shows on the ruts (--scans-mud=0: the soil's only, A/B).
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--scans="):
+			var slots := PackedStringArray(["soil"]) if OS.get_cmdline_user_args().has("--scans-mud=0") else PackedStringArray(["soil", "mud"])
+			print("ground scans: %d slots" % tm.load_scan_set(a.substr(8), slots, ""))
 	p_surface.material = tm
 	RenderingServer.global_shader_parameter_set("grass_ground_color", Color(0.16, 0.28, 0.07, 1.0))
 	RenderingServer.global_shader_parameter_set("grass_ground_params", Vector4(0.0, 0.0, 0.0, 0.0))

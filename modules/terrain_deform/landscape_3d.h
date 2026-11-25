@@ -153,15 +153,26 @@ class Landscape3D : public Node3D, public WorldReliefProvider {
 	bool have_camera = false;
 
 	// The stand's ground map (WorldStand worn trails and boar rooting) for TerrainMaterial3D: globals
-	// terrain_stand_map (RG8: r trail wear, g fresh rooting) and terrain_stand_rect, a STAND_SIZE square round the camera.
+	// terrain_stand_map (RGBA8: r trail wear, g fresh rooting, b burn scars) and terrain_stand_rect, a STAND_SIZE
+	// square round the camera.
 	static constexpr int STAND_RES = 512;
+	static constexpr float BURN_YEARS = 10.0f; // the burn channel's span: 1 just burnt, near 0 this many years on
 	static constexpr real_t STAND_SIZE = 256.0;
 	Ref<ImageTexture> stand_texture;
 	Vector2 stand_origin = Vector2(1e30, 1e30);
 	uint64_t stand_generation = UINT64_MAX;
 	ObjectID stand_id;
 	bool stand_published = false;
+	LocalVector<uint8_t> stand_trail;
+	LocalVector<float> stand_rooting;
+	LocalVector<float> stand_burn; // years since it burnt (-1 never), every 2 m
+	uint64_t stand_burn_generation = UINT64_MAX;
+	bool stand_fire = false;
+	bool stand_any = false;
+	bool stand_any_burn = false;
 	void _update_stand_map(const Vector3 &p_camera);
+	bool _raster_stand(class WorldStand *st, const Vector2 &origin, real_t texel);
+	void _unpublish_stand_map();
 	// The relief contract (WorldReliefProvider, WorldGround.relief_at) and its GPU map for placers: terrain_relief_map
 	// (RG16F: r the drawn height over the heightfield in m, g the relief's share) over terrain_relief_rect, a
 	// RELIEF_SIZE square round the camera at RELIEF_RES texels.

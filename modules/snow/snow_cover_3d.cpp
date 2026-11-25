@@ -277,6 +277,7 @@ void SnowCover3D::_allocate() {
 	strata_image.unref();
 	strata_texture.unref();
 	cell_height_valid.resize(nn);
+	cell_shelter.resize(nn);
 	cell_ground.fill(0.0f);
 	cell_swe.fill(0.0f);
 	cell_liquid.fill(0.0f);
@@ -285,6 +286,7 @@ void SnowCover3D::_allocate() {
 	cell_runoff.fill(0.0f);
 	cell_sx.fill(0.0f);
 	cell_height_valid.fill(0);
+	cell_shelter.fill(0.0f);
 	cell_steep.resize(nn);
 	cell_steep.fill(0);
 	cell_water.resize(nn);
@@ -354,6 +356,7 @@ void SnowCover3D::_sample_heights(int p_from_row, int p_to_row, const Vector<uin
 			}
 			const Vector3 at((origin_cell.x + x + 0.5f) * cs, 0.0f, (origin_cell.y + z + 0.5f) * cs);
 			float h = _query_ground(q, at);
+			float shelter = 0.0f;
 			// With a height source, roofs and other overhead colliders on shelter_collision_mask catch the snow
 			// over the ground below them (the pack lies on top; materials under them stay bare).
 			// The cover stands for the whole cell only where it spans it: the centre and at least three of the four
@@ -379,10 +382,13 @@ void SnowCover3D::_sample_heights(int p_from_row, int p_to_row, const Vector<uin
 					}
 					if (spans >= 3) {
 						h = top;
+						shelter = 1.0f;
 					}
 				}
 			}
 			cell_height_valid.write[i] = Math::is_finite(h) ? 1 : 0;
+			// With no height source the ground is a downward ray on the collision mask: whatever it hit may be a roof.
+			cell_shelter.write[i] = q.has_source() ? shelter : 1.0f;
 			cell_ground.write[i] = Math::is_finite(h) ? h : q.y0;
 		}
 	}
@@ -421,7 +427,7 @@ void SnowCover3D::_shift(Vector2i p_new_origin) {
 	const Vector2i d = p_new_origin - origin_cell;
 	// The pack is history: cells that stay keep theirs. Cells entering the square take the world tier's pack
 	// where there is one, else the state of the nearest cell that was inside it.
-	Vector<float> *fields[] = { &cell_ground, &cell_swe, &cell_liquid, &cell_density, &cell_albedo, &cell_runoff, &cell_sx, &cell_new_depth, &cell_canopy, &cell_canopy_load, &cell_crust, &cell_crust_cycles, &cell_crust_burial, &cell_crust_wet, &cell_hoar, &cell_hoar_layer, &cell_hoar_burial, &cell_hoar_age, &cell_cups, &cell_seal, &cell_slush, &cell_packed, &cell_glaze, &cell_wind_slab, &cell_slab_cover, &cell_depth_hoar, &cell_sas_x, &cell_sas_z, &cell_sun_dose, &cell_climate_precip, &cell_water, &cell_ice, &cell_white_ice, &cell_lap, &cell_lap_deep, &cell_lap_cover, &cell_lap_in, &cell_salt_pack, &cell_salt_seen };
+	Vector<float> *fields[] = { &cell_ground, &cell_shelter, &cell_swe, &cell_liquid, &cell_density, &cell_albedo, &cell_runoff, &cell_sx, &cell_new_depth, &cell_canopy, &cell_canopy_load, &cell_crust, &cell_crust_cycles, &cell_crust_burial, &cell_crust_wet, &cell_hoar, &cell_hoar_layer, &cell_hoar_burial, &cell_hoar_age, &cell_cups, &cell_seal, &cell_slush, &cell_packed, &cell_glaze, &cell_wind_slab, &cell_slab_cover, &cell_depth_hoar, &cell_sas_x, &cell_sas_z, &cell_sun_dose, &cell_climate_precip, &cell_water, &cell_ice, &cell_white_ice, &cell_lap, &cell_lap_deep, &cell_lap_cover, &cell_lap_in, &cell_salt_pack, &cell_salt_seen };
 	Vector<uint8_t> fresh;
 	fresh.resize(n * n);
 	for (Vector<float> *f : fields) {
@@ -2121,6 +2127,9 @@ void SnowCover3D::_refresh_cell_inputs(int p_from_row, int p_to_row, const Vecto
 				wl[i] = depth > 0.05f ? tm->get_height_at(pos) + depth : -Math::INF;
 				if (g && wl[i] > g[i]) {
 					g[i] = wl[i];
+					if (cell_shelter.size() == nn) {
+						cell_shelter.write[i] = 1.0f;
+					}
 				}
 			}
 		}
@@ -2913,8 +2922,11 @@ void SnowCover3D::_build_upload() {
 			cw[i * 4 + 1] = cap > 0.0f ? CLAMP(cell_canopy_load[i] / cap, 0.0f, 1.0f) : 0.0f;
 			cw[i * 4 + 2] = closure;
 			// Alpha: 1 marks the map valid; above it, the surface hoar's crystals in centimetres (materials draw
-			// their glints larger, round 5).
-			cw[i * 4 + 3] = 1.0f + (cell_hoar.size() == n * n ? cell_hoar[i] * 0.1f : 0.0f);
+			// their glints larger, round 5); plus SNOW_CATCH_SHELTER where the surface is a roof, an overhang or water
+			// over the ground (only there does ground well under it stay bare: elsewhere the cell's ground is the
+			// heightfield's mean, and the drawn ground's hollows lie under it by its detail, a metre or more).
+			const bool sheltered = cell_shelter.size() == n * n && cell_shelter[i] > 0.5f;
+			cw[i * 4 + 3] = 1.0f + (cell_hoar.size() == n * n ? MIN(cell_hoar[i] * 0.1f, 90.0f) : 0.0f) + (sheltered ? 100.0f : 0.0f);
 		}
 		upload_catch = Image::create_from_data(n, n, false, Image::FORMAT_RGBAF, cb);
 	}
@@ -4721,7 +4733,7 @@ float SnowCover3D::get_albedo_at(Vector3 p_position) const {
 // melt water (Kane and Stein 1983: infiltration into frozen soil falls by orders of magnitude when its pores are
 // ice-filled). A thawed top soaks some up and lets it through.
 float SnowCover3D::ground_seal(Vector3 p_frost) {
-	return Math::smoothstep(0.0f, 0.05f, p_frost.y) * (1.0f - Math::smoothstep(0.0f, 0.03f, p_frost.x));
+	return Math::smoothstep(0.0f, 0.05f, float(p_frost.y)) * (1.0f - Math::smoothstep(0.0f, 0.03f, float(p_frost.x)));
 }
 
 // Darcy flow through the saturated base: hydraulic conductivity K = k rho_w g / mu with the intrinsic permeability

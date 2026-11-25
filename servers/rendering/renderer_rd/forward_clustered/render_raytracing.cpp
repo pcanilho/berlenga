@@ -399,7 +399,12 @@ static uint64_t _rt_merged_triangle_count(const RTInstanceSource &p_source, void
 	const uint64_t triangles = uint64_t(p_source.count) * (indexed ? index_count / 3 : vertex_count / 3);
 	// MultiMeshes above the cap, or asked to (multimesh_set_rt_instanced), use the expanded TLAS entries; particles and
 	// captured surfaces have none.
-	static const uint32_t MM_MERGED_BLAS_MAX_TRIANGLES = (uint32_t)GLOBAL_GET("rendering/pathtracing/multimesh_merged_blas_max_triangles");
+	// On a CPU device every MultiMesh is traced as instances over its shared mesh: a merged BLAS stores a copy of every
+	// instance's triangles (and its baked vertex buffer), which there is system memory, and its faster traversal is a
+	// graphics card's gain. The same triangles either way.
+	static const uint32_t MM_MERGED_BLAS_MAX_TRIANGLES = RD::get_singleton()->get_device_type() == RenderingDeviceEnums::DEVICE_TYPE_CPU
+			? MIN((uint32_t)GLOBAL_GET("rendering/pathtracing/multimesh_merged_blas_max_triangles"), 256u)
+			: (uint32_t)GLOBAL_GET("rendering/pathtracing/multimesh_merged_blas_max_triangles");
 	if (!p_source.particles && !p_captured && (p_source.instanced || triangles > MM_MERGED_BLAS_MAX_TRIANGLES)) {
 		return 0;
 	}
