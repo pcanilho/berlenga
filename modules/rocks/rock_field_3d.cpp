@@ -1712,6 +1712,13 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_cell_rect, uint32_t p_see
 											break;
 										}
 										fits = front - 2.0f * ext_in <= tmin - 0.15f;
+										// And the wall goes on past the piece's top and sides: at a summit, a spire's tip or an
+										// arête the ground falls away there, and a piece would stand above the skyline.
+										for (int e2 = 0; e2 < 3 && fits; e2++) {
+											const Vector3 q = surface + (e2 == 0 ? kface_up * ext_up : kx3 * (e2 == 1 ? ext_str : -ext_str));
+											const real_t hq = rf_height(gen, q);
+											fits = Math::is_finite(hq) && hq >= q.y - (e2 == 0 ? 0.25f * ext_up : 0.6f * ext_str); // the sides less strict: a pillar may round an arête
+										}
 									}
 									if (!fits) {
 										continue;
