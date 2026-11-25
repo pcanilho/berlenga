@@ -124,8 +124,12 @@ vec4 snow_pack(vec2 p) {
 	}
 	vec4 v = textureLod(snow_tex, uv, 0.0);
 	// Under a roof the pack lies on the roof (the cover's catch map): none on the ground here.
-	if (has_catch && textureLod(catch_tex, uv, 0.0).r > snow_ground(p) + 0.5) {
-		v.r = 0.0;
+	if (has_catch) {
+		vec4 c = textureLod(catch_tex, uv, 0.0);
+		// Alpha 100 up: a roof, overhang or water surface (elsewhere the catch height is the ground's cell mean).
+		if (c.a >= 100.0 && c.r > snow_ground(p) + 0.5) {
+			v.r = 0.0;
+		}
 	}
 	return v;
 }
@@ -649,13 +653,13 @@ void fragment() {
 	// them away.
 	float pix = 2.0 / (abs(PROJECTION_MATRIX[1][1]) * VIEWPORT_SIZE.y);
 	float fp = PROJECTION_MATRIX[3][3] != 0.0 ? pix : distance(w_pos, INV_VIEW_MATRIX[3].xyz) * pix;
-	// Surface hoar (mm) from the cover's catch map alpha (1 + mm / 10); trodden snow has none left.
+	// Surface hoar (mm) from the cover's catch map alpha (1 + mm / 10, plus 100 under shelter); trodden snow has none left.
 	float hoar = 0.0;
 	if (has_catch) {
 		vec2 huv = (p - snow_rect.xy) / max(snow_rect.zw, vec2(1e-4));
 		vec4 hc = snow_inside(huv) ? textureLod(catch_tex, huv, 0.0) : vec4(0.0);
 		// Under a roof the hoar is on the roof, not here.
-		hoar = hc.r > snow_ground(p) + 0.5 ? 0.0 : max(hc.a - 1.0, 0.0) * 10.0 * (1.0 - compact);
+		hoar = (hc.a >= 100.0 && hc.r > snow_ground(p) + 0.5) ? 0.0 : max(mod(hc.a, 100.0) - 1.0, 0.0) * 10.0 * (1.0 - compact);
 	}
 	if (IN_PATH_TRACER && snow_exact_glints) {
 		// Under the path tracer: the ice specular lies on the facet of the grain hit, for every grain (the

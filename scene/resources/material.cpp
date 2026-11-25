@@ -1149,7 +1149,9 @@ vec4 snow_cover_at(vec3 p_world_pos) {
 			vec4 c = textureLod(snow_catch_map, clamp(nuv, half_texel, 1.0 - half_texel), 0.0);
 			if (c.a > 0.5) {
 				float dy = p_world_pos.y - c.r;
-				under = (1.0 - smoothstep(-0.8, -0.4, dy)) * nw;
+				// Only under a roof, an overhang or water (alpha 100 up): elsewhere the cell's surface is the ground's
+				// mean, and the drawn ground's hollows lie under it.
+				under = (1.0 - smoothstep(-0.8, -0.4, dy)) * step(100.0, c.a) * nw;
 				crown = smoothstep(1.5, 3.0, dy) * step(0.05, c.b) * nw;
 				crown_load = c.g;
 			}
@@ -1213,11 +1215,13 @@ float snow_hoar_at(vec3 p_world_pos) {
 	}
 	vec2 half_texel = 0.5 / vec2(textureSize(snow_map, 0));
 	vec4 c = textureLod(snow_catch_map, clamp(nuv, half_texel, 1.0 - half_texel), 0.0);
-	if (c.a <= 1.0) {
+	float hoar = mod(c.a, 100.0) - 1.0; // alpha: 1 + cm of hoar, plus 100 under shelter
+	if (hoar <= 0.0) {
 		return 0.0;
 	}
 	float dy = p_world_pos.y - c.r;
-	return (c.a - 1.0) * 10.0 * smoothstep(-0.8, -0.4, dy) * (1.0 - smoothstep(1.0, 1.5, dy));
+	float below = c.a >= 100.0 ? smoothstep(-0.8, -0.4, dy) : 1.0;
+	return hoar * 10.0 * below * (1.0 - smoothstep(1.0, 1.5, dy));
 }
 )";
 	} else {

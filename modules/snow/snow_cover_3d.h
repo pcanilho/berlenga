@@ -231,6 +231,7 @@ private:
 	Vector<float> cell_hoar_burial;
 	Vector<float> cell_hoar_age;
 	Vector<uint8_t> cell_height_valid;
+	Vector<float> cell_shelter; // 1 where the cell's ground is a roof, overhang or water surface over the ground below (the catch map's shelter)
 	Vector2 sx_direction;
 	bool sx_valid = false;
 	bool sx_dirty = false; // the ground moved under the baked Sx: rebake in the background
