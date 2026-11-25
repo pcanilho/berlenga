@@ -3697,7 +3697,9 @@ func _weather_settings() -> void:
 func _run_weather() -> void:
 	var t := Time.get_ticks_msec()
 	# A night and a day of weather: snow builds on the peaks, rain wets the lowlands.
-	var hours := float(args.get("hours", "12"))
+	# --haboob grows its storm before this (in _ready): hours more of weather would carry the storm and its wall off the
+	# map (it drifts on the steering wind and never ends), so with --haboob the run is 0 hours unless --hours is given.
+	var hours := float(args.get("hours", "0" if args.has("haboob") else "12"))
 	if args.has("smoke-haze"):
 		weather.set("smoke_haze", args["smoke-haze"] != "0") # --smoke-haze=0: fires' smoke does not haze the air
 	if args.has("smoke-kg") and weather.has_method("add_smoke"):
