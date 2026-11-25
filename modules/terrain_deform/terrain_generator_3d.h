@@ -451,6 +451,7 @@ private:
 	int tile_nz = 0;
 	real_t tile_cell = 1.0;
 	LocalVector<float> tile_delta; // eroded minus input ground
+	LocalVector<float> tile_input; // the input ground at the tile grid's nodes (the detailed ground, _ground_detail)
 	LocalVector<float> tile_flow;
 	LocalVector<float> tile_deposit;
 	// The droplets' flow (cells upslope, roughly) and deposit depth (m) on the tile grid, R16F + G16F, for the

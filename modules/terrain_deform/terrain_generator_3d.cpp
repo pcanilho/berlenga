@@ -2677,6 +2677,7 @@ void TerrainGenerator3D::clear_result() {
 	flows.clear();
 	has_sea = false;
 	tile_delta.clear();
+	tile_input.clear();
 	tile_flow.clear();
 	tile_deposit.clear();
 	tile_flow_texture.unref();
@@ -3172,7 +3173,19 @@ float TerrainGenerator3D::_ground(real_t p_x, real_t p_z) const {
 	if (tile_erosion_enabled && !tile_delta.is_empty()) {
 		// The tile erosion's gullies belong to the ground before the touch-ups: they fade where a brush moved it.
 		const float keep = touch_mask.is_empty() ? 1.0f : 1.0f - CLAMP(_sample(touch_mask, p_x, p_z), 0.0f, 1.0f);
-		g += (_tile_sample(tile_delta, p_x, p_z) - _gully_cut(p_x, p_z)) * _water_fade(p_x, p_z) * keep;
+		// The droplets ran on the tile grid (tile_cell, 2 m) over the detailed ground sampled at its nodes; the
+		// detail between the nodes (gullies a few metres across, the erosion filter's finer octaves) is the residual
+		// against the nodes' bilinear surface. Where the droplets laid sediment down it buries that residual: an
+		// aggrading surface is smooth (as the alluvium fade in _ground_detail). Added back in full, a filled gully's
+		// sub-grid V came back as a step up to a metre high wherever its floor fell between two nodes (the eroded
+		// surface is the bilinear nodes plus the residual, and a kink in one met a kink off the node in the other).
+		const float td = _tile_sample(tile_delta, p_x, p_z);
+		float bury = 0.0f;
+		if (td > 0.0f && tile_input.size() == tile_delta.size()) {
+			bury = float(Math::smoothstep(0.1, 0.6, double(td)));
+		}
+		const float residual = bury > 0.0f ? g - _tile_sample(tile_input, p_x, p_z) : 0.0f;
+		g += (td - residual * bury - _gully_cut(p_x, p_z)) * _water_fade(p_x, p_z) * keep;
 		if (has_sea) {
 			g = MAX(g, MIN(_sample(heights, p_x, p_z), result_min + 0.15f));
 		}
@@ -4784,11 +4797,12 @@ void TerrainGenerator3D::_erode_tile(void *p_job, uint32_t p_tile) {
 		WorldCache::store("erosion", name, reinterpret_cast<const uint8_t *>(packed.data()), sizeof(float) * packed.size());
 	}
 	LocalVector<float> &r = (*job->results)[p_tile];
-	r.resize(n * 3);
+	r.resize(n * 4);
 	for (int i = 0; i < n; i++) {
-		r[i * 3 + 0] = out[i] - in[i];
-		r[i * 3 + 1] = flow[i];
-		r[i * 3 + 2] = dep[i];
+		r[i * 4 + 0] = out[i] - in[i];
+		r[i * 4 + 1] = flow[i];
+		r[i * 4 + 2] = dep[i];
+		r[i * 4 + 3] = in[i];
 	}
 }
 
@@ -4797,6 +4811,7 @@ void TerrainGenerator3D::_erode_tile(void *p_job, uint32_t p_tile) {
 // edge (which cut it short) never show.
 void TerrainGenerator3D::_erode_tiles() {
 	tile_delta.clear();
+	tile_input.clear();
 	tile_flow.clear();
 	tile_deposit.clear();
 	if (!tile_erosion_enabled || nx < 2) {
@@ -4812,6 +4827,7 @@ void TerrainGenerator3D::_erode_tiles() {
 	const int tiles_z = (tile_nz - 1 + core - 1) / core;
 	LocalVector<LocalVector<float>> results;
 	results.resize(tiles_x * tiles_z);
+	tile_input.resize(tile_nx * tile_nz);
 	TileJob job{ this, tiles_x, core, apron, &results };
 	WorkerThreadPool::GroupID g = WorkerThreadPool::get_singleton()->add_native_group_task(&TerrainGenerator3D::_erode_tile, &job, tiles_x * tiles_z, -1, true, SNAME("TerrainGenerator3D tiles"));
 	WorkerThreadPool::get_singleton()->wait_for_group_task_completion(g);
@@ -4852,12 +4868,13 @@ void TerrainGenerator3D::_erode_tiles() {
 					if (wt <= 0.0) {
 						continue;
 					}
-					const int li = ((z - z0) * w + (x - x0)) * 3;
+					const int li = ((z - z0) * w + (x - x0)) * 4;
 					const int gi = z * tile_nx + x;
 					acc[gi * 3 + 0] += wt * r[li + 0];
 					acc[gi * 3 + 1] += wt * r[li + 1];
 					acc[gi * 3 + 2] += wt * r[li + 2];
 					wsum[gi] += wt;
+					tile_input[gi] = r[li + 3]; // the same in every tile that holds the node
 				}
 			}
 		}
