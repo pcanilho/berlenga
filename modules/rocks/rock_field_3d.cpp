@@ -1566,7 +1566,7 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_cell_rect, uint32_t p_see
 			};
 			LocalVector<KitPiece> kits;
 			HashMap<Vector2i, LocalVector<uint32_t>> kit_grid; // 8 m plan squares: the pieces reaching into each
-			const float kit_tan = Math::tan(Math::deg_to_rad(55.0f));
+			const float kit_tan = Math::tan(Math::deg_to_rad(50.0f));
 			const float kit_tier = 5.5f; // m, mean pillar height
 			// Whether a point of the face lies inside a kit piece (a bed block there would be buried in it).
 			auto in_kit = [&](const Vector3 &p_point) {
@@ -1673,32 +1673,47 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_cell_rect, uint32_t p_see
 										}
 									}
 									const Vector3 axes = lib->axes[var];
-									const float sc = (0.9f + 0.08f * rng.randf()) * MIN(tier / MAX(2.0f * axes.x, 0.05f), 1.2f * span / MAX(2.0f * axes.y, 0.05f));
-									const float ext_up = axes.x * sc, ext_str = axes.y * sc, ext_in = axes.z * sc;
-									// The face over the piece's footprint, measured square to the fitted plane: + where the ground
-									// stands in front of it (a ridge between flutes), - behind it (a groove).
-									const Vector3 surface(bp.x, yk, bp.y);
-									float tmax = -1e9f, tmin = 1e9f;
-									bool off = false;
-									for (int a = -1; a <= 1 && !off; a++) {
-										for (int b2 = -1; b2 <= 1; b2++) {
-											const Vector3 q = surface + kface_up * (0.9f * ext_up * a) + kx3 * (0.9f * ext_str * b2);
-											const real_t hq = rf_height(gen, q);
-											if (!Math::is_finite(hq)) {
-												off = true;
-												break;
+									const float sc0 = (0.9f + 0.08f * rng.randf()) * MIN(tier / MAX(2.0f * axes.x, 0.05f), 1.2f * span / MAX(2.0f * axes.y, 0.05f));
+									// Where a groove runs deeper than the piece reaches (the darkest flutes), a larger piece of the
+									// same shape, deeper as well as wider and taller, up to 1.8 times: it spans the groove and its
+									// back still reaches behind it. Fitted again over its own, larger footprint.
+									// Each pillar sits a little up or down its tier (the joints are not all at one level).
+									const Vector3 surface = Vector3(bp.x, yk, bp.y) + kface_up * ((rng.randf() - 0.5f) * 0.3f * tier);
+									float sc = sc0, ext_up = 0.0f, ext_str = 0.0f, ext_in = 0.0f, front = 0.0f;
+									bool fits = false;
+									for (int grow = 0; grow < 3 && !fits; grow++) {
+										sc = sc0 * (grow == 0 ? 1.0f : (grow == 1 ? 1.35f : 1.8f));
+										ext_up = axes.x * sc;
+										ext_str = axes.y * sc;
+										ext_in = axes.z * sc;
+										// The face over the piece's footprint, measured square to the fitted plane: + where the
+										// ground stands in front of it (a ridge between flutes), - behind it (a groove).
+										float tmax = -1e9f, tmin = 1e9f;
+										bool off = false;
+										for (int a = -1; a <= 1 && !off; a++) {
+											for (int b2 = -1; b2 <= 1; b2++) {
+												const Vector3 q = surface + kface_up * (0.9f * ext_up * a) + kx3 * (0.9f * ext_str * b2);
+												const real_t hq = rf_height(gen, q);
+												if (!Math::is_finite(hq)) {
+													off = true;
+													break;
+												}
+												const float tq = float(hq - q.y) * kn.y;
+												tmax = MAX(tmax, tq);
+												tmin = MIN(tmin, tq);
 											}
-											const float tq = float(hq - q.y) * kn.y;
-											tmax = MAX(tmax, tq);
-											tmin = MIN(tmin, tq);
 										}
+										// The front a little proud of the highest ridge: the drawn face (the terrain mesh, its
+										// relief) stands off the bilinear heights by some decimetres on a steep face. No piece over
+										// a convex corner or a ledge (a ridge 2.4 m out of the plane: it would stand out as a
+										// slab), and its back behind the deepest groove (or it hangs in the air).
+										front = tmax + 0.3f;
+										if (off || tmax > 2.4f) {
+											break;
+										}
+										fits = front - 2.0f * ext_in <= tmin - 0.15f;
 									}
-									// A convex corner or a ledge over the footprint (a piece there would stand out as a slab), or a
-									// groove deeper than the piece's depth (its back would hang in the air).
-									// The front a little proud of the highest ridge: the drawn face (the terrain mesh, its relief)
-									// stands off the bilinear heights by some decimetres on a steep face.
-									const float front = tmax + 0.3f;
-									if (off || tmax > 2.0f || front - 2.0f * ext_in > tmin - 0.15f) {
+									if (!fits) {
 										continue;
 									}
 									if (rng.randf() > 0.9f * float(density)) {
@@ -1803,7 +1818,11 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_cell_rect, uint32_t p_see
 								if (!sub_rect.has_point(bp) || !p_rect.has_point(bp)) {
 									continue;
 								}
-								if (rng.randf() > (sheer ? 0.72f + 0.26f * hard : 0.75f * rock - 0.1f) * float(density)) {
+								// A bed weathers out in stretches, not block by block: runs of two to five joint spans where it
+								// stays, runs where it has gone and the wall shows (no bed stands out as one unbroken course).
+								const int64_t run = int64_t(Math::floor(float(j) / (2.0f + 3.0f * u01(bed_hash(int64_t(Math::floor(float(j) / 5.0f)), bed_id ^ 0x77e1u)))));
+								const bool run_out = (bed_hash(run, bed_id ^ 0x3b9fu) % 100u) < 30u;
+								if (run_out || rng.randf() > (sheer ? 0.72f + 0.26f * hard : 0.75f * rock - 0.1f) * float(density)) {
 									continue; // a gap: a block weathered out, the wall shows behind
 								}
 								if (!kits.is_empty() && in_kit(Vector3(bp.x, yk, bp.y))) {
@@ -1836,7 +1855,7 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_cell_rect, uint32_t p_see
 								}
 								const Vector3 axes = lib->axes[st.variant];
 								// Fits the bed and the joint span, less the open joints (shadowed lines between blocks).
-								const float fill = 0.86f + 0.08f * rng.randf();
+								const float fill = 0.62f + 0.32f * rng.randf(); // blocks of one bed differ in size, so its joints open unevenly
 								st.scale = fill * MIN(bed / MAX(2.0f * axes.y, 0.05f), 1.2f * span / MAX(2.0f * axes.x, 0.05f)); // a block may lap a little past its joint
 								// Long axis along the strike, short axis on the bed normal, b axis into the wall. The bed
 								// normal is turned most of the way toward the face's own up-slope direction: a block kept
@@ -1854,11 +1873,13 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_cell_rect, uint32_t p_see
 								b.set_column(2, z_axis);
 								b = Basis(y_axis, (rng.randf() - 0.5f) * 0.25f) * b;
 								if (sheer) {
-									b = Basis(x_axis, (rng.randf() - 0.5f) * 0.1f) * b; // a block settled on its bed
+									b = Basis(x_axis, (rng.randf() - 0.5f) * 0.22f) * b; // a block settled on its bed, each its own way
+									b = Basis(z_axis, (rng.randf() - 0.5f) * 0.12f) * b;
 								}
 								// The face's outward normal at the crossing; the block's centre that far into the rock.
 								const Vector3 n = fn;
-								const Vector3 surface(bp.x, yk, bp.y);
+								// A block sits a little up or down in its bed, so a bed's blocks never line up as a course.
+								const Vector3 surface(bp.x, yk + (rng.randf() - 0.5f) * 0.25f * bed, bp.y);
 								// Set deep on a sloping face: a block standing a third of its depth out of a 50 to 76 degree
 								// face pushed its level top out as a pale shelf. On a sheer wall the beds weather apart
 								// (differential erosion): a hard bed stands out half its depth, a soft one a fifth, sitting back
@@ -1866,7 +1887,7 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_cell_rect, uint32_t p_see
 								// Blended from 50 to 65 degrees: on a face just past 50 a block lies nearly flush (proud, its top shows as a pale
 								// shelf), on a sheer one the beds stand out.
 								const float sheer_t = CLAMP((Math::rad_to_deg(Math::atan(gl)) - 50.0f) / 15.0f, 0.0f, 1.0f);
-								const float set_in = Math::lerp(0.86f + 0.12f * rng.randf(), 0.5f + 0.3f * (1.0f - hard) + 0.08f * rng.randf(), sheer_t);
+								const float set_in = Math::lerp(0.86f + 0.12f * rng.randf(), 0.45f + 0.3f * (1.0f - hard) + 0.3f * rng.randf(), sheer_t); // each block its own setback too
 								const Vector3 centre = surface - n * (axes.z * st.scale * set_in);
 								// The centre must lie inside the rock (under the terrain at its own plan position), or the
 								// block stands out of a bend in the face rather than being set into it.

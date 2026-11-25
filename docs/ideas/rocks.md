@@ -1528,5 +1528,19 @@ breaks: vertical joint sets cut each bed into columns.
 - **Bed blocks.** The bed blocks a piece would bury are left out, so the stone count barely changes (cliff-foot view:
   357k to 363k).
 
+Second pass, to remove visible repetition:
+- **Beds weather out in stretches.** Runs of two to five joint spans either stay or go, 30 percent gone, so no bed
+  stands out as one unbroken course.
+- **Blocks vary.** Each block sits up or down in its bed by a quarter of the bed, fills 62 to 94 percent of its joint
+  span, has its own setback (0.3 of its depth), and tilts on its bed.
+- **Pillars vary.** Kit pillars sit up or down their tier by 0.3 of it.
+- **Deep grooves.** A piece whose back cannot reach behind a groove is tried again at 1.35 and 1.8 times its size,
+  deeper as well as larger.
+- **Kit range.** Kit pieces start at 50 degrees, like the beds.
+
+On the cliff-foot view the dark vertical bands left on the far right are on faces of 40 to 50 degrees (--slope-map).
+These are the terrain material's streaks, below where the wall's rock goes, and they show the same with the cliff
+layer off.
+
 On the cliff-foot view the fit tests pass 88 percent of the tried pieces. `cliff_kit` (on by default) and the bench's
 --no-cliff-kit give the before frame. The path tracer draws the same full meshes.
