@@ -7795,7 +7795,7 @@ func _frost_sorted_cam() -> void:
 			var p := Vector3(xx, 0, zz)
 			var g0: Vector2 = rocks.call("get_frost_at", p)
 			gmax = maxf(gmax, g0.x)
-			var flat_here := rad_to_deg(atan(_slip_grad(p).length())) < float(args.get("fs-flat", "2"))
+			var flat_here := rad_to_deg(atan(_fs_grad(p).length())) < float(args.get("fs-flat", "2"))
 			if flat_here and g0.x > bfg:
 				bfg = g0.x
 				bf = p
@@ -7817,7 +7817,7 @@ func _frost_sorted_cam() -> void:
 							rise = r
 							up = d
 					var sp := p + up * upd
-					var sdeg := rad_to_deg(atan(_slip_grad(sp).length()))
+					var sdeg := rad_to_deg(atan(_fs_grad(sp).length()))
 					var gs: Vector2 = rocks.call("get_frost_at", sp)
 					# the pattern should run on 40-60 m ahead: the gate along the view
 					var far := minf((rocks.call("get_frost_at", p + up * 40.0) as Vector2).x, (rocks.call("get_frost_at", p + up * 55.0) as Vector2).x)
@@ -7867,6 +7867,15 @@ func _frost_sorted_cam() -> void:
 # fields side by side across x round x,z (else the meadow view's clearing, else --look), each --hay-w (40; 22 in the
 # meadow view) m wide and --hay-l (140; 56) m deep: mown today (swaths), raked on day 3 (windrows), carted on day 5 (stubble); rows at --hay-row (0.35 rad).
 # VegetationField3D leaves the tall herbs out there on its own.
+
+# The slope over an 8 m baseline (the frost-sorted search: the sorting follows the hillside, not the ground's
+# metre-scale relief), as rise per metre.
+func _fs_grad(p: Vector3) -> Vector2:
+	var hx := gen.get_height(p + Vector3(4, 0, 0)) - gen.get_height(p - Vector3(4, 0, 0))
+	var hz := gen.get_height(p + Vector3(0, 0, 4)) - gen.get_height(p - Vector3(0, 0, 4))
+	return Vector2(hx, hz) / 8.0
+
+
 func _hay_list() -> Array:
 	var at := String(args.get("hay", ""))
 	var w := float(args.get("hay-w", "40"))
