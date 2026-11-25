@@ -3283,6 +3283,17 @@
    "topic": "Growth"
   },
   {
+   "name": "Scanned bark",
+   "settings": [
+    "TreeGenerator.load_scan_set()"
+   ],
+   "note": "",
+   "what": "fine bark and weathered wood detail from scans per species, over the generated colour and relief.",
+   "page": "trees",
+   "title": "Trees",
+   "topic": "Growth"
+  },
+  {
    "name": "Crown self-shading",
    "settings": [
     "TreeGenerator.crown_occlusion"
