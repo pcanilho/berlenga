@@ -128,8 +128,8 @@ Credits: one line per scan in the README References and CREDIT.txt beside the fi
 Hand-offs (25 Nov): burn scars done (terrain, 23fb8f8c: OVERLAY_BURN, burned_ground_01, char tint fading over one to
 three years; raster and PT agree). Stones and cave rock done (rocks, ca70039d; rock_wall_02 refused, p98/mean 2.5).
 Forest floor (vegetation, 81e3fda4), bark and wood (trees, 4deb04c9), leaf atlases (trees, b87f9ec6: ambientCG LeafSet
-009/010 on hazel and maples), mud weights (mud, 9cb0572b: mud_scan by the patch's wet mud). Open: snow detail (snow),
-waterline band on banks (terrain). Follow-up from terrain: PhysXFireSpread3D's char Decal could
+009/010 on hazel and maples), mud weights (mud, 9cb0572b: mud_scan by the patch's wet mud). Snow detail (snow, 7cee2529:
+snow_02 in a TerrainMaterial3D snow_scan slot that SnowSurface3D reads). Open: waterline band on banks (terrain). Follow-up from terrain: PhysXFireSpread3D's char Decal could
 retire once fires report through WorldFire burn_changed / burn_age_at.
 
 ## Built (25 Nov, vegetation side)
