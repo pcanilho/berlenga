@@ -4322,9 +4322,12 @@ func _build_camera() -> void:
 						continue
 					var down := Vector2(-gx, -gz).normalized()
 					# Raking: the contour along the sun (down the slope square to it), the face still lit.
+					# Lit: the slope faces the sun at least --tc-lit (0.2) of the way, so the treads catch light and the
+					# risers' shade reads; raking within that.
+					if down.dot(to_sun_t) < float(args.get("tc-lit", "0.2")):
+						continue
 					var rake := 1.0 - absf(down.dot(to_sun_t))
-					var lit := 1.0 if down.dot(to_sun_t) > -0.2 else 0.0
-					var score := rake * 2.0 + lit - absf(sl - 30.0) / 10.0 - Vector2(xx, zz).length() / 4000.0
+					var score := rake * 2.0 - absf(sl - 30.0) / 10.0 - Vector2(xx, zz).length() / 4000.0
 					if score > best_tc:
 						best_tc = score
 						tspot = Vector3(xx, hp, zz)

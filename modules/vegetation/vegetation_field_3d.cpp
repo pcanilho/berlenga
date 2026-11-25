@@ -6075,6 +6075,9 @@ vec3 forest_litter(vec3 world_pos, float conifer, float footprint) {
 		leaves *= mix(1.0, ff_scan(forest_scan_leaves, forest_scan_tile.x, xz, pm), mix(0.6, 1.0, f1));
 		// Patches of darker, wetter, older litter.
 		leaves *= 0.75 + 0.45 * ff_noise(xz * 0.8);
+		// The same scan seven times larger (after the terrain's macro scan): metre-scale drifts of damp and dry leaves
+		// past the 3D litter, where the floor otherwise reads as one even carpet.
+		leaves *= mix(1.0, ff_scan(forest_scan_leaves, forest_scan_tile.x * 7.0, xz + 3.1, 1.0 - pm), 0.55);
 		c = mix(c, leaves, 1.0 - needle);
 	}
 	if (needle > 0.001) {
@@ -6086,6 +6089,7 @@ vec3 forest_litter(vec3 world_pos, float conifer, float footprint) {
 		// The scanned needle duff (forest_scan_needles), as the leaves.
 		duff *= mix(1.0, ff_scan(forest_scan_needles, forest_scan_tile.y, xz, ff_noise(xz * 0.07 + 23.0)), mix(0.6, 1.0, f));
 		duff *= 0.8 + 0.35 * ff_noise(xz * 1.1 + 9.0);
+		duff *= mix(1.0, ff_scan(forest_scan_needles, forest_scan_tile.y * 7.0, xz + 5.3, ff_noise(xz * 0.05 + 41.0)), 0.55);
 		// Feather moss carpets under spruce and pine, in drifts.
 		float moss = smoothstep(0.38, 0.62, ff_noise(xz * 0.45 + 17.0) * 0.7 + ff_noise(xz * 2.7) * 0.3);
 		vec3 moss_c = vec3(0.13, 0.19, 0.035) * (0.85 + 0.3 * ff_noise(xz * 4.0 + 5.0));

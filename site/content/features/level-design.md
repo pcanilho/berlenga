@@ -9,7 +9,7 @@ Each world system is a node set up in the inspector; systems find each other thr
 
 ## Terrain
 
-- **Generate** (`TerrainGenerator3D`: Generate button): runs the generator and writes the ground, sea, lakes and rivers into the scene.
+- **Generate** (`TerrainGenerator3D`: Generate button): runs the generator and writes its heights into the ground node.
 - **Ranges and guides** (`ranges`, `TerrainGuide3D`: Raise, Lower, Bar, Coast, Beach): curves drawn with the Path3D editor shape the relief before erosion.
 - **Touch-ups** (`TerrainBrush3D` under the generator): brush nodes moved with the gizmo raise, lower or flatten ground; lakes and rivers re-solve around them.
 - **Painted maps** (`uplift_map`, `sea_map`): images over the generator's rectangle steer uplift and sea.
