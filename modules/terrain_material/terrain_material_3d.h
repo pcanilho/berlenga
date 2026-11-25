@@ -105,11 +105,14 @@ public:
 	// Scans laid over a layer's own where the shader's masks say (docs/ideas/scan-textures.md): the parent layer keeps
 	// its colour and roughness (the scan is detail only), only the detail changes.
 	enum Overlay {
-		OVERLAY_CLIFF, // rock faces past about 45 degrees: a face scan (beds, joints) for the ground scan seen from above
 		OVERLAY_ROCK_VARIANT, // a second rock scan in 25 m patches, so one scan does not repeat over a whole hillside
+		OVERLAY_CLIFF, // rock faces past about 45 degrees: a face scan (beds, joints) for the ground scan seen from above
 		OVERLAY_CURED, // soil and alluvium cover cured to straw in summer-dry climates
 		OVERLAY_BARE_SOIL, // the climate's bare soil patches
 		OVERLAY_BARE_ALLUVIUM, // the climate's bare alluvium patches (silt crusts and cracks)
+		OVERLAY_BANK, // soil and alluvium faces from about 42 to 53 degrees: a cut soil face (banks, slump scarps)
+		OVERLAY_TRAIL, // trails walked bare (WorldStand's trail wear): packed soil
+		OVERLAY_BED, // channel beds (the generator's drainage area a hundred times the alluvium's): rounded river gravel
 		OVERLAY_BEACH, // sand the generator laid as beach, and the seabed
 		OVERLAY_MUD, // ground turned by ruts, digs and prints (GroundSurface3D's exposed soil)
 		OVERLAY_MAX,

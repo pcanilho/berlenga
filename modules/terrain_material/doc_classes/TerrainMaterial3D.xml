@@ -96,6 +96,9 @@
 		<member name="alluvium_layer" type="TerrainMaterialLayer" setter="set_layer" getter="get_layer">
 			River sediment along valley floors.
 		</member>
+		<member name="bank_scan" type="TerrainMaterialLayer" setter="set_overlay" getter="get_overlay">
+			Soil and alluvium faces too steep for a sward to close over them (about 42 to 53 degrees by the surface's own normal: banks, slump scarps, cut edges): a cut soil face.
+		</member>
 		<member name="bare_alluvium_color" type="Color" setter="set_bare_alluvium_color" getter="get_bare_alluvium_color" default="Color(0.6, 0.55, 0.49, 1)">
 			Colour of bare, dry alluvium (sRGB) where the climate leaves it bare of plants (see [member climate_bare_soil]).
 		</member>
@@ -113,6 +116,9 @@
 		</member>
 		<member name="beach_scan" type="TerrainMaterialLayer" setter="set_overlay" getter="get_overlay">
 			The sand layer within a few metres of the sea (swash, berm, seabed); dunes inland keep the sand layer's own scan.
+		</member>
+		<member name="bed_scan" type="TerrainMaterialLayer" setter="set_overlay" getter="get_overlay">
+			Channel beds on the alluvium: where the generator's drainage area is a hundred times [member alluvium_area]'s and the ground is gentle, rounded river gravel.
 		</member>
 		<member name="blend_depth" type="float" setter="set_blend_depth" getter="get_blend_depth" default="0.2">
 			Height-blend transition depth. Smaller gives sharper borders between layers.
@@ -216,6 +222,9 @@
 		<member name="soil_layer" type="TerrainMaterialLayer" setter="set_layer" getter="get_layer">
 			Soil on gentle ground.
 		</member>
+		<member name="trail_scan" type="TerrainMaterialLayer" setter="set_overlay" getter="get_overlay">
+			Soil and alluvium on trails walked bare (WorldStand's trail wear through Landscape3D's stand map): packed soil.
+		</member>
 		<member name="wetness_enabled" type="bool" setter="set_wetness_enabled" getter="is_wetness_enabled" default="true">
 			Darken and smooth the ground where the [WeatherMap3D] says it is wet, by each layer's [member TerrainMaterialLayer.porosity].
 		</member>
@@ -239,11 +248,11 @@
 		<constant name="LAYER_MAX" value="5" enum="Layer">
 			Number of layers.
 		</constant>
-		<constant name="OVERLAY_CLIFF" value="0" enum="Overlay">
-			Rock faces.
-		</constant>
-		<constant name="OVERLAY_ROCK_VARIANT" value="1" enum="Overlay">
+		<constant name="OVERLAY_ROCK_VARIANT" value="0" enum="Overlay">
 			A second rock scan in patches.
+		</constant>
+		<constant name="OVERLAY_CLIFF" value="1" enum="Overlay">
+			Rock faces.
 		</constant>
 		<constant name="OVERLAY_CURED" value="2" enum="Overlay">
 			Cured (straw) cover on soil and alluvium.
@@ -254,13 +263,22 @@
 		<constant name="OVERLAY_BARE_ALLUVIUM" value="4" enum="Overlay">
 			Bare alluvium patches.
 		</constant>
-		<constant name="OVERLAY_BEACH" value="5" enum="Overlay">
+		<constant name="OVERLAY_BANK" value="5" enum="Overlay">
+			Steep soil and alluvium faces (banks).
+		</constant>
+		<constant name="OVERLAY_TRAIL" value="6" enum="Overlay">
+			Trails walked bare.
+		</constant>
+		<constant name="OVERLAY_BED" value="7" enum="Overlay">
+			Channel beds.
+		</constant>
+		<constant name="OVERLAY_BEACH" value="8" enum="Overlay">
 			Beach sand.
 		</constant>
-		<constant name="OVERLAY_MUD" value="6" enum="Overlay">
+		<constant name="OVERLAY_MUD" value="9" enum="Overlay">
 			Turned, muddy soil.
 		</constant>
-		<constant name="OVERLAY_MAX" value="7" enum="Overlay">
+		<constant name="OVERLAY_MAX" value="10" enum="Overlay">
 			Number of overlay slots.
 		</constant>
 	</constants>

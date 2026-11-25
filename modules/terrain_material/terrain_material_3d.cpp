@@ -177,15 +177,17 @@ void TerrainMaterialLayer::_bind_methods() {
 // --- TerrainMaterial3D --------------------------------------------------------------------------------------------
 
 static const char *LAYER_NAMES[TerrainMaterial3D::LAYER_MAX] = { "rock", "scree", "soil", "alluvium", "sand" };
-static const char *OVERLAY_NAMES[TerrainMaterial3D::OVERLAY_MAX] = { "cliff", "rock_variant", "cured", "bare_soil", "bare_alluvium", "beach", "mud" };
-// Which layer each overlay sits on and which mask component (om.x..w) of that layer's function carries it.
+static const char *OVERLAY_NAMES[TerrainMaterial3D::OVERLAY_MAX] = { "rock_variant", "cliff", "cured", "bare_soil", "bare_alluvium", "bank", "trail", "bed", "beach", "mud" };
+// Which layers each overlay sits on and the mask (a component of the layer function's om or om2) that carries it.
+// Overlays apply in this order, so a later one wins where masks overlap (a cliff face over the rock variant, mud over a trail).
 #define TM_L(m_layer) (1 << TerrainMaterial3D::m_layer)
 static const int OVERLAY_PARENTS[TerrainMaterial3D::OVERLAY_MAX] = {
 	TM_L(LAYER_ROCK), TM_L(LAYER_ROCK), TM_L(LAYER_SOIL) | TM_L(LAYER_ALLUVIUM), TM_L(LAYER_SOIL), TM_L(LAYER_ALLUVIUM),
-	TM_L(LAYER_SAND), TM_L(LAYER_SOIL) | TM_L(LAYER_ALLUVIUM)
+	TM_L(LAYER_SOIL) | TM_L(LAYER_ALLUVIUM), TM_L(LAYER_SOIL) | TM_L(LAYER_ALLUVIUM), TM_L(LAYER_ALLUVIUM), TM_L(LAYER_SAND),
+	TM_L(LAYER_SOIL) | TM_L(LAYER_ALLUVIUM)
 };
 #undef TM_L
-static const char *OVERLAY_MASK[TerrainMaterial3D::OVERLAY_MAX] = { "x", "y", "x", "y", "y", "x", "z" };
+static const char *OVERLAY_MASK[TerrainMaterial3D::OVERLAY_MAX] = { "om.y", "om.x", "om.x", "om.y", "om.y", "om.w", "om2.y", "om2.x", "om.x", "om.z" };
 static const Color LAYER_DEFAULT_COLORS[TerrainMaterial3D::LAYER_MAX] = {
 	Color(0.36, 0.35, 0.33), Color(0.41, 0.40, 0.37), Color(0.2, 0.22, 0.1), Color(0.28, 0.27, 0.16), Color(0.7, 0.62, 0.46)
 };
@@ -936,7 +938,7 @@ vec2 tm_terracette(vec3 p, vec2 grad, float width) {
 		const Ref<TerrainMaterialLayer> &l = layers[i];
 		const String n = LAYER_NAMES[i];
 		const bool has_a = l.is_valid() && l->get_albedo_texture().is_valid();
-		c += vformat("\nvoid tm_%s(vec3 p, vec3 n, bool cliff, vec3 dpx, vec3 dpy, vec4 om, out vec3 albedo, out float rough, out vec3 dn, out float h) {\n", n);
+		c += vformat("\nvoid tm_%s(vec3 p, vec3 n, bool cliff, vec3 dpx, vec3 dpy, vec4 om, vec4 om2, out vec3 albedo, out float rough, out vec3 dn, out float h) {\n", n);
 		c += "\tvec3 sd;\n\tfloat sr;\n\tvec3 sdn;\n\tfloat sh;\n\t{\n";
 		c += scan_code(n, l, i == LAYER_ROCK).replace("\n\t", "\n\t\t").replace("\tTmProj", "\t\tTmProj");
 		c += "\t}\n";
@@ -947,9 +949,9 @@ vec2 tm_terracette(vec3 p, vec2 grad, float width) {
 			// Each overlay over the layer's own scan by its mask, height blended at the edge (Mishkinis 2013): where the
 			// mask is part way the scan standing higher in its height map wins, so cracked crust or straw ends in clumps
 			// and plates, not a soft cross-fade.
-			c += vformat("\tif (om.%s > 1e-3) {\n", OVERLAY_MASK[k]);
+			c += vformat("\tif (%s > 1e-3) {\n", OVERLAY_MASK[k]);
 			c += vformat("\t\tvec3 od;\n\t\tfloat orr;\n\t\tvec3 odn;\n\t\tfloat oh;\n\t\ttm_ov_%s(p, n, cliff, dpx, dpy, od, orr, odn, oh);\n", OVERLAY_NAMES[k]);
-			c += vformat("\t\tfloat m = clamp(om.%s, 0.0, 1.0);\n", OVERLAY_MASK[k]);
+			c += vformat("\t\tfloat m = clamp(%s, 0.0, 1.0);\n", OVERLAY_MASK[k]);
 			c += "\t\tfloat a1 = m + oh * tm_blend_depth;\n\t\tfloat a0 = 1.0 - m + sh * tm_blend_depth;\n\t\tfloat tp = max(a0, a1) - tm_blend_depth;\n";
 			c += "\t\tfloat b1 = max(a1 - tp, 0.0);\n\t\tfloat b0 = max(a0 - tp, 0.0);\n\t\tfloat mm = b1 / max(b0 + b1, 1e-5);\n";
 			c += "\t\tsd = mix(sd, od, mm);\n\t\tsr = mix(sr, orr, mm);\n\t\tsdn = mix(sdn, odn, mm);\n\t\tsh = mix(sh, oh, mm);\n\t}\n";
@@ -1019,7 +1021,7 @@ vec2 tm_terracette(vec3 p, vec2 grad, float width) {
 		}
 	}
 )";
-			c = c.replace("TM_CLIFF_SCAN", overlays[OVERLAY_CLIFF].is_valid() ? "clamp(om.x, 0.0, 1.0)" : "0.0");
+			c = c.replace("TM_CLIFF_SCAN", overlays[OVERLAY_CLIFF].is_valid() ? "clamp(om.x, 0.0, 1.0)" : "0.0"); // the cliff overlay's mask (OVERLAY_MASK)
 		}
 		c += "}\n";
 	}
@@ -2055,8 +2057,10 @@ void fragment() {
 	float beach_sand = -1.0;
 	float tm_till = 0.0;
 	float tm_gully = 0.0;
+	float tm_drain = -1e9; // the generator's log10 drainage area here (m2), for the channel beds' scan
 	if (tm_geology && terrain_geology_rect.z > 0.0) {
 		vec4 g = terrain_geology(wp);
+		tm_drain = g.w;
 		beach_sand = clamp(-g.x, 0.0, 1.0);
 		// The generator knows where soil holds (Heimsath soil on slopes up to its repose); below its cells only
 		// faces past the cliff slope are forced bare.
@@ -2176,13 +2180,15 @@ void fragment() {
 	// The overlay scans' masks (docs/ideas/scan-textures.md): rock faces past some 45 degrees take the face scan, and a
 	// second rock scan in 25 m patches.
 	vec4 tm_om_rock = vec4(1.0 - smoothstep(0.55, 0.8, tm_pn.y), smoothstep(0.38, 0.62, 0.7 * tm_vn(wp / 25.0 + 71.0) + 0.3 * tm_vn(wp / 8.0 + 5.0)), 0.0, 0.0);
+	vec4 tm_om2_rock = vec4(0.0);
 	vec4 tm_om_scree = vec4(0.0);
+	vec4 tm_om2_scree = vec4(0.0);
 	if (w[0] > 1e-3) {
 		vec3 a;
 		float r;
 		vec3 d;
 		float h;
-		tm_rock(wp, tm_pn, cliff, tm_dpx, tm_dpy, tm_om_rock, a, r, d, h);
+		tm_rock(wp, tm_pn, cliff, tm_dpx, tm_dpy, tm_om_rock, tm_om2_rock, a, r, d, h);
 		alb[0] = a;
 		rgh[0] = r;
 		dns[0] = d;
@@ -2193,7 +2199,7 @@ void fragment() {
 		float r;
 		vec3 d;
 		float h;
-		tm_scree(wp, tm_pn, cliff, tm_dpx, tm_dpy, tm_om_scree, a, r, d, h);
+		tm_scree(wp, tm_pn, cliff, tm_dpx, tm_dpy, tm_om_scree, tm_om2_scree, a, r, d, h);
 		// Patches of fresher and older, lichened blocks: a tone that varies by about a fifth over 10 to 30 m (mean
 		// kept), so a talus slope is not one flat colour at a distance (world coordinates, unrotated, as above).
 		{
@@ -2214,16 +2220,32 @@ void fragment() {
 	float tm_cured = w[2] + w[3] > 1e-3 ? tm_climate_cured(wp) : 0.0;
 	// Straw over the cover between the bare patches, the bare patches' own crust, and the turned soil of ruts and prints.
 	float tm_om_mud = TM_OM_MUD;
-	vec4 tm_om_soil = vec4(tm_cured * (1.0 - tm_bare_k), tm_bare_k, tm_om_mud, 0.0);
-	vec4 tm_om_alluvium = vec4(0.8 * tm_cured * (1.0 - tm_bare_k), tm_bare_k, tm_om_mud, 0.0);
+	// Soil faces too steep for a sward to close over them (42 to 53 degrees by the surface's own normal: banks, slump
+	// scarps, cut edges) show the soil's cut face.
+	float tm_om_bank = 1.0 - smoothstep(0.6, 0.74, tm_pn.y);
+	// Trails walked bare (the stand map's wear, before the trail's own tint and tread below).
+	float tm_om_trail = 0.0;
+	if (terrain_stand_rect.z > 0.0) {
+		vec2 suv = (wp.xz - terrain_stand_rect.xy) / terrain_stand_rect.zw;
+		if (all(greaterThan(suv, vec2(0.0))) && all(lessThan(suv, vec2(1.0)))) {
+			tm_om_trail = smoothstep(0.28, 0.48, textureLod(terrain_stand_map, suv, 0.0).r + (tm_vn(wp * vec3(2.2, 0.0, 2.2) + 31.0) - 0.5) * 0.4);
+		}
+	}
+	vec4 tm_om_soil = vec4(tm_cured * (1.0 - tm_bare_k), tm_bare_k, tm_om_mud, tm_om_bank);
+	vec4 tm_om2_soil = vec4(0.0, tm_om_trail, 0.0, 0.0);
+	vec4 tm_om_alluvium = vec4(0.8 * tm_cured * (1.0 - tm_bare_k), tm_bare_k, tm_om_mud, tm_om_bank);
+	// Channel beds: where the drainage area is a hundred times the alluvium's threshold the flow keeps the fines moving
+	// and leaves a bed of rounded gravel (bedload channels; Church 2006), on gentle ground.
+	vec4 tm_om2_alluvium = vec4(tm_drain > -1e8 ? smoothstep(tm_alluvium_area + 1.5, tm_alluvium_area + 2.5, tm_drain) * smoothstep(0.9, 0.96, tm_cn.y) : 0.0, tm_om_trail, 0.0, 0.0);
 	// The beach: sand within a few metres of the sea (the swash, berm and seabed); dunes inland keep the sand's own.
 	vec4 tm_om_sand = vec4(1.0 - smoothstep(tm_beach_height, tm_beach_height + 4.0, wp.y - tm_sea_level), 0.0, 0.0, 0.0);
+	vec4 tm_om2_sand = vec4(0.0);
 	if (w[2] > 1e-3) {
 		vec3 a;
 		float r;
 		vec3 d;
 		float h;
-		tm_soil(wp, tm_pn, cliff, tm_dpx, tm_dpy, tm_om_soil, a, r, d, h);
+		tm_soil(wp, tm_pn, cliff, tm_dpx, tm_dpy, tm_om_soil, tm_om2_soil, a, r, d, h);
 		a *= mix(mix(tm_soil_color.rgb, tm_cured_cover(wp, tm_fp0, tm_bare_soil_color.rgb), tm_cured), tm_bare_soil_color.rgb, tm_bare_k) / max(tm_soil_color.rgb, vec3(1e-3));
 		alb[2] = a;
 		rgh[2] = r;
@@ -2235,7 +2257,7 @@ void fragment() {
 		float r;
 		vec3 d;
 		float h;
-		tm_alluvium(wp, tm_pn, cliff, tm_dpx, tm_dpy, tm_om_alluvium, a, r, d, h);
+		tm_alluvium(wp, tm_pn, cliff, tm_dpx, tm_dpy, tm_om_alluvium, tm_om2_alluvium, a, r, d, h);
 		a *= mix(mix(tm_alluvium_color.rgb, tm_cured_cover(wp, tm_fp0, tm_bare_alluvium_color.rgb), 0.8 * tm_cured), tm_bare_alluvium_color.rgb, tm_bare_k) / max(tm_alluvium_color.rgb, vec3(1e-3));
 		alb[3] = a;
 		rgh[3] = r;
@@ -2247,7 +2269,7 @@ void fragment() {
 		float r;
 		vec3 d;
 		float h;
-		tm_sand(wp, tm_pn, cliff, tm_dpx, tm_dpy, tm_om_sand, a, r, d, h);
+		tm_sand(wp, tm_pn, cliff, tm_dpx, tm_dpy, tm_om_sand, tm_om2_sand, a, r, d, h);
 		d += tm_sand_grain(wp, tm_fp0, a);
 		// The dune field's colour at this scale: redder old sand, coarse dark interdune flats, pale slip faces.
 		float tm_sdepth = terrain_sand_interdune(wp);
@@ -3518,11 +3540,14 @@ void TerrainMaterial3D::_bind_methods() {
 	BIND_ENUM_CONSTANT(LAYER_ALLUVIUM);
 	BIND_ENUM_CONSTANT(LAYER_SAND);
 	BIND_ENUM_CONSTANT(LAYER_MAX);
-	BIND_ENUM_CONSTANT(OVERLAY_CLIFF);
 	BIND_ENUM_CONSTANT(OVERLAY_ROCK_VARIANT);
+	BIND_ENUM_CONSTANT(OVERLAY_CLIFF);
 	BIND_ENUM_CONSTANT(OVERLAY_CURED);
 	BIND_ENUM_CONSTANT(OVERLAY_BARE_SOIL);
 	BIND_ENUM_CONSTANT(OVERLAY_BARE_ALLUVIUM);
+	BIND_ENUM_CONSTANT(OVERLAY_BANK);
+	BIND_ENUM_CONSTANT(OVERLAY_TRAIL);
+	BIND_ENUM_CONSTANT(OVERLAY_BED);
 	BIND_ENUM_CONSTANT(OVERLAY_BEACH);
 	BIND_ENUM_CONSTANT(OVERLAY_MUD);
 	BIND_ENUM_CONSTANT(OVERLAY_MAX);

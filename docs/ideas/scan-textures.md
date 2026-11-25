@@ -115,6 +115,11 @@ Credits: one line per scan in the README References and CREDIT.txt beside the fi
 - Biplanar projection from 35 degrees instead of the cliff slope (50): 40-50 degree slopes no longer stretch 1.6x, and
   there is no seam where the projection switched.
 
-Next on the terrain side: river banks (wet bank scan at the waterline), river and lake beds (river gravel by depth),
-trails (compacted soil), burn scars. Then the owning threads: forest floor and moss (vegetation), stones and caves
+- Second batch (art adds excavated_soil_wall, dirt_floor, river_small_rocks): `bank_scan` on soil and alluvium faces
+  of 42 to 53 degrees by the surface's own normal (a sward does not close over them; past 55 they are rock),
+  `trail_scan` where the stand map's trail wear opens the cover (before the trail's own tint and tread), `bed_scan` on
+  alluvium where the drainage area is a hundred times alluvium_area's on gentle ground (bedload channels keep rounded
+  gravel, not silt). The layer functions take a second mask vector (om2).
+
+Next on the terrain side: burn scars (WorldBurnScar3D draws its own char), waterline band on banks. Then the owning threads: forest floor and moss (vegetation), stones and caves
 (rocks), snow detail (snow), bark, deadwood and leaves (trees), mud weights from its own maps (mud).
