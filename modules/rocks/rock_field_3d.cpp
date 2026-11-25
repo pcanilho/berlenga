@@ -1528,13 +1528,13 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_cell_rect, uint32_t p_see
 			}
 			const float course = 1.4f; // m, the mean bed thickness (the face-fit tolerances scale by it)
 			const float min_tan = Math::tan(Math::deg_to_rad(50.0f));
-			// Up to near vertical: past about 60 degrees a heightfield face is a stretched step whose few vertices
+			// Up to near vertical: past about 50 to 60 degrees a heightfield face is a stretched step whose few vertices
 			// draw long vertical bands (draped folds) that no texture hides, so the wall's own blocks cover it there
 			// as real geometry (cliff kit pieces placed over steep heightfield faces: Guerrilla, GDC 2017, "GPU-Based
 			// Run-Time Procedural Placement in Horizon Zero Dawn"; Carrier, GDC 2018, "Procedural World Generation of
 			// Far Cry 5"). docs/ideas/rocks.md, "Wall blocks on steep faces".
 			const float max_tan = Math::tan(Math::deg_to_rad(float(CLAMP(cliff_block_max_slope, real_t(50.0), real_t(89.0)))));
-			const float sheer_tan = Math::tan(Math::deg_to_rad(60.0f));
+			const float sheer_tan = Math::tan(Math::deg_to_rad(50.0f)) * 0.999f; // every face this layer takes
 			// Beds of uneven thickness (bed thickness in a sedimentary pile is near log-normal, not a fixed course): the
 			// height is cut into packages of about 3.6 m with jittered tops, each split into one to three beds of 0.4 m
 			// up. Every cell of every wall finds the same beds at the same heights, so a bed runs on along the cliff.
@@ -1599,7 +1599,7 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_cell_rect, uint32_t p_see
 					// The span of heights the face covers inside this cell, along the fall line.
 					const float half = float(sub) * 0.5f;
 					const float y0 = float(hc) - gl * half, y1 = float(hc) + gl * half;
-					// Past 60 degrees the face is the stretched heightfield step the blocks are there to cover:
+					// Past 50 degrees the face is the stretched heightfield step (vertical flutes) the blocks are there to cover:
 					// beds nearly closed there, and hard beds stand proud of soft ones.
 					const bool sheer = gl > sheer_tan;
 					const Vector2 strike(-up_dir.y, up_dir.x);
@@ -1704,8 +1704,9 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_cell_rect, uint32_t p_see
 								// face pushed its level top out as a pale shelf. On a sheer wall the beds weather apart
 								// (differential erosion): a hard bed stands out half its depth, a soft one a fifth, sitting back
 								// in the face, so the courses read as relief with shadowed bed lines, not tiles laid flat.
-								// Blended from 60 to 75 degrees, so a block on a face just past 60 still lies nearly flush.
-								const float sheer_t = CLAMP((Math::rad_to_deg(Math::atan(gl)) - 60.0f) / 15.0f, 0.0f, 1.0f);
+								// Blended from 50 to 65 degrees: on a face just past 50 a block lies nearly flush (proud, its top shows as a pale
+								// shelf), on a sheer one the beds stand out.
+								const float sheer_t = CLAMP((Math::rad_to_deg(Math::atan(gl)) - 50.0f) / 15.0f, 0.0f, 1.0f);
 								const float set_in = Math::lerp(0.86f + 0.12f * rng.randf(), 0.5f + 0.3f * (1.0f - hard) + 0.08f * rng.randf(), sheer_t);
 								const Vector3 centre = surface - n * (axes.z * st.scale * set_in);
 								// The centre must lie inside the rock (under the terrain at its own plan position), or the

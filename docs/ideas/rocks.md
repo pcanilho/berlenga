@@ -1487,8 +1487,11 @@ along bedding and joint sets:
 - **Hard and soft beds weather apart (differential erosion).** Each bed has a hardness. On faces past 60 degrees a
   hard bed stands out half its depth and a soft one a fifth, with more gaps where blocks have weathered out. The
   setback blends in from 60 to 75 degrees, so the 50 to 60 degree faces keep the flush blocks that avoid pale shelves.
+- **Down to 50 degrees (third pass).** Terrain tried joint-bounded pillars as offset relief, and they do not hold past
+  about 60 degrees, so the placed blocks cover the fluted walls from 50 degrees. Every face the layer takes now gets the
+  closed beds. The setback blends from flush at 50 degrees to fully weathered at 65.
 - **On sheer faces the rock exposure map no longer gates placement.** Soil does not hold there, and the map fades
-  out over the flutes. Faces past 60 degrees need only 0.15 instead of 0.5.
+  out over the flutes. Faces past 50 degrees need only 0.15 instead of 0.5.
 
 Rocks bench cliff view: 362k to 368k stones. --slope-map=cx,cz,half,step prints a slope map, to find the faces past
 60 degrees.
