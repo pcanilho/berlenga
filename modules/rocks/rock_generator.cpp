@@ -3037,6 +3037,15 @@ uniform float small_coat = 0.65;
 // Forms set into a terrain cliff (cave mouths): the rock keeps its own mottling, beds and marks but takes the
 // cliff's colour (ground_rock, the landscape's rock layer), so the block reads as part of the wall around it.
 uniform bool cliff_match = false;
+// With cliff_match: the landscape rock layer's scan (TerrainMaterial3D tm_rock_albedo_tex and tm_rock_normal_tex at
+// its tile size, 1 / m), triplanar in world space, so the block carries the face's own grain and weathering.
+uniform bool cliff_scan = false;
+uniform sampler2D cliff_scan_albedo : source_color, filter_linear_mipmap_anisotropic, repeat_enable;
+uniform sampler2D cliff_scan_normal : hint_normal, filter_linear_mipmap_anisotropic, repeat_enable;
+uniform bool cliff_scan_has_normal = false;
+uniform vec3 cliff_scan_mean = vec3(1.0);
+uniform float cliff_scan_scale = 0.25;
+uniform float cliff_scan_normal_strength = 1.0;
 uniform vec3 ground_rock = vec3(0.107, 0.1, 0.089);
 uniform vec3 ground_scree = vec3(0.141, 0.133, 0.114);
 uniform vec3 ground_soil = vec3(0.033, 0.04, 0.01);
@@ -3333,6 +3342,24 @@ void fragment() {
 	if (cliff_match) {
 		const vec3 lw = vec3(0.2126, 0.7152, 0.0722);
 		col = ground_rock * clamp(dot(col, lw) / max(dot(base_color, lw), 1e-3), 0.6, instance_tint > 0.0 ? 1.0 : 1.3); // (a hoodoo never paler than its slope)
+		if (cliff_scan) {
+			// Triplanar (sharpened weights) with the UDN normal blend (Golus 2017, "Normal Mapping for a Triplanar
+			// Shader"): the scan's colour over its mean, so the block keeps the cliff's colour and gains its grain.
+			vec3 tw = pow(abs(wn), vec3(4.0));
+			tw /= max(tw.x + tw.y + tw.z, 1e-4);
+			vec3 sg = sign(wn) + vec3(equal(sign(wn), vec3(0.0)));
+			vec2 ux = v_world.zy * cliff_scan_scale * vec2(sg.x, 1.0);
+			vec2 uy = v_world.xz * cliff_scan_scale * vec2(sg.y, 1.0);
+			vec2 uz = v_world.xy * cliff_scan_scale * vec2(-sg.z, 1.0);
+			vec3 scan = texture(cliff_scan_albedo, ux).rgb * tw.x + texture(cliff_scan_albedo, uy).rgb * tw.y + texture(cliff_scan_albedo, uz).rgb * tw.z;
+			col *= scan / cliff_scan_mean;
+			if (cliff_scan_has_normal) {
+				vec2 nx = (texture(cliff_scan_normal, ux).xy * 2.0 - 1.0) * cliff_scan_normal_strength;
+				vec2 ny = (texture(cliff_scan_normal, uy).xy * 2.0 - 1.0) * cliff_scan_normal_strength;
+				vec2 nz = (texture(cliff_scan_normal, uz).xy * 2.0 - 1.0) * cliff_scan_normal_strength;
+				wn = normalize(wn + vec3(0.0, nx.y, nx.x * sg.x) * tw.x + vec3(ny.x * sg.y, 0.0, ny.y) * tw.y + vec3(-nz.x * sg.z, nz.y, 0.0) * tw.z);
+			}
+		}
 	}
 	// Cleavage faces (a third of the feldspars) and glassy quartz are near mirrors, each at its own facet tilt: under a
 	// low sun a few of them flash (cleavage glints, the crystal-scale case of a discrete microfacet glint model).

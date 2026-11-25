@@ -684,8 +684,9 @@ class WorldReliefProvider {
 public:
 	// At the point's xz: x the drawn surface's height over the heightfield's (m, + above it; the relief pushes the
 	// surface out along the slope's horizontal normal by d, so about d tan(slope) here), y the relief's share
-	// (0..1, the cliff and bank weights). x NAN where the producer does not reach.
-	virtual Vector2 contract_relief_at(const Vector3 &p_position) const = 0;
+	// (0..1, the cliff and bank weights). x NAN where the producer does not reach. p_steps: with the terracettes' steps
+	// (WorldContracts::terracette_step); false for placers that add the step at their own roots, as the GPU's do.
+	virtual Vector2 contract_relief_at(const Vector3 &p_position, bool p_steps = true) const = 0;
 	// For results cached by what they read (the world cache): the node whose stored properties set the relief, and
 	// the rest of its state through p_add (called for each piece of bytes). A provider that returns null here is not
 	// cached against, so its readers compute.
@@ -773,7 +774,9 @@ public:
 	// The drawn ground's relief over the heightfield at the point's xz: x the height to add to the heightfield's (m),
 	// y its share (0..1). (0, 0) with no relief producer. GPU placers read terrain_relief_map (R height m, G share)
 	// over terrain_relief_rect instead.
-	Vector2 relief_at(const Vector3 &p_position) const;
+	// p_steps false leaves out the terracettes' steps, for a placer that adds wc_terracette_step at each root itself (a
+	// height map sampled every few metres would alias them and count them twice). A script override ignores it.
+	Vector2 relief_at(const Vector3 &p_position, bool p_steps = true) const;
 	// A relief producer reports that the relief over an area changed (its heights streamed in at full resolution, its
 	// relief settings changed, it came or went): signal relief_changed(area), so placers lay what sits there again.
 	void notify_relief_changed(const Rect2 &p_area);
