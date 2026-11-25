@@ -1627,10 +1627,19 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_cell_rect, uint32_t p_see
 							const int64_t j0 = int64_t(Math::floor((s_here - float(sub)) / spacing)) - 1;
 							const int64_t j1 = int64_t(Math::floor((s_here + float(sub)) / spacing)) + 1;
 							for (int64_t j = j0; j <= j1; j++) {
-								// Joints sit off the even spacing by up to a third of it; the block fills the span between two
-								// joints, less the open joint.
-								const float ja = (float(j) + 0.33f * (u01(bed_hash(j, bed_id)) - 0.5f)) * spacing;
-								const float jb = (float(j + 1) + 0.33f * (u01(bed_hash(j + 1, bed_id)) - 0.5f)) * spacing;
+								// Joints sit off the even spacing by up to 0.3 of it either way, and a quarter of them never
+								// opened, so a block spans two or three spacings there: blocks along one bed differ in length.
+								// The block fills the span between two open joints, less the open joint itself.
+								auto joint_open = [&](int64_t p_j) { return (bed_hash(p_j, bed_id ^ 0x5bd1u) & 3u) != 0u; };
+								if (!joint_open(j) && (joint_open(j - 1) || joint_open(j - 2))) {
+									continue; // this stretch belongs to the block from the open joint before it
+								}
+								int64_t jn = j + 1;
+								while (!joint_open(jn) && jn < j + 3) {
+									jn++;
+								}
+								const float ja = (float(j) + 0.6f * (u01(bed_hash(j, bed_id)) - 0.5f)) * spacing;
+								const float jb = (float(jn) + 0.6f * (u01(bed_hash(jn, bed_id)) - 0.5f)) * spacing;
 								const Vector2 bp = pxz + strike * ((0.5f * (ja + jb) - s_here) / strike_comp);
 								if (!sub_rect.has_point(bp) || !p_rect.has_point(bp)) {
 									continue;

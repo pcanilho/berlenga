@@ -1479,8 +1479,9 @@ along bedding and joint sets:
   cell, so a bed runs on along the wall.
 - **Joints are spaced in proportion to bed thickness.** Thin beds break into short blocks and thick beds into long
   ones (Narr and Suppe 1991, "Joint spacing in sedimentary rocks"; Bai and Pollard 2000, fracture spacing). Each bed
-  has its own ratio, 1 to 2.6 times its thickness, with joints jittered by a third. Joints are spaced along a world
-  axis, so neighbouring cells agree.
+  has its own ratio, 1 to 2.6 times its thickness, with joints jittered by 0.3 of the spacing either way. A quarter of joints never opened, so some
+  blocks span two or three spacings and blocks along one bed differ in length. Joints are spaced along a world axis, so
+  neighbouring cells agree.
 - **Blocks fill the span between joints, less an open joint.** Of three shapes, the one whose proportions best match
   the span is used. The open joints read as shadowed lines.
 - **Hard and soft beds weather apart (differential erosion).** Each bed has a hardness. On faces past 60 degrees a
