@@ -2713,7 +2713,7 @@
     "VegetationField3D.forest_floor_enabled"
    ],
    "note": "",
-   "what": "herbs, mosses and seedlings by the stand above (seedlings of the stand's own trees, with their leaf forms; dog-violets and herb Robert in the lighter patches), and the ground under closed canopy turns to leaf, needle or moss litter. Under boreal pine, pale reindeer lichen carpets the floor in lumpy cushions, crushed underfoot and slow to return after fire.",
+   "what": "herbs, mosses and seedlings by the stand above (seedlings of the stand's own trees, with their leaf forms; dog-violets and herb Robert in the lighter patches), and the ground under closed canopy turns to leaf, needle or moss litter, with scanned leaf humus, needle duff and moss detail under it (`VegetationField3D.load_floor_scans()`). Under boreal pine, pale reindeer lichen carpets the floor in lumpy cushions, crushed underfoot and slow to return after fire.",
    "page": "vegetation",
    "title": "Vegetation",
    "topic": "Plants"
