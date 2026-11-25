@@ -545,6 +545,7 @@ void GrassField3D::_build_material() {
 	// (TerrainDataMap3D.get_data_texture(), r: height) over ground_data_rect (z 0: none, the blades ease to up).
 	code += "uniform sampler2D ground_data_map : filter_linear, repeat_disable, hint_default_black;\nuniform vec4 ground_data_rect;\n";
 	code += "uniform float dormant; // Share of blades dead to the crown in a drought or hard winter (season).\n";
+	code += "uniform float season_height = 1.0; // The sward's standing height over its summer height (GrassField3D.season_height_for).\n";
 	// Storm lodging (lodging): r, g the direction the blades lie (* 0.5 + 0.5), b the lodged share; rect z 0: none.
 	code += "uniform sampler2D lodge_map : filter_linear, repeat_disable, hint_default_black;\nuniform vec4 lodge_rect;\n";
 	// Meadow fairy rings (fairy_rings.h): 1 on, 0 off.
@@ -1199,7 +1200,8 @@ uniform float fibre_shading = 0.8;
 		code += R"(
 
 void vertex() {
-	float h = INSTANCE_CUSTOM.x;
+	// The season's standing height (GrassField3D.season_height_for): short in winter, regrown by early summer.
+	float h = INSTANCE_CUSTOM.x * season_height;
 	float w = INSTANCE_CUSTOM.y;
 	float light_q = floor(INSTANCE_CUSTOM.z / 4.0);
 	float rest_lean = INSTANCE_CUSTOM.z - light_q * 4.0;
@@ -1834,6 +1836,7 @@ void fragment() {
 	material->set_shader_parameter("dry_color", dry_color);
 	material->set_shader_parameter("dryness", _dryness());
 	material->set_shader_parameter("dormant", _dormant());
+	material->set_shader_parameter("season_height", season_height);
 	material->set_shader_parameter("color_variation", color_variation);
 	material->set_shader_parameter("fallback_wind", fallback_wind);
 	material->set_shader_parameter("wind_response", wind_response);
@@ -4275,7 +4278,8 @@ void GrassField3D::_update_shell(const Vector2 &p_center, TerrainDataMap3D *p_ma
 		sh.instantiate();
 		String code = "shader_type spatial;\nrender_mode cull_disabled;\n\n";
 		code += "// GrassField3D far shell (docs/ideas/grass.md, \"Far grass\"): the sward as voxel columns on the ground.\n";
-		code += "uniform float sward_height = 0.3; // The blades' mean height (m): how thin snow covers the sward.\n";
+		code += "uniform float sward_height = 0.3; // The blades' mean height (m) this season: how thin snow covers the sward.\n";
+		code += "uniform float season_height = 1.0; // The columns' height over their summer height (GrassField3D.season_height_for).\n";
 		code += "uniform vec2 shell_center;\nuniform vec4 shell_band; // x: where it is fully up, y: the band it rises over, z: where it is gone, w: the band it sinks over.\n";
 		// The climate code first: the turf (get_ground_shader_code()) cures by its wc_climate_cured.
 		code += "uniform bool climate_bare = true;\nglobal uniform sampler2D terrain_climate_map : hint_default_black, filter_linear;\nglobal uniform vec4 terrain_climate_rect;\nglobal uniform vec4 weather_climate;\n";
@@ -4293,7 +4297,7 @@ void vertex() {
 	float grow_out = shell_band.w > 0.0 ? clamp((shell_band.z - d) / shell_band.w, 0.0, 1.0) : 1.0;
 	float g = grow_in * grow_out;
 	// UV2.x: the vertex's height over the ground; down under it where the shell is gone.
-	VERTEX.y += UV2.x * (g - 1.0) - 0.15 * (1.0 - g);
+	VERTEX.y += UV2.x * (g * season_height - 1.0) - 0.15 * (1.0 - g);
 	v_wp = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
 }
 void fragment() {
@@ -4323,7 +4327,8 @@ void fragment() {
 		shell_material->set_shader(sh);
 		shell_material->set_shader_parameter("climate_bare", climate_bare);
 	}
-	shell_material->set_shader_parameter("sward_height", 0.5f * (blade_height.x + blade_height.y));
+	shell_material->set_shader_parameter("sward_height", 0.5f * (blade_height.x + blade_height.y) * season_height);
+	shell_material->set_shader_parameter("season_height", season_height);
 	shell_material->set_shader_parameter("shell_center", p_center);
 	shell_material->set_shader_parameter("shell_band", Vector4(in_end, in_band, out_end, out_band));
 	const float start = in_end - in_band;
@@ -7945,6 +7950,7 @@ void GrassField3D::set_season_source(const NodePath &p_path) {
 	season_wait = 0;
 	if (!_follows_season()) {
 		season_green = 1.0f;
+		_set_season_height(1.0f);
 		set_dryness(dryness);
 	}
 }
@@ -7954,6 +7960,7 @@ void GrassField3D::set_follow_weather(bool p_on) {
 	season_wait = 0;
 	if (!_follows_season()) {
 		season_green = 1.0f;
+		_set_season_height(1.0f);
 		set_dryness(dryness);
 	}
 }
@@ -7961,6 +7968,39 @@ void GrassField3D::set_follow_weather(bool p_on) {
 void GrassField3D::set_season_response(float p_response) {
 	season_response = CLAMP(p_response, 0.0f, 1.0f);
 	set_dryness(dryness);
+}
+
+// The sward's standing height over its summer height for a season state (docs/ideas/vegetation.md, "Seasonal sward
+// height"). Grass stands short through the winter: the summer's growth dies back and lodges under the autumn's rain and
+// wind, and what stands is the short new tillers; growth restarts in spring (the agronomists' T-sum of 200 degree days
+// from 1 January, about our forcing of 40 over 5 C) and a meadow is at full height by heading, about forcing 550 (late
+// May to June at 46 N). In autumn it declines with the senescence sum as the leaves die. The winter height, a third of
+// the summer's, is an estimate. 1 with no season.
+float GrassField3D::season_height_for(const Dictionary &p_season) {
+	if (p_season.is_empty() || !p_season.has("forcing")) {
+		return 1.0f;
+	}
+	const float winter = 0.35f;
+	const float forcing = float(p_season.get("forcing", 0.0f));
+	float g = Math::lerp(winter, 1.0f, Math::smoothstep(40.0f, 550.0f, forcing));
+	if (int(p_season.get("day_of_year", 180)) > 172) {
+		g = MIN(g, Math::lerp(1.0f, winter, Math::smoothstep(150.0f, 900.0f, float(p_season.get("senescence", 0.0f)))));
+	}
+	return g;
+}
+
+void GrassField3D::_set_season_height(float p_height) {
+	if (Math::abs(p_height - season_height) < 0.01f) {
+		return;
+	}
+	season_height = p_height;
+	if (material.is_valid()) {
+		material->set_shader_parameter("season_height", season_height);
+	}
+	if (shell_material.is_valid()) {
+		shell_material->set_shader_parameter("season_height", season_height);
+		shell_material->set_shader_parameter("sward_height", 0.5f * (blade_height.x + blade_height.y) * season_height);
+	}
 }
 
 // How green the sward is for a season state (WeatherMap3D.get_season()), 0 to 1. Grassland
@@ -8015,6 +8055,7 @@ void GrassField3D::_season_step() {
 			_queue_far_bake();
 		}
 	}
+	_set_season_height(season_height_for(season_now));
 	const float g = season_greenness(season_now);
 	if (Math::abs(g - season_green) < 0.005f) {
 		return;
@@ -8127,6 +8168,7 @@ void GrassField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_season_green"), &GrassField3D::get_season_green);
 	ClassDB::bind_method(D_METHOD("get_effective_dryness"), &GrassField3D::get_effective_dryness);
 	ClassDB::bind_static_method("GrassField3D", D_METHOD("season_greenness", "season"), &GrassField3D::season_greenness);
+	ClassDB::bind_static_method("GrassField3D", D_METHOD("season_height_for", "season"), &GrassField3D::season_height_for);
 	GRASS_BIND(set_color_variation, get_color_variation, "amount")
 	GRASS_BIND(set_radius, get_radius, "radius")
 	GRASS_BIND(set_tile_size, get_tile_size, "size")

@@ -2295,6 +2295,20 @@ bow under them, so a centimetre or two whitens a short sward with only the tips 
   surface) stays for deep packs. Far shell: its colour goes to the snow's albedo by the share at the sward's mean height.
 - Grass bench --thin-snow=D sets a uniform fresh pack on the snow globals (no SnowCover3D).
 
+## Seasonal sward height (GrassField3D.season_height_for)
+The scene's burial scout (mild valley, 1.5 cm of snow at 200 kg/m3 in February) still showed the far hills green after
+the thin-snow work: the blades and far shell are inside their reach (rings to 250 m, shell to 500 m) and read the
+snow, but at the summer sward's 0.33 m mean height Niu and Yang's cover gives about 9%. The gap was the height: a
+sward is not summer-tall in winter. The summer's growth dies back and lodges under autumn rain and wind, and what
+stands is the short new tillers; grass growth restarts in spring at a temperature sum of about 200 degree days from
+1 January (the agronomists' T-sum 200, Eurofins Agro "Temperature sum"), and a meadow is full height by heading.
+- season_height_for(season): lerp(0.35, 1, smoothstep(40, 550, forcing)) (forcing over 5 C from 1 January: T-sum 200
+  is about 40 of it; heading about 550, late May to June at 46 N); after midsummer, down to 0.35 with the senescence
+  sum (150 to 900). The winter third is an estimate. 1 with no season.
+- Blades and far shell stand at it (season_height uniform; the shell's sward_height for the snow too). Thin snow on
+  the winter sward then covers about three times the share at the same depth.
+- Grass bench test checks the curve.
+
 ## Terracettes (GrassField3D.terracettes)
 Steep grazed hillsides carry sub-parallel steps along the contours (Wikipedia, "Terracette"). A grazing model
 (Seleb, Chatterjee and Bhamla 2025, arXiv 2504.17496) forms them from stock walking cross-slope routes and treads

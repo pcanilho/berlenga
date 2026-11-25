@@ -194,6 +194,8 @@ private:
 	NodePath season_source;
 	float season_response = 1.0f;
 	float season_green = 1.0f;
+	float season_height = 1.0f; // The sward's standing height over its summer height (season_height_for()).
+	void _set_season_height(float p_height);
 	float season_baked_dryness = -1.0f; // The effective dryness of the last far colour bake.
 	int season_wait = 0;
 	bool ground_published = false; // This field's _bake_ground() set the grass_ground_* globals.
@@ -709,6 +711,7 @@ public:
 	float get_season_green() const { return season_green; }
 	float get_effective_dryness() const { return _dryness(); }
 	static float season_greenness(const Dictionary &p_season);
+	static float season_height_for(const Dictionary &p_season);
 	void set_color_variation(float p_amount);
 	float get_color_variation() const { return color_variation; }
 	void set_radius(float p_radius);

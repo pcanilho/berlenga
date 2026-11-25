@@ -2011,6 +2011,9 @@ func _season_checks() -> void:
 	_check("season: summer drought browns it", g.call(20.0, 0.08) < 0.01, g.call(20.0, 0.08))
 	_check("season: a dry spell half browns it", absf(g.call(20.0, 0.25) - 0.5) < 0.1, g.call(20.0, 0.25))
 	_check("season: no season, as set", GrassField3D.season_greenness({}) == 1.0, GrassField3D.season_greenness({}))
+	if ClassDB.class_has_method("GrassField3D", "season_height_for"):
+		var sh := [GrassField3D.season_height_for({"forcing": 0.0, "day_of_year": 15, "senescence": 0.0}), GrassField3D.season_height_for({"forcing": 300.0, "day_of_year": 120}), GrassField3D.season_height_for({"forcing": 900.0, "day_of_year": 190, "senescence": 0.0}), GrassField3D.season_height_for({"forcing": 1700.0, "day_of_year": 355, "senescence": 1200.0}), GrassField3D.season_height_for({})]
+		_check("season height: short in winter, regrowing in spring, full in summer, short again by December, 1 with no season", sh[0] < 0.4 and sh[1] > sh[0] and sh[1] < sh[2] and sh[2] == 1.0 and sh[3] < 0.4 and sh[4] == 1.0, sh)
 	var base := grass.dryness
 	grass.dryness = 0.2
 	grass.season_response = 1.0

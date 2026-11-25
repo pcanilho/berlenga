@@ -256,6 +256,13 @@
 				How green a temperate sward is for a season state ([method WeatherMap3D.get_season]), 0 to 1: grassland greenness follows soil water and temperature (PhenoGrass, Hufkens et al. 2016; the Growing Season Index of Jolly et al. 2005 without its day-length term, as a temperate sward stays green through short days), the shared rule [code]WorldContracts::greenness_for_season[/code]: [code]smoothstep(0.1, 0.4, soil_moisture) * smoothstep(-8, 2, temperature)[/code]: a summer drought browns it, a hard winter leaves it tan, a mild wet winter keeps it green. 1 for an empty state.
 			</description>
 		</method>
+		<method name="season_height_for" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="season" type="Dictionary" />
+			<description>
+				The sward's standing height over its summer height for a season state ([method WeatherMap3D.get_season]): a third in winter (the summer's growth dead and lodged, short new tillers), regrowing from a forcing of about 40 (the T-sum of 200 at which grass growth restarts) to full height by about 550 (heading), declining with the autumn's senescence sum. The blades and the far shell stand at it, and thin snow covers the shorter winter sward more. 1 for an empty state.
+			</description>
+		</method>
 		<method name="get_field_stage" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="index" type="int" />
