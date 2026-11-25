@@ -1564,6 +1564,9 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_cell_rect, uint32_t p_see
 				for (real_t x = p_rect.position.x; x < p_rect.get_end().x; x += sub) {
 					const Vector3 c(x + sub * 0.5f, 0, z + sub * 0.5f);
 					const float rock = float(gen->get_rock_exposure(c));
+					if (rock < 0.15f) {
+						continue; // under either threshold below, before the heights (each a full ground evaluation)
+					}
 					const real_t hc = rf_height(gen, c);
 					const real_t e = 1.0;
 					const Vector2 grad((rf_height(gen, c + Vector3(e, 0, 0)) - rf_height(gen, c - Vector3(e, 0, 0))) / (2.0 * e), (rf_height(gen, c + Vector3(0, 0, e)) - rf_height(gen, c - Vector3(0, 0, e))) / (2.0 * e));
