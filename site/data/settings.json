@@ -1090,7 +1090,7 @@
     "use_generator()"
    ],
    "note": "",
-   "what": "rock, scree, soil, alluvium and sand from the generator's geology, height-blended, biplanar cliffs, erosion detail, wetness and snow; layer textures are hex-tiled (Mikkelsen 2022), so no tiling repeat shows, and scanned textures can serve as detail around the geology's own colours (`TerrainMaterialLayer.detail_only`). In dry climates the ground breaks into patches of bare soil and plant cover by the year's rain, and that cover cures to straw in the dry season and greens again in the wet one, by the weather's soil moisture (`climate_bare_soil`, `cured_cover_color`). Rock faces weather by aspect, with lichen rosettes in colonies, moss on shaded ledges and seep stripes down gullies (`tm_face_weathering`, `tm_latitude`).",
+   "what": "rock, scree, soil, alluvium and sand from the generator's geology, height-blended, biplanar cliffs, erosion detail, wetness and snow; layer textures are hex-tiled (Mikkelsen 2022), so no tiling repeat shows, and scanned textures can serve as detail around the geology's own colours (`TerrainMaterialLayer.detail_only`), on every layer and overlay from one manifest (`load_scan_set()`); faces past the angle of repose draw as rock, and rock keeps its large-scale structure at range. In dry climates the ground breaks into patches of bare soil and plant cover by the year's rain, and that cover cures to straw in the dry season and greens again in the wet one, by the weather's soil moisture (`climate_bare_soil`, `cured_cover_color`). Rock faces weather by aspect, with lichen rosettes in colonies, moss on shaded ledges and seep stripes down gullies (`tm_face_weathering`, `tm_latitude`).",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"

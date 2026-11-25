@@ -1869,10 +1869,25 @@ void vertex() {
 		// surface -- e is in world meters, small against the grids' cell
 		// size.
 		const float e = 0.2;
-		vec3 px1 = vec3(e, 0.0, 0.0) + surface_offset(world_pos.xz + vec2(e, 0.0));
-		vec3 px0 = vec3(-e, 0.0, 0.0) + surface_offset(world_pos.xz - vec2(e, 0.0));
-		vec3 pz1 = vec3(0.0, 0.0, e) + surface_offset(world_pos.xz + vec2(0.0, e));
-		vec3 pz0 = vec3(0.0, 0.0, -e) + surface_offset(world_pos.xz - vec2(0.0, e));
+		// One call of surface_offset() in a loop: the path tracer runs vertex() in its hit shaders, whose compilers
+		// inline every call (same values, same order).
+		vec3 px1 = vec3(0.0);
+		vec3 px0 = vec3(0.0);
+		vec3 pz1 = vec3(0.0);
+		vec3 pz0 = vec3(0.0);
+		for (int k = 0; k < 4; k++) {
+			vec2 q = k == 0 ? world_pos.xz + vec2(e, 0.0) : (k == 1 ? world_pos.xz - vec2(e, 0.0) : (k == 2 ? world_pos.xz + vec2(0.0, e) : world_pos.xz - vec2(0.0, e)));
+			vec3 so_k = surface_offset(q);
+			if (k == 0) {
+				px1 = vec3(e, 0.0, 0.0) + so_k;
+			} else if (k == 1) {
+				px0 = vec3(-e, 0.0, 0.0) + so_k;
+			} else if (k == 2) {
+				pz1 = vec3(0.0, 0.0, e) + so_k;
+			} else {
+				pz0 = vec3(0.0, 0.0, -e) + so_k;
+			}
+		}
 		vec3 tx = px1 - px0;
 		vec3 tz = pz1 - pz0;
 		v_world_normal = normalize(cross(tz, tx));
@@ -2031,8 +2046,26 @@ void fragment() {
 		// apart (the waves' slopes held, as they barely change over that).
 		if (foam_relief > 0.0 && foam > 0.01) {
 			const float fe = 0.02;
-			vec2 fg = vec2(foam_at_with(v_rest_xz + vec2(fe, 0.0), der, disp) - foam_at_with(v_rest_xz - vec2(fe, 0.0), der, disp),
-					foam_at_with(v_rest_xz + vec2(0.0, fe), der, disp) - foam_at_with(v_rest_xz - vec2(0.0, fe), der, disp)) / (2.0 * fe);
+			// The four samples through one call in a loop: the path tracer's compilers inline every call, and four
+			// call sites were four copies of the whole foam in each hit shader (same values, same order).
+			float f_px = 0.0;
+			float f_mx = 0.0;
+			float f_pz = 0.0;
+			float f_mz = 0.0;
+			for (int k = 0; k < 4; k++) {
+				vec2 q = k == 0 ? v_rest_xz + vec2(fe, 0.0) : (k == 1 ? v_rest_xz - vec2(fe, 0.0) : (k == 2 ? v_rest_xz + vec2(0.0, fe) : v_rest_xz - vec2(0.0, fe)));
+				float f = foam_at_with(q, der, disp);
+				if (k == 0) {
+					f_px = f;
+				} else if (k == 1) {
+					f_mx = f;
+				} else if (k == 2) {
+					f_pz = f;
+				} else {
+					f_mz = f;
+				}
+			}
+			vec2 fg = vec2(f_px - f_mx, f_pz - f_mz) / (2.0 * fe);
 			fg = clamp(fg * 0.03 * foam_relief, vec2(-1.2), vec2(1.2));
 			world_normal = normalize(world_normal - vec3(fg.x, 0.0, fg.y));
 		}
