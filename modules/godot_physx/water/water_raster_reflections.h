@@ -118,14 +118,24 @@ vec3 water_raster_sun_light(vec3 p_light, vec3 p_view, vec3 p_irradiance, bool p
 		float nv = clamp(dot(n_w, v), 1e-3, 1.0);
 		vec3 hv = normalize(l + v);
 		float nh = clamp(dot(n_w, hv), 0.0, 1.0);
-		float den = nh * nh * (a2 - 1.0) + 1.0;
-		float d_ggx = a2 / (PI * den * den);
+		// The slopes finer than the pixel are Gaussian (Cox and Munk 1954), as for the mirrored sky above, so the
+		// glitter's lobe is Beckmann (alpha^2 = 2 sigma^2), not GGX: GGX's long tail lit the whole near sea with a
+		// sheen of a sun far off its mirror direction that a sea does not show (and the path tracer, which draws
+		// those slopes one facet per path, no longer showed either).
+		float nh2 = max(nh * nh, 1e-4);
+		float d_bk = exp(-(1.0 - nh2) / (nh2 * a2)) / (PI * a2 * nh2 * nh2);
 		float fh = 0.02 + 0.98 * pow(1.0 - clamp(dot(hv, v), 0.0, 1.0), 5.0);
-		// Height-correlated Smith masking and shadowing (Heitz 2014) times n.l: the glitter fades out as a facet
-		// turns from the sun or the eye. Without it (G = 1, D F / 4 n.v) it peaked right where the normal turned
-		// away from a low sun and then cut to nothing, as dark hard-edged holes in the sun's path.
-		float vis = 0.5 / max(nl * sqrt(nv * nv * (1.0 - a2) + a2) + nv * sqrt(nl * nl * (1.0 - a2) + a2), 1e-5);
-		add += p_irradiance * (fh * d_ggx * vis * nl) * weight;
+		// Height-correlated Smith masking and shadowing for Beckmann (Walter et al. 2007's rational fit of
+		// Lambda) times n.l: the glitter fades out as a facet turns from the sun or the eye. Without it (G = 1,
+		// D F / 4 n.v) it peaked right where the normal turned away from a low sun and then cut to nothing, as
+		// dark hard-edged holes in the sun's path.
+		float ab = sqrt(a2);
+		float cv = nv / max(ab * sqrt(max(1.0 - nv * nv, 1e-6)), 1e-6);
+		float cl = nl / max(ab * sqrt(max(1.0 - nl * nl, 1e-6)), 1e-6);
+		float lv = cv < 1.6 ? (1.0 - 1.259 * cv + 0.396 * cv * cv) / (3.535 * cv + 2.181 * cv * cv) : 0.0;
+		float ll = cl < 1.6 ? (1.0 - 1.259 * cl + 0.396 * cl * cl) / (3.535 * cl + 2.181 * cl * cl) : 0.0;
+		float vis = 1.0 / ((1.0 + lv + ll) * 4.0 * max(nl * nv, 1e-5));
+		add += p_irradiance * (fh * d_bk * vis * nl) * weight;
 	}
 	return add;
 }

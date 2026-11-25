@@ -4019,3 +4019,26 @@ takes the surface as level over each point.
 At a sea cave the path-traced frame cost grew with pixels times samples, about 72 ms of 83 at 480x270 and one sample. No sea property changed it. The sea writes ALPHA (the shoreline cut-out) and TRANSMISSION, so it gets its own any-hit shader. That shader ran the whole surface (FFT cascades, foam, shore trains, rings) for every candidate: the camera's ray, each bounce, and each shadow ray crossing the water. At a cave almost every path crosses the sea several times. NVIDIA's ray tracing best practices say to keep any-hit shaders minimal: alpha test and little else.
 
 Built: `IN_ANY_HIT` is a constant built-in (true only in the any-hit stage, false in raster and the closest hit), so the compiler drops the branch a stage never takes. The sea's any-hit pass computes only the coverage (clip capsules, shore signal, edge softness) and the light it lets through. The foam's share of a shadow comes from the mesh's own foam (v_foam): the per-pixel lace is finer than a shadow shows. The river shader (physx_river_3d.cpp, also the sea caves' and PhysXLiveWater3D's) takes the same branch: the lapping waterline, the bank fade and the sediment, without the ripples, foam structure or live waves.
+
+## Grazing sea under the path tracer (25 Nov, coordinator: raster and PT water disagree at night)
+
+With the sun off, the path traced sea reflected about a third less sky toward the horizon than raster, and at
+8 m/s about half. Debug views ruled out the sky itself (mirror mode shows it at full strength) and the far-sea
+filter. The cause is the lobe the slopes finer than the pixel go to. Raster mirrors the sky over three
+Gauss-Hermite slopes of a Gaussian (Cox and Munk 1954; Bruneton, Neyret and Holzschuch 2010). The path tracer
+widened a GGX lobe of the same variance, and GGX's long tail of steep facets is what the eye sees at a grazing
+view: they face it, so their Fresnel is low. A Monte Carlo of both at roughness 0.26 and n.v = 0.04 gives 0.62
+for the Gaussian (raster's quadrature: 0.65) and 0.41 for GGX with Smith masking; multiple-scattering
+compensation (Turquin 2019) only wins back 0.05, so the loss is the distribution, not the energy.
+
+Built: under the path tracer the water draws one facet per path from that Gaussian, weighted by the area it
+turns toward the ray (rejection on the projected area, which is linear in the slope), and keeps a GGX lobe of
+`pathtraced_glint_roughness` (0.1) for the sun's next-event estimate. The passes average to the filtered sea.
+The swash's rough edge keeps its GGX roughness. Raster's sun and lamp glitter lobe moved from GGX to Beckmann
+(alpha^2 = 2 sigma^2, Walter et al. 2007's Smith fit) to match: GGX's tail had lit the whole near sea with a
+sheen of a sun far off its mirror direction.
+
+Result (sky only, horizon rows): calm sea, raster 121 / PT 84 before, 135 after; 8 m/s, raster 91 / PT 54
+before, 123 after, and within 10% of raster from 40 px below the horizon down. The sun's path narrows to its
+waves in both renderers. The last strip at the horizon of a windy sea is now brighter in PT than raster;
+raster there hides more slope (its footprint is unbounded at grazing, the path tracer's caps at 50 pixels).
