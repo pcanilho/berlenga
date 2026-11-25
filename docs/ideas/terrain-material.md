@@ -490,6 +490,16 @@ builds them as relief.
   mix lays a steep slope bare (the first test spots were steps on grey debris).
 - Setting: `Landscape3D.terracette_relief` (share, 1), published in `terrain_bank_relief.y` for the material.
 
+## Burn scars (25 Nov, world-links)
+
+WorldBurnScar3D drew no char on the ground. Landscape3D bakes WorldFire.burn_age_at into the stand map's blue
+channel (1 - years / 10.2, 0 never burnt; 2 m grid like the rooting), and reads only the area the fire's change log
+names again when the map has not moved. TerrainMaterial3D puts OVERLAY_BURN (scans.cfg [burn], burned_ground_01 at
+1 m) over soil and alluvium with a char tint: fresh char albedo about 0.05, grey-white ash in drifts for the first
+months, which wind and rain strip (Pereira et al. 2015); the darkening then goes over one to three years as the field
+layer regrows in patches 1.5 to 5 m across (Lentile et al. 2006; burn albedo recovery, Gatebe et al. 2014), not as one
+even fade. The scar's edge breaks up over a few metres. Rocks bench: `--world --burn=years[,r]`.
+
 ## Next round candidates (21 Nov, card posted)
 
 ### Rills and gullies as geometry (recommended)

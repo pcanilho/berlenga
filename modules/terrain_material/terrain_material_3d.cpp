@@ -177,17 +177,17 @@ void TerrainMaterialLayer::_bind_methods() {
 // --- TerrainMaterial3D --------------------------------------------------------------------------------------------
 
 static const char *LAYER_NAMES[TerrainMaterial3D::LAYER_MAX] = { "rock", "scree", "soil", "alluvium", "sand" };
-static const char *OVERLAY_NAMES[TerrainMaterial3D::OVERLAY_MAX] = { "rock_variant", "cliff", "cured", "bare_soil", "bare_alluvium", "bank", "trail", "bed", "beach", "mud" };
+static const char *OVERLAY_NAMES[TerrainMaterial3D::OVERLAY_MAX] = { "rock_variant", "cliff", "cured", "bare_soil", "bare_alluvium", "bank", "trail", "bed", "beach", "mud", "burn" };
 // Which layers each overlay sits on and the mask (a component of the layer function's om or om2) that carries it.
 // Overlays apply in this order, so a later one wins where masks overlap (a cliff face over the rock variant, mud over a trail).
 #define TM_L(m_layer) (1 << TerrainMaterial3D::m_layer)
 static const int OVERLAY_PARENTS[TerrainMaterial3D::OVERLAY_MAX] = {
 	TM_L(LAYER_ROCK), TM_L(LAYER_ROCK), TM_L(LAYER_SOIL) | TM_L(LAYER_ALLUVIUM), TM_L(LAYER_SOIL), TM_L(LAYER_ALLUVIUM),
 	TM_L(LAYER_SOIL) | TM_L(LAYER_ALLUVIUM), TM_L(LAYER_SOIL) | TM_L(LAYER_ALLUVIUM), TM_L(LAYER_ALLUVIUM), TM_L(LAYER_SAND),
-	TM_L(LAYER_SOIL) | TM_L(LAYER_ALLUVIUM)
+	TM_L(LAYER_SOIL) | TM_L(LAYER_ALLUVIUM), TM_L(LAYER_SOIL) | TM_L(LAYER_ALLUVIUM)
 };
 #undef TM_L
-static const char *OVERLAY_MASK[TerrainMaterial3D::OVERLAY_MAX] = { "om.y", "om.x", "om.x", "om.y", "om.y", "om.w", "om2.y", "om2.x", "om.x", "om.z" };
+static const char *OVERLAY_MASK[TerrainMaterial3D::OVERLAY_MAX] = { "om.y", "om.x", "om.x", "om.y", "om.y", "om.w", "om2.y", "om2.x", "om.x", "om.z", "om2.z" };
 static const Color LAYER_DEFAULT_COLORS[TerrainMaterial3D::LAYER_MAX] = {
 	Color(0.36, 0.35, 0.33), Color(0.41, 0.40, 0.37), Color(0.2, 0.22, 0.1), Color(0.28, 0.27, 0.16), Color(0.7, 0.62, 0.46)
 };
@@ -340,7 +340,7 @@ global uniform sampler2D terrain_frost_map : hint_default_black, filter_linear; 
 global uniform vec4 terrain_frost_rect; // its origin (x, z) and size (m); size 0 = none
 global uniform vec4 rock_far_cover_rect;
 global uniform vec4 rock_contact_rect;
-global uniform sampler2D terrain_stand_map : hint_default_black, filter_linear; // Landscape3D: r trail wear, g fresh rooting
+global uniform sampler2D terrain_stand_map : hint_default_black, filter_linear; // Landscape3D: r trail wear, g fresh rooting, b burn (1 - years / 10.2, 0 never)
 global uniform vec4 terrain_stand_rect;
 global uniform vec4 terrain_cliff_relief; // Landscape3D: cliff_relief (m), grid spacing (m), grid origin (x, z); x 0 = none
 global uniform vec4 terrain_bank_relief; // Landscape3D: bank_relief (m) in x (0 = none), terracette_relief (share) in y
@@ -781,6 +781,28 @@ float tm_climate_bare(vec3 p) {
 // The share of the soil's plant cover cured to straw by the dry season (wc_climate_cured above).
 float tm_climate_cured(vec3 p) {
 	return tm_bare_on ? wc_climate_cured(p) : 0.0;
+}
+// Burn scars. The stand map's burn channel b is 1 - years since the fire / 10.2 (0 never burnt). Burnt ground is char
+// and ash over the soil: fresh char has an albedo of about 0.04 to 0.06 and white ash of a complete burn 0.3 or more,
+// which wind and the first rains strip within months (Roy and Landmann 2005; Pereira et al. 2015, "Ash and soil
+// properties after fire"). The surface darkening of a burn then fades over one to three years as the field layer
+// regrows through it, in patches from surviving roots and seed, not as one even fade (Lentile et al. 2006; MODIS
+// burn albedo recovery, Gatebe et al. 2014). Returns the share of the pixel still reading burnt.
+float tm_burn_cover(vec3 p, float b) {
+	float age = (1.0 - b) * 10.2;
+	// Regrowth patches about 1.5 m and 5 m across: some ground closes over in the first season, some lies black for three.
+	float n = 0.6 * tm_vn(p * 0.67 + 131.0) + 0.4 * tm_vn(p * 0.2 + 137.0);
+	float left = 1.0 - smoothstep(0.4, 3.0, age + (n - 0.5) * 2.2);
+	// The scar's edge breaks up over a few metres (the fire went out in tongues and unburnt islands).
+	float edge = smoothstep(0.35, 0.6, b * 6.0 * (0.75 + 0.5 * tm_vn(p * 0.33 + 139.0)));
+	return clamp(left * edge, 0.0, 1.0);
+}
+// The burnt ground's colour: char, with grey-white ash in drifts in the first months.
+vec3 tm_burn_tint(vec3 p, float b) {
+	float age = (1.0 - b) * 10.2;
+	float ash = (1.0 - smoothstep(0.05, 0.4, age)) * smoothstep(0.45, 0.7, tm_vn(p * 0.9 + 149.0));
+	vec3 char_col = vec3(0.052, 0.047, 0.042) * (0.8 + 0.4 * tm_vn(p * 3.1 + 151.0));
+	return mix(char_col, vec3(0.32, 0.31, 0.29), ash);
 }
 // The cured cover's colour at p (its mean tm_cured_cover_color): a dry sward is not one straw tone but standing straw,
 // grey weathered litter (dead grass greys within a season as it weathers) and soil between the tussocks, a quarter of
@@ -2225,18 +2247,26 @@ void fragment() {
 	float tm_om_bank = 1.0 - smoothstep(0.6, 0.74, tm_pn.y);
 	// Trails walked bare (the stand map's wear, before the trail's own tint and tread below).
 	float tm_om_trail = 0.0;
+	// Burn scars (the stand map's burn channel): char and ash over the soil, fading as the cover regrows.
+	float tm_om_burn = 0.0;
+	float tm_burn_b = 0.0;
 	if (terrain_stand_rect.z > 0.0) {
 		vec2 suv = (wp.xz - terrain_stand_rect.xy) / terrain_stand_rect.zw;
 		if (all(greaterThan(suv, vec2(0.0))) && all(lessThan(suv, vec2(1.0)))) {
-			tm_om_trail = smoothstep(0.28, 0.48, textureLod(terrain_stand_map, suv, 0.0).r + (tm_vn(wp * vec3(2.2, 0.0, 2.2) + 31.0) - 0.5) * 0.4);
+			vec4 tm_st = textureLod(terrain_stand_map, suv, 0.0);
+			tm_om_trail = smoothstep(0.28, 0.48, tm_st.r + (tm_vn(wp * vec3(2.2, 0.0, 2.2) + 31.0) - 0.5) * 0.4);
+			if (tm_st.b > 0.01) {
+				tm_burn_b = tm_st.b;
+				tm_om_burn = tm_burn_cover(wp, tm_st.b);
+			}
 		}
 	}
 	vec4 tm_om_soil = vec4(tm_cured * (1.0 - tm_bare_k), tm_bare_k, tm_om_mud, tm_om_bank);
-	vec4 tm_om2_soil = vec4(0.0, tm_om_trail, 0.0, 0.0);
+	vec4 tm_om2_soil = vec4(0.0, tm_om_trail, tm_om_burn, 0.0);
 	vec4 tm_om_alluvium = vec4(0.8 * tm_cured * (1.0 - tm_bare_k), tm_bare_k, tm_om_mud, tm_om_bank);
 	// Channel beds: where the drainage area is a hundred times the alluvium's threshold the flow keeps the fines moving
 	// and leaves a bed of rounded gravel (bedload channels; Church 2006), on gentle ground.
-	vec4 tm_om2_alluvium = vec4(tm_drain > -1e8 ? smoothstep(tm_alluvium_area + 1.5, tm_alluvium_area + 2.5, tm_drain) * smoothstep(0.9, 0.96, tm_cn.y) : 0.0, tm_om_trail, 0.0, 0.0);
+	vec4 tm_om2_alluvium = vec4(tm_drain > -1e8 ? smoothstep(tm_alluvium_area + 1.5, tm_alluvium_area + 2.5, tm_drain) * smoothstep(0.9, 0.96, tm_cn.y) : 0.0, tm_om_trail, tm_om_burn, 0.0);
 	// The beach: sand within a few metres of the sea (the swash, berm and seabed); dunes inland keep the sand's own.
 	vec4 tm_om_sand = vec4(1.0 - smoothstep(tm_beach_height, tm_beach_height + 4.0, wp.y - tm_sea_level), 0.0, 0.0, 0.0);
 	vec4 tm_om2_sand = vec4(0.0);
@@ -2246,7 +2276,7 @@ void fragment() {
 		vec3 d;
 		float h;
 		tm_soil(wp, tm_pn, cliff, tm_dpx, tm_dpy, tm_om_soil, tm_om2_soil, a, r, d, h);
-		a *= mix(mix(tm_soil_color.rgb, tm_cured_cover(wp, tm_fp0, tm_bare_soil_color.rgb), tm_cured), tm_bare_soil_color.rgb, tm_bare_k) / max(tm_soil_color.rgb, vec3(1e-3));
+		a *= mix(mix(mix(tm_soil_color.rgb, tm_cured_cover(wp, tm_fp0, tm_bare_soil_color.rgb), tm_cured), tm_bare_soil_color.rgb, tm_bare_k), tm_burn_tint(wp, tm_burn_b), tm_om_burn) / max(tm_soil_color.rgb, vec3(1e-3));
 		alb[2] = a;
 		rgh[2] = r;
 		dns[2] = d;
@@ -2258,7 +2288,7 @@ void fragment() {
 		vec3 d;
 		float h;
 		tm_alluvium(wp, tm_pn, cliff, tm_dpx, tm_dpy, tm_om_alluvium, tm_om2_alluvium, a, r, d, h);
-		a *= mix(mix(tm_alluvium_color.rgb, tm_cured_cover(wp, tm_fp0, tm_bare_alluvium_color.rgb), 0.8 * tm_cured), tm_bare_alluvium_color.rgb, tm_bare_k) / max(tm_alluvium_color.rgb, vec3(1e-3));
+		a *= mix(mix(mix(tm_alluvium_color.rgb, tm_cured_cover(wp, tm_fp0, tm_bare_alluvium_color.rgb), 0.8 * tm_cured), tm_bare_alluvium_color.rgb, tm_bare_k), tm_burn_tint(wp, tm_burn_b), tm_om_burn) / max(tm_alluvium_color.rgb, vec3(1e-3));
 		alb[3] = a;
 		rgh[3] = r;
 		dns[3] = d;
@@ -3554,6 +3584,7 @@ void TerrainMaterial3D::_bind_methods() {
 	BIND_ENUM_CONSTANT(OVERLAY_BED);
 	BIND_ENUM_CONSTANT(OVERLAY_BEACH);
 	BIND_ENUM_CONSTANT(OVERLAY_MUD);
+	BIND_ENUM_CONSTANT(OVERLAY_BURN);
 	BIND_ENUM_CONSTANT(OVERLAY_MAX);
 }
 

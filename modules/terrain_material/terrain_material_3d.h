@@ -115,6 +115,7 @@ public:
 		OVERLAY_BED, // channel beds (the generator's drainage area a hundred times the alluvium's): rounded river gravel
 		OVERLAY_BEACH, // sand the generator laid as beach, and the seabed
 		OVERLAY_MUD, // ground turned by ruts, digs and prints (GroundSurface3D's exposed soil)
+		OVERLAY_BURN, // burn scars (WorldFire's burn age, Landscape3D's stand map): charred ground, fading as the cover regrows
 		OVERLAY_MAX,
 	};
 

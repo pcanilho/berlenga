@@ -31,6 +31,7 @@ extends Node3D
 #   --type=granite|limestone|sandstone|basalt|slate   the world's rock (default granite; soft beds limestone)
 #   --stand-ins           with --world: the old grey spheres at the rockfall blocks instead of the field (before shots)
 #   --no-rocks            with --world: no rocks at all
+#   --burn=years[,r]      with --world: a burn scar that old, r m round (6), 2 m beyond the spot (the terrain's char overlay)
 #   --cell=m              with --world: the generator's cell size (8; 4 for close shore and cliff shots)
 #   --form=stack|arch     with --view=coast: frame the biggest stack or arch; --form=ledge with --view=cliff: the ledge slabs; --form=ledge-run: their longest run along a lip; --form=pavement|fin|hoodoo|pothole|goblin|cave_mouth with --view=landform
 #   --seaward [--side=f --cam-height=m --look-height=m] with --view=coast: from the land side, looking out to sea
@@ -963,6 +964,17 @@ func _world() -> void:
 	spot.y = gen.get_height(spot)
 	focus.global_position = spot
 	spot_pos = spot
+	if args.has("burn"):
+		# --burn=years[,r]: a burn scar that old (WorldBurnScar3D, r m round, 6) centred 2 m beyond the spot: the
+		# terrain's burn overlay (Landscape3D's stand map, TerrainMaterial3D's char) over the soil.
+		var bp: PackedStringArray = str(args["burn"]).split(",")
+		var scar := WorldBurnScar3D.new()
+		scar.age_years = float(bp[0])
+		var br := float(bp[1]) if bp.size() > 1 else 6.0
+		scar.size = Vector2(br, br) * 2.0
+		add_child(scar)
+		scar.global_position = spot + Vector3(0, 0, 2)
+		print("burn scar %.1f years, %.0f m across, burn age at the spot %.2f" % [scar.age_years, br * 2.0, WorldContracts.get_fire().burn_age_at(spot)])
 	if args.has("stand-test"):
 		var stand: WorldStand = WorldContracts.get_stand()
 		var at := spot
