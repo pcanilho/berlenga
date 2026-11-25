@@ -355,6 +355,21 @@ static real_t rf_height(const TerrainGenerator3D *p_gen, const Vector3 &p) {
 	return p_gen->get_height(Vector3(CLAMP(p.x, w.position.x, w.get_end().x), p.y, CLAMP(p.z, w.position.y, w.get_end().y)));
 }
 
+// The cliff kit's boxes (docs/ideas/rocks.md, "Cliff kit recess contract"): fixed by the world (hashes of world
+// positions, no cell's random state), so the pillars a cell lays and the recess a mesh worker reads agree.
+static const float RF_KIT_SQUARE = 8.0f;
+struct KitBoxLess {
+	_FORCE_INLINE_ bool operator()(const RockField3D::KitBox &p_a, const RockField3D::KitBox &p_b) const {
+		return p_a.cid != p_b.cid ? p_a.cid < p_b.cid : (p_a.column != p_b.column ? p_a.column < p_b.column : p_a.segment < p_b.segment);
+	}
+};
+static uint32_t rf_kit_hash(int64_t p_i, uint32_t p_salt) {
+	return hash_fmix32(hash_murmur3_one_32(uint32_t(p_i) ^ uint32_t(p_i >> 32) * 0x9e3779b1u, p_salt));
+}
+static float rf_kit_u01(uint32_t p_h) {
+	return float(p_h & 0xffffu) / 65535.0f;
+}
+
 // Ground normal from the generator's height, by central differences.
 Vector3 ground_normal(const TerrainGenerator3D *p_gen, real_t p_x, real_t p_z, real_t p_e) {
 	const real_t hx = rf_height(p_gen, Vector3(p_x + p_e, 0, p_z)) - rf_height(p_gen, Vector3(p_x - p_e, 0, p_z));
@@ -1566,8 +1581,7 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_cell_rect, uint32_t p_see
 			};
 			LocalVector<KitPiece> kits;
 			HashMap<Vector2i, LocalVector<uint32_t>> kit_grid; // 8 m plan squares: the pieces reaching into each
-			const float kit_tan = Math::tan(Math::deg_to_rad(50.0f));
-			const float kit_tier = 5.5f; // m, mean pillar height
+			const float kit_tan = Math::tan(Math::deg_to_rad(40.0f)); // fluted rock faces from 40 degrees (bare rock: exposure 0.5 or more below 50)
 			// Whether a point of the face lies inside a kit piece (a bed block there would be buried in it).
 			auto in_kit = [&](const Vector3 &p_point) {
 				const LocalVector<uint32_t> *list = kit_grid.getptr(Vector2i(int(Math::floor(p_point.x / 8.0f)), int(Math::floor(p_point.z / 8.0f))));
@@ -1583,6 +1597,94 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_cell_rect, uint32_t p_see
 				}
 				return false;
 			};
+			// The cliff kit (docs/ideas/rocks.md, "Cliff kit on fluted walls" and "Cliff kit recess contract"): the wall
+			// built of joint-bounded pillars (RockGenerator::FAMILY_CLIFF_PILLAR) in columns running its whole height,
+			// one per box of the kit's cache (_kit_square), whose roots fall in this cell. The landscape steps its drawn
+			// face back under the same boxes (WorldGround.recess_at), so the pillars are the visible wall. Where the kit
+			// builds the wall the bed blocks stay off it (they read as tiles laid over the face).
+			if (cliff_kit) {
+				const Rect2i squares(int(Math::floor(p_rect.position.x / RF_KIT_SQUARE)), int(Math::floor(p_rect.position.y / RF_KIT_SQUARE)),
+						int(Math::floor(p_rect.get_end().x / RF_KIT_SQUARE)) - int(Math::floor(p_rect.position.x / RF_KIT_SQUARE)) + 1,
+						int(Math::floor(p_rect.get_end().y / RF_KIT_SQUARE)) - int(Math::floor(p_rect.position.y / RF_KIT_SQUARE)) + 1);
+				_kit_ensure(gen, squares);
+				LocalVector<KitBox> boxes;
+				{
+					RWLockRead kl(kit_lock);
+					for (int sy = squares.position.y; sy < squares.get_end().y; sy++) {
+						for (int sx = squares.position.x; sx < squares.get_end().x; sx++) {
+							if (const LocalVector<KitBox> *list = kit_cache.getptr(Vector2i(sx, sy))) {
+								for (const KitBox &b : *list) {
+									if (p_rect.has_point(Vector2(b.surface.x, b.surface.z))) {
+										boxes.push_back(b);
+									}
+								}
+							}
+						}
+					}
+				}
+				for (const KitBox &b : boxes) {
+					const RockGenerator::RockType type = _type_at(gen, b.surface);
+					const uint32_t key = _library_key(type, RockGenerator::FAMILY_CLIFF_PILLAR, 0);
+					Library *lib = _ensure_library(key);
+					if (!lib) {
+						continue;
+					}
+					const float tier = 2.0f * b.half_up, width = 2.0f * b.half_along;
+					// Of three shapes, the one whose height to width best matches the segment to the column.
+					uint16_t var = 0;
+					{
+						const float want = tier / MAX(width, 0.05f);
+						float best = 1e9f;
+						for (int q = 0; q < 3; q++) {
+							const uint16_t v = uint16_t(rf_kit_hash(b.segment * 3 + q, b.cid ^ 0x7a11u) % lib->meshes.size());
+							const Vector3 ax = lib->axes[v];
+							const float d = Math::abs(Math::log(MAX(ax.x, 0.01f) / MAX(ax.y, 0.01f) / want));
+							if (d < best) {
+								best = d;
+								var = v;
+							}
+						}
+					}
+					const Vector3 axes = lib->axes[var];
+					// Fills its segment and its column, less the open joints (segments meet with a little overlap: no
+					// dark slot between them).
+					const float sc = MIN(1.06f * tier / MAX(2.0f * axes.x, 0.05f), 1.05f * width / MAX(2.0f * axes.y, 0.05f));
+					const float ext_up = float(axes.x * sc), ext_in = float(axes.z * sc);
+					// Its back buried behind the recessed face, however thin the shape.
+					const float pfront = cliff_recess ? MIN(b.front, b.recess + 2.0f * ext_in - 0.15f) : b.front;
+					// Leaning back into the wall by as much as it stands proud: its top stands out, its foot is buried in
+					// the face below, so no segment shows its underside (seen from the foot of the cliff a proud foot is a
+					// black slot); where one segment ends the next starts behind it.
+					const float lean_back = Math::asin(CLAMP((0.6f + 0.25f * ext_in) / MAX(2.0f * ext_up, 0.1f), 0.0f, 0.25f));
+					const Vector3 kup2 = (b.up * Math::cos(lean_back) + b.out * Math::sin(lean_back)).normalized();
+					Basis kb;
+					kb.set_column(0, kup2);
+					kb.set_column(1, b.along);
+					kb.set_column(2, kup2.cross(b.along).normalized());
+					kb = Basis(b.out, b.lean + (rf_kit_u01(rf_kit_hash(b.segment, b.cid ^ 0x13c7u)) - 0.5f) * 0.03f) * kb;
+					Stone st;
+					st.layer = p_layer;
+					st.library = key;
+					st.variant = var;
+					st.scale = sc;
+					st.basis = kb * Basis().scaled(Vector3(sc, sc, sc));
+					st.position = b.surface + b.out * (pfront - ext_in);
+					st.ground = b.surface.y - 50.0f;
+					st.footprint = 0.0f;
+					r_stones.push_back(st);
+					const uint32_t ki = kits.size();
+					kits.push_back({ st.position, b.up, b.along, b.out, ext_up, float(axes.y * sc), ext_in });
+					const Vector2i g0(int(Math::floor((b.surface.x - 8.0f) / 8.0f)), int(Math::floor((b.surface.z - 8.0f) / 8.0f)));
+					for (int gy = 0; gy < 3; gy++) {
+						for (int gx = 0; gx < 3; gx++) {
+							kit_grid[Vector2i(g0.x + gx, g0.y + gy)].push_back(ki);
+						}
+					}
+					if (int(r_stones.size()) >= max_stones_per_cell) {
+						return;
+					}
+				}
+			}
 			for (real_t z = p_rect.position.y; z < p_rect.get_end().y; z += sub) {
 				for (real_t x = p_rect.position.x; x < p_rect.get_end().x; x += sub) {
 					const Vector3 c(x + sub * 0.5f, 0, z + sub * 0.5f);
@@ -1594,7 +1696,7 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_cell_rect, uint32_t p_see
 					const real_t e = 1.0;
 					const Vector2 grad((rf_height(gen, c + Vector3(e, 0, 0)) - rf_height(gen, c - Vector3(e, 0, 0))) / (2.0 * e), (rf_height(gen, c + Vector3(0, 0, e)) - rf_height(gen, c - Vector3(0, 0, e))) / (2.0 * e));
 					const float gl = grad.length();
-					if (!(gl >= min_tan && gl <= max_tan) || !Math::is_finite(hc)) {
+					if (!(gl >= (cliff_kit ? kit_tan : min_tan) && gl <= max_tan) || !Math::is_finite(hc)) {
 						continue; // also off the generated world, where the heights are NaN
 					}
 					// Soil does not hold past about 45 degrees: a sheer face is bare rock whatever the exposure map's
@@ -1603,160 +1705,8 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_cell_rect, uint32_t p_see
 						continue;
 					}
 					const Vector2 up_dir = grad / gl; // uphill, in plan
-					// The cliff kit (docs/ideas/rocks.md, "Cliff kit on fluted walls"): where the face is too rounded or
-					// fluted for blocks set into it (the bend and fit tests below turn them away), tall joint-bounded
-					// pillars wrap it. Each piece's plane is fitted to the face over its own footprint: its front stands at
-					// the ridges, its back reaches behind the grooves, so the flutes vanish inside real rock geometry and no
-					// piece floats. Tiers of 4 to 7 m up the face, pillars a third to three fifths as wide, their joints
-					// shared along a world axis like the beds'.
 					if (cliff_kit && gl >= kit_tan) {
-						const real_t ek = 2.5; // the face's plane over a flute's width, not one flank of it
-						const Vector2 gk((rf_height(gen, c + Vector3(ek, 0, 0)) - rf_height(gen, c - Vector3(ek, 0, 0))) / (2.0 * ek), (rf_height(gen, c + Vector3(0, 0, ek)) - rf_height(gen, c - Vector3(0, 0, ek))) / (2.0 * ek));
-						const float glk = gk.length();
-						if (glk >= min_tan && Math::is_finite(glk)) {
-							const Vector2 kup = gk / glk;
-							const Vector2 kstrike(-kup.y, kup.x);
-							const Vector3 kn = Vector3(-gk.x, 1.0f, -gk.y).normalized();
-							const Vector3 kface_up = (Vector3(0, 1, 0) - kn * kn.y).normalized();
-							const Vector3 kx3 = Vector3(kstrike.x, 0, kstrike.y);
-							const bool kalong_x = Math::abs(kstrike.x) >= Math::abs(kstrike.y);
-							const float kcomp = kalong_x ? kstrike.x : kstrike.y;
-							const float khalf = float(sub) * 0.5f;
-							const float ky0 = float(hc) - glk * khalf, ky1 = float(hc) + glk * khalf;
-							const Rect2 ksub(c.x - khalf, c.z - khalf, float(sub), float(sub));
-							const int64_t t0 = int64_t(Math::floor(ky0 / kit_tier)) - 1, t1 = int64_t(Math::floor(ky1 / kit_tier)) + 1;
-							for (int64_t t = t0; t <= t1; t++) {
-								const float tb0 = (float(t) + 0.3f * (u01(bed_hash(t, 0x1a7eu)) - 0.5f)) * kit_tier;
-								const float tb1 = (float(t + 1) + 0.3f * (u01(bed_hash(t + 1, 0x1a7eu)) - 0.5f)) * kit_tier;
-								const float tier = tb1 - tb0;
-								const float yk = 0.5f * (tb0 + tb1);
-								const float along = (yk - float(hc)) / glk;
-								if (Math::abs(along) > khalf) {
-									continue;
-								}
-								const uint32_t tid = bed_hash(t, 0x4c11u);
-								const float width = tier * (0.33f + 0.27f * u01(tid));
-								const float spacing = width / MAX(Math::abs(kcomp), 0.7f);
-								const Vector2 pxz = Vector2(c.x, c.z) + kup * along;
-								const float s_here = kalong_x ? pxz.x : pxz.y;
-								const int64_t j0 = int64_t(Math::floor((s_here - float(sub)) / spacing)) - 1;
-								const int64_t j1 = int64_t(Math::floor((s_here + float(sub)) / spacing)) + 1;
-								for (int64_t j = j0; j <= j1; j++) {
-									const float ja = (float(j) + 0.5f * (u01(bed_hash(j, tid)) - 0.5f)) * spacing;
-									const float jb = (float(j + 1) + 0.5f * (u01(bed_hash(j + 1, tid)) - 0.5f)) * spacing;
-									const Vector2 bp = pxz + kstrike * ((0.5f * (ja + jb) - s_here) / kcomp);
-									if (!ksub.has_point(bp) || !p_rect.has_point(bp)) {
-										continue;
-									}
-									const float span = (jb - ja) * Math::abs(kcomp);
-									const Vector3 pos3(bp.x, 0, bp.y);
-									const RockGenerator::RockType type = _type_at(gen, pos3 + Vector3(0, yk, 0));
-									const uint32_t key = _library_key(type, RockGenerator::FAMILY_CLIFF_BLOCK, 0);
-									Library *lib = _ensure_library(key);
-									if (!lib) {
-										continue;
-									}
-									// Of three shapes, the one whose long axis to short axis best matches the tier to the span:
-									// stood on end, x up the face, the short axis along the strike, the middle one into the wall.
-									uint16_t var = 0;
-									{
-										const float want = tier / MAX(span, 0.05f);
-										float best = 1e9f;
-										for (int q = 0; q < 3; q++) {
-											const uint16_t v = pick_variant(lib);
-											const Vector3 ax = lib->axes[v];
-											const float d = Math::abs(Math::log(MAX(ax.x, 0.01f) / MAX(ax.y, 0.01f) / want));
-											if (d < best) {
-												best = d;
-												var = v;
-											}
-										}
-									}
-									const Vector3 axes = lib->axes[var];
-									const float sc0 = (0.9f + 0.08f * rng.randf()) * MIN(tier / MAX(2.0f * axes.x, 0.05f), 1.2f * span / MAX(2.0f * axes.y, 0.05f));
-									// Where a groove runs deeper than the piece reaches (the darkest flutes), a larger piece of the
-									// same shape, deeper as well as wider and taller, up to 1.8 times: it spans the groove and its
-									// back still reaches behind it. Fitted again over its own, larger footprint.
-									// Each pillar sits a little up or down its tier (the joints are not all at one level).
-									const Vector3 surface = Vector3(bp.x, yk, bp.y) + kface_up * ((rng.randf() - 0.5f) * 0.3f * tier);
-									float sc = sc0, ext_up = 0.0f, ext_str = 0.0f, ext_in = 0.0f, front = 0.0f;
-									bool fits = false;
-									for (int grow = 0; grow < 3 && !fits; grow++) {
-										sc = sc0 * (grow == 0 ? 1.0f : (grow == 1 ? 1.35f : 1.8f));
-										ext_up = axes.x * sc;
-										ext_str = axes.y * sc;
-										ext_in = axes.z * sc;
-										// The face over the piece's footprint, measured square to the fitted plane: + where the
-										// ground stands in front of it (a ridge between flutes), - behind it (a groove).
-										float tmax = -1e9f, tmin = 1e9f;
-										bool off = false;
-										for (int a = -1; a <= 1 && !off; a++) {
-											for (int b2 = -1; b2 <= 1; b2++) {
-												const Vector3 q = surface + kface_up * (0.9f * ext_up * a) + kx3 * (0.9f * ext_str * b2);
-												const real_t hq = rf_height(gen, q);
-												if (!Math::is_finite(hq)) {
-													off = true;
-													break;
-												}
-												const float tq = float(hq - q.y) * kn.y;
-												tmax = MAX(tmax, tq);
-												tmin = MIN(tmin, tq);
-											}
-										}
-										// The front a little proud of the highest ridge: the drawn face (the terrain mesh, its
-										// relief) stands off the bilinear heights by some decimetres on a steep face. No piece over
-										// a convex corner or a ledge (a ridge 2.4 m out of the plane: it would stand out as a
-										// slab), and its back behind the deepest groove (or it hangs in the air).
-										front = tmax + 0.3f;
-										if (off || tmax > 2.4f) {
-											break;
-										}
-										fits = front - 2.0f * ext_in <= tmin - 0.15f;
-										// And the wall goes on past the piece's top and sides: at a summit, a spire's tip or an
-										// arête the ground falls away there, and a piece would stand above the skyline.
-										for (int e2 = 0; e2 < 3 && fits; e2++) {
-											const Vector3 q = surface + (e2 == 0 ? kface_up * ext_up : kx3 * (e2 == 1 ? ext_str : -ext_str));
-											const real_t hq = rf_height(gen, q);
-											fits = Math::is_finite(hq) && hq >= q.y - (e2 == 0 ? 0.25f * ext_up : 0.6f * ext_str); // the sides less strict: a pillar may round an arête
-										}
-									}
-									if (!fits) {
-										continue;
-									}
-									if (rng.randf() > 0.9f * float(density)) {
-										continue;
-									}
-									Basis kb;
-									const Vector3 kz = kface_up.cross(kx3).normalized();
-									kb.set_column(0, kface_up);
-									kb.set_column(1, kx3);
-									kb.set_column(2, kz);
-									kb = Basis(kn, (rng.randf() - 0.5f) * 0.08f) * kb; // a pillar leaning a little off the dip
-									Stone st;
-									st.layer = p_layer;
-									st.library = key;
-									st.variant = var;
-									st.scale = sc;
-									st.basis = kb * Basis().scaled(Vector3(sc, sc, sc));
-									st.position = surface + kn * (front - ext_in);
-									st.ground = yk - 50.0f;
-									st.footprint = 0.0f;
-									r_stones.push_back(st);
-									// Blocks of the beds behind it would be buried: they test against these.
-									const uint32_t ki = kits.size();
-									kits.push_back({ st.position, kface_up, kx3, kn, ext_up, ext_str, ext_in });
-									const Vector2i g0(int(Math::floor((bp.x - 8.0f) / 8.0f)), int(Math::floor((bp.y - 8.0f) / 8.0f)));
-									for (int gy = 0; gy < 3; gy++) {
-										for (int gx = 0; gx < 3; gx++) {
-											kit_grid[Vector2i(g0.x + gx, g0.y + gy)].push_back(ki);
-										}
-									}
-									if (int(r_stones.size()) >= max_stones_per_cell) {
-										return;
-									}
-								}
-							}
-						}
+						continue; // the kit's wall: no bed blocks laid over it
 					}
 					// Only where the terrain mesh really has this face: across one terrain cell up and down the fall
 					// line the face must stay near planar. Where the heightfield cannot hold the wall (a near-vertical
@@ -3379,6 +3329,9 @@ static float rock_surface_age(RockGenerator::Family p_family) {
 			return 0.4f; // soft rock, its skin keeps flaking
 		case RockGenerator::FAMILY_FIN:
 			return 0.6f;
+		case RockGenerator::FAMILY_CLIFF_BLOCK:
+		case RockGenerator::FAMILY_CLIFF_PILLAR:
+			return 0.45f; // a sheer face sheds its skin and blocks: lichen in patches, not on every block
 		default:
 			return 1.0f;
 	}
@@ -3391,7 +3344,7 @@ Ref<ShaderMaterial> RockField3D::_material(RockGenerator::RockType p_type, RockG
 	// they take it too: in their own stone colour they read as pale pieces set on the hill or in the sea.
 	const bool p_group = p_family == RockGenerator::FAMILY_HOODOO || p_family == RockGenerator::FAMILY_GOBLIN;
 	// Ledge slabs are the caprock bed of the bench itself, standing out over its lip: the wall's rock too.
-	const bool p_cliff = p_family == RockGenerator::FAMILY_CAVE_MOUTH || p_family == RockGenerator::FAMILY_CLIFF_BLOCK || p_family == RockGenerator::FAMILY_LEDGE || p_family == RockGenerator::FAMILY_SEA_STACK || p_family == RockGenerator::FAMILY_SEA_ARCH || p_group;
+	const bool p_cliff = p_family == RockGenerator::FAMILY_CAVE_MOUTH || p_family == RockGenerator::FAMILY_CLIFF_BLOCK || p_family == RockGenerator::FAMILY_CLIFF_PILLAR || p_family == RockGenerator::FAMILY_LEDGE || p_family == RockGenerator::FAMILY_SEA_STACK || p_family == RockGenerator::FAMILY_SEA_ARCH || p_group;
 	const float age = rock_surface_age(p_family);
 	const int mkey = int(p_type) + (p_cliff ? 1000 : 0) + int(age * 10.0f + 0.5f) * 10000 + (p_detail ? 2000 : 0) + (p_group ? 4000 : 0);
 	if (Ref<ShaderMaterial> *m = materials.getptr(mkey)) {
@@ -7951,6 +7904,12 @@ void RockField3D::restore_broken() {
 
 void RockField3D::rebuild() {
 	clear();
+	{
+		const TerrainGenerator3D *g = is_inside_tree() ? _get_generator() : nullptr;
+		if ((g ? g->get_instance_id() : ObjectID()) != kit_generator) {
+			_kit_reset(true); // the kit's boxes outlive rebuilds (the pillars and the drawn recess stay one), not a new ground
+		}
+	}
 	contact_dirty = true;
 	auto_ground_found = false;
 	if (ground_material.is_null() && is_inside_tree()) {
@@ -9201,6 +9160,9 @@ void RockField3D::set_layer_enabled(int p_layer, bool p_enabled) {
 	ERR_FAIL_INDEX(p_layer, LAYER_MAX);
 	layer_enabled[p_layer] = p_enabled;
 	_sync_scree_blocks();
+	if (p_layer == LAYER_CLIFF) {
+		_kit_reset(true);
+	}
 	rebuild();
 }
 
@@ -9212,6 +9174,9 @@ bool RockField3D::is_layer_enabled(int p_layer) const {
 void RockField3D::set_layer_density(int p_layer, real_t p_density) {
 	ERR_FAIL_INDEX(p_layer, LAYER_MAX);
 	layer_density[p_layer] = MAX(p_density, real_t(0.0));
+	if (p_layer == LAYER_CLIFF) {
+		_kit_reset(true);
+	}
 	rebuild();
 }
 
@@ -9954,6 +9919,344 @@ void RockField3D::contract_stones_near(const Rect2 &p_rect, LocalVector<float> &
 	}
 }
 
+// The kit's boxes whose roots fall in one 8 m plan square. The wall is walked in 3 m squares of a world grid: each
+// fits the face's plane over a flute's width, and a vertical joint set spaced along one world axis cuts it into
+// columns running its whole height (through-going joints cross the beds: Narr and Suppe 1991; Hoek and Bray's
+// toppling columns), each broken across by bed joints at its own heights, never in rows with its neighbours. Every
+// 3 m square proposes the segments near it; each segment is set by the square nearest its root (so none is lost
+// between two squares' planes), then fitted to the unrecessed drawn face (the heightfield plus the landscape's relief)
+// over its footprint. The squares round the 8 m square are read too, so each square finds the same winners.
+void RockField3D::_kit_square(const TerrainGenerator3D *p_gen, const Vector2i &p_square, LocalVector<KitBox> &r_boxes) const {
+	const Rect2 sq_rect(p_square.x * RF_KIT_SQUARE, p_square.y * RF_KIT_SQUARE, RF_KIT_SQUARE, RF_KIT_SQUARE);
+	const Rect2 world = p_gen->get_result_rect();
+	if (!world.intersects(sq_rect)) {
+		return;
+	}
+	const real_t sub = 3.0;
+	const float reach = 4.5f; // m in plan: a segment's root from the square that proposes it
+	const float kit_tan = Math::tan(Math::deg_to_rad(40.0f)); // fluted rock faces from 40 degrees
+	const float max_tan = Math::tan(Math::deg_to_rad(float(CLAMP(cliff_block_max_slope, real_t(50.0), real_t(89.0)))));
+	const float sheer_tan = Math::tan(Math::deg_to_rad(50.0f)) * 0.999f;
+	const WorldGround *kwg = WorldContracts::ground();
+	auto kit_h = [&](const Vector3 &p_q) -> real_t {
+		real_t h = rf_height(p_gen, p_q);
+		if (kwg && Math::is_finite(h)) {
+			const Vector2 rl = kwg->relief_at(Vector3(p_q.x, h, p_q.z), true, false);
+			if (rl.y > 0.0f && Math::is_finite(rl.x)) {
+				h += rl.x;
+			}
+		}
+		return h;
+	};
+	struct Candidate {
+		float dist2 = 1e30f;
+		Vector2 bp;
+		float yk = 0.0f, tier = 0.0f, width = 0.0f, lean = 0.0f;
+		Vector3 up, along, out;
+		int64_t column = 0, segment = 0;
+		uint32_t cid = 0;
+	};
+	HashMap<Vector3i, Candidate> best; // (axis, column, segment)
+	const Rect2 grown = sq_rect.grow(reach + 0.5f);
+	const int x0 = int(Math::floor(grown.position.x / sub)), x1 = int(Math::floor(grown.get_end().x / sub));
+	const int z0 = int(Math::floor(grown.position.y / sub)), z1 = int(Math::floor(grown.get_end().y / sub));
+	for (int zi = z0; zi <= z1; zi++) {
+		for (int xi = x0; xi <= x1; xi++) {
+			const Vector3 c((xi + 0.5f) * sub, 0, (zi + 0.5f) * sub);
+			if (!world.has_point(Vector2(c.x, c.z))) {
+				continue;
+			}
+			const float rock = float(p_gen->get_rock_exposure(c));
+			if (rock < 0.15f) {
+				continue;
+			}
+			const real_t hc = rf_height(p_gen, c);
+			const real_t e = 1.0;
+			const Vector2 grad((rf_height(p_gen, c + Vector3(e, 0, 0)) - rf_height(p_gen, c - Vector3(e, 0, 0))) / (2.0 * e), (rf_height(p_gen, c + Vector3(0, 0, e)) - rf_height(p_gen, c - Vector3(0, 0, e))) / (2.0 * e));
+			const float gl = grad.length();
+			if (!(gl >= kit_tan && gl <= max_tan) || !Math::is_finite(hc)) {
+				continue;
+			}
+			if (rock < (gl > sheer_tan ? 0.15f : 0.5f)) {
+				continue; // soil does not hold on a sheer face: bare rock there whatever the exposure's blend says
+			}
+			const real_t ek = 2.5; // the face's plane over a flute's width, not one flank of it
+			const Vector2 gk((rf_height(p_gen, c + Vector3(ek, 0, 0)) - rf_height(p_gen, c - Vector3(ek, 0, 0))) / (2.0 * ek), (rf_height(p_gen, c + Vector3(0, 0, ek)) - rf_height(p_gen, c - Vector3(0, 0, ek))) / (2.0 * ek));
+			const float glk = gk.length();
+			if (!(glk >= kit_tan) || !Math::is_finite(glk)) {
+				continue;
+			}
+			const Vector2 kup = gk / glk;
+			const Vector2 kstrike(-kup.y, kup.x);
+			const Vector3 kn = Vector3(-gk.x, 1.0f, -gk.y).normalized();
+			const Vector3 kface_up = (Vector3(0, 1, 0) - kn * kn.y).normalized();
+			const Vector3 kx3 = Vector3(kstrike.x, 0, kstrike.y);
+			const bool kalong_x = Math::abs(kstrike.x) >= Math::abs(kstrike.y);
+			const float kcomp = kalong_x ? kstrike.x : kstrike.y;
+			const float ky0 = float(hc) - glk * reach, ky1 = float(hc) + glk * reach;
+			const float col_s = 3.2f; // m along the world axis: the mean column width
+			const Vector2 cxz(c.x, c.z);
+			const float s_c = kalong_x ? cxz.x : cxz.y;
+			const int64_t j0 = int64_t(Math::floor((s_c - reach) / col_s)) - 1;
+			const int64_t j1 = int64_t(Math::floor((s_c + reach) / col_s)) + 1;
+			for (int64_t j = j0; j <= j1; j++) {
+				const uint32_t cid = rf_kit_hash(j, kalong_x ? 0x9c35u : 0x4e1bu);
+				const float ja = (float(j) + 0.45f * (rf_kit_u01(rf_kit_hash(j, 0x2d71u)) - 0.5f)) * col_s;
+				const float jb = (float(j + 1) + 0.45f * (rf_kit_u01(rf_kit_hash(j + 1, 0x2d71u)) - 0.5f)) * col_s;
+				const float width = (jb - ja) * Math::abs(kcomp); // across the face, metres
+				const float seg = width * (2.4f + 1.4f * rf_kit_u01(cid)); // the column's own segment length and phase
+				const float phase = rf_kit_u01(rf_kit_hash(j, 0x61f0u)) * seg;
+				const float lean = (rf_kit_u01(rf_kit_hash(j, 0x0b5eu)) - 0.5f) * 0.07f; // the column's own tilt, all the way up
+				const int64_t k0 = int64_t(Math::floor((ky0 - phase) / seg)) - 1, k1 = int64_t(Math::floor((ky1 - phase) / seg)) + 1;
+				for (int64_t k = k0; k <= k1; k++) {
+					const float yb0 = phase + (float(k) + 0.3f * (rf_kit_u01(rf_kit_hash(k, cid)) - 0.5f)) * seg;
+					const float yb1 = phase + (float(k + 1) + 0.3f * (rf_kit_u01(rf_kit_hash(k + 1, cid)) - 0.5f)) * seg;
+					const float yk = 0.5f * (yb0 + yb1);
+					const float along = (yk - float(hc)) / glk;
+					const Vector2 pxz = cxz + kup * along;
+					const float s_here = kalong_x ? pxz.x : pxz.y;
+					const Vector2 bp = pxz + kstrike * ((0.5f * (ja + jb) - s_here) / kcomp);
+					const float d2 = bp.distance_squared_to(cxz);
+					if (d2 > reach * reach) {
+						continue;
+					}
+					Candidate &cand = best[Vector3i(kalong_x ? 0 : 1, int(j), int(k))];
+					if (d2 < cand.dist2) {
+						cand.dist2 = d2;
+						cand.bp = bp;
+						cand.yk = yk;
+						cand.tier = yb1 - yb0;
+						cand.width = width;
+						cand.lean = lean;
+						cand.up = kface_up;
+						cand.along = kx3;
+						cand.out = kn;
+						cand.column = j;
+						cand.segment = k;
+						cand.cid = cid;
+					}
+				}
+			}
+		}
+	}
+	for (const KeyValue<Vector3i, Candidate> &kv : best) {
+		const Candidate &cd = kv.value;
+		if (!sq_rect.has_point(cd.bp) || !world.has_point(cd.bp)) {
+			continue;
+		}
+		const Vector3 surface(cd.bp.x, cd.yk, cd.bp.y);
+		const float half_up = 0.5f * cd.tier, half_along = 0.5f * cd.width;
+		const Vector3 &kn = cd.out;
+		// The face over the footprint, square to the fitted plane (+ a ridge, - a groove), over the segment and most of
+		// a segment above and below it: neighbouring segments of a column then stand at much the same front, so none
+		// overhangs the one under it.
+		float tmax = -1e9f, tmin = 1e9f, tsum = 0.0f;
+		int tn = 0;
+		bool off = false;
+		for (int a = -3; a <= 3 && !off; a++) {
+			for (int b2 = -1; b2 <= 1; b2++) {
+				const Vector3 q = surface + cd.up * (0.6f * half_up * a) + cd.along * (0.9f * half_along * b2);
+				const real_t hq = kit_h(q);
+				if (!Math::is_finite(hq)) {
+					off = true;
+					break;
+				}
+				const float tq = float(hq - q.y) * kn.y;
+				tmax = MAX(tmax, tq);
+				tmin = MIN(tmin, tq);
+				tsum += tq;
+				tn++;
+			}
+		}
+		if (off) {
+			continue;
+		}
+		KitBox box;
+		if (cliff_recess) {
+			// The pillar's front at the face's mean, each segment by its own amount (the bed joints show as small
+			// steps); the drawn face steps back behind it by about a third of the column's width, so the ridges go and
+			// the pillar is the wall. No piece where the face would step back more than 3.5 m (a convex corner, a
+			// buttress) or the pillar would bridge a gully deeper than that.
+			box.front = tsum / float(tn) + 0.15f + 0.12f * rf_kit_u01(rf_kit_hash(cd.segment, cd.cid ^ 0x5e7au));
+			box.recess = box.front - CLAMP(0.35f * cd.width, 0.5f, 1.1f);
+			if (tmax - box.recess > 3.5f || box.front - tmin > 3.5f) {
+				continue;
+			}
+		} else {
+			// No recess: the front just proud of the highest ridge, set into the ridges (its back, about 0.7 of the
+			// column's width behind its front, reaches into the rock where the face stands out).
+			const float ext_in = 0.35f * cd.width;
+			box.front = tmax + 0.3f + 0.25f * ext_in + 0.1f * rf_kit_u01(rf_kit_hash(cd.segment, cd.cid ^ 0x5e7au));
+			box.recess = box.front;
+			if (tmax > 2.4f || box.front - 2.0f * ext_in > tmax - 0.3f) {
+				continue;
+			}
+		}
+		// And the wall goes on past its top and sides (no segment above the skyline).
+		bool fits = true;
+		for (int e2 = 0; e2 < 3 && fits; e2++) {
+			const Vector3 q = surface + (e2 == 0 ? cd.up * half_up : cd.along * (e2 == 1 ? half_along : -half_along));
+			const real_t hq = kit_h(q);
+			fits = Math::is_finite(hq) && hq >= q.y - (e2 == 0 ? 0.25f * half_up : 0.6f * half_along);
+		}
+		if (!fits) {
+			continue;
+		}
+		box.surface = surface;
+		box.up = cd.up;
+		box.along = cd.along;
+		box.out = kn;
+		box.half_up = half_up;
+		box.half_along = half_along;
+		box.lean = cd.lean;
+		box.column = cd.column;
+		box.segment = cd.segment;
+		box.cid = cd.cid;
+		r_boxes.push_back(box);
+	}
+	// In one order whatever the map's: the cells lay them in this order.
+	r_boxes.sort_custom<KitBoxLess>();
+}
+
+// Builds the kit's squares not yet built (outside the lock: a square reads the landscape's relief, which a mesh worker
+// asking for the recess may hold a lock of its own around).
+void RockField3D::_kit_ensure(const TerrainGenerator3D *p_gen, const Rect2i &p_squares) const {
+	LocalVector<Vector2i> missing;
+	uint32_t epoch = 0;
+	{
+		RWLockRead kl(kit_lock);
+		epoch = kit_epoch;
+		for (int sy = p_squares.position.y; sy < p_squares.get_end().y; sy++) {
+			for (int sx = p_squares.position.x; sx < p_squares.get_end().x; sx++) {
+				if (!kit_cache.has(Vector2i(sx, sy))) {
+					missing.push_back(Vector2i(sx, sy));
+				}
+			}
+		}
+	}
+	for (const Vector2i &sq : missing) {
+		LocalVector<KitBox> boxes;
+		_kit_square(p_gen, sq, boxes);
+		RWLockWrite kl(kit_lock);
+		if (kit_epoch == epoch && !kit_cache.has(sq)) {
+			kit_cache.insert(sq, boxes);
+		}
+	}
+}
+
+// Drops the kit's boxes (its settings or the generator changed); p_notify tells the landscape to draw the recess
+// again where the old boxes stood, over the whole world.
+void RockField3D::_kit_reset(bool p_notify) {
+	bool had = false;
+	{
+		RWLockWrite kl(kit_lock);
+		had = !kit_cache.is_empty();
+		kit_cache.clear();
+		kit_epoch++;
+	}
+	const TerrainGenerator3D *gen = is_inside_tree() ? _get_generator() : nullptr;
+	kit_generator = gen ? gen->get_instance_id() : ObjectID();
+	if (p_notify && (had || gen) && is_inside_tree()) {
+		if (WorldGround *wg = WorldContracts::ground()) {
+			const Rect2 w = gen ? gen->get_result_rect() : Rect2(-1e6, -1e6, 2e6, 2e6);
+			wg->notify_recess_changed(AABB(Vector3(w.position.x, -1e5, w.position.y), Vector3(w.size.x, 2e5, w.size.y)));
+		}
+	}
+}
+
+Vector2 RockField3D::contract_recess_at(const Vector3 &p_position) const {
+	if (!cliff_kit || !cliff_recess || !_layer_on(LAYER_CLIFF) || layer_density[LAYER_CLIFF] <= 0.0) {
+		return Vector2();
+	}
+	const TerrainGenerator3D *gen = Object::cast_to<TerrainGenerator3D>(ObjectDB::get_instance(kit_generator));
+	if (!gen) {
+		return Vector2();
+	}
+	const Vector2i sq(int(Math::floor(p_position.x / RF_KIT_SQUARE)), int(Math::floor(p_position.z / RF_KIT_SQUARE)));
+	const Rect2i squares(sq - Vector2i(1, 1), Vector2i(3, 3)); // a box's outline reaches under 6 m in plan from its root
+	_kit_ensure(gen, squares);
+	const float edge = 0.3f; // m: a neighbour carries the recess on over the joint
+	const float fade = 0.5f; // m: within the outline where no neighbour continues the wall (no overhang)
+	RWLockRead kl(kit_lock);
+	const LocalVector<KitBox> *lists[9];
+	int nl = 0;
+	for (int sy = squares.position.y; sy < squares.get_end().y; sy++) {
+		for (int sx = squares.position.x; sx < squares.get_end().x; sx++) {
+			if (const LocalVector<KitBox> *list = kit_cache.getptr(Vector2i(sx, sy))) {
+				if (!list->is_empty()) {
+					lists[nl++] = list;
+				}
+			}
+		}
+	}
+	// Whether a box covers the point: inside its outline grown by the joint margin, near its plane.
+	auto covers = [&](const KitBox &p_b, float &r_u, float &r_v, float &r_t) {
+		const Vector3 d = p_position - p_b.surface;
+		r_u = d.dot(p_b.up);
+		r_v = d.dot(p_b.along);
+		r_t = d.dot(p_b.out);
+		return Math::abs(r_u) <= p_b.half_up + edge && Math::abs(r_v) <= p_b.half_along + edge && r_t >= p_b.recess - 6.0f && r_t <= p_b.recess + 4.0f;
+	};
+	Vector2 best;
+	float best_score = 0.0f;
+	for (int li = 0; li < nl; li++) {
+		for (const KitBox &a : *lists[li]) {
+			float u, v, t;
+			if (!covers(a, u, v, t)) {
+				continue;
+			}
+			float fu = CLAMP((a.half_up - Math::abs(u)) / fade, 0.0f, 1.0f);
+			float fv = CLAMP((a.half_along - Math::abs(v)) / fade, 0.0f, 1.0f);
+			if (fu < 1.0f || fv < 1.0f) {
+				// Up and down the next segment of the column carries it on; across, the next column.
+				for (int lj = 0; lj < nl && (fu < 1.0f || fv < 1.0f); lj++) {
+					for (const KitBox &b : *lists[lj]) {
+						if (&b == &a) {
+							continue;
+						}
+						float ub, vb, tb;
+						if (!covers(b, ub, vb, tb)) {
+							continue;
+						}
+						if (b.column == a.column && b.cid == a.cid) {
+							fu = 1.0f;
+						} else {
+							fv = 1.0f;
+						}
+					}
+				}
+			}
+			const float share = fu * fv;
+			if (share <= 0.0f) {
+				continue;
+			}
+			const float hn = MAX(Math::sqrt(a.out.x * a.out.x + a.out.z * a.out.z), 0.3f);
+			const float depth = MIN(MAX(t - a.recess, 0.0f) / hn, 4.0f);
+			const float score = depth * share + 0.001f * share;
+			if (score > best_score) {
+				best_score = score;
+				best = Vector2(depth, share);
+			}
+		}
+	}
+	return best;
+}
+
+void RockField3D::contract_recess_points(const Vector3 *p_points, int p_count, Vector2 *r_recess) const {
+	for (int i = 0; i < p_count; i++) {
+		r_recess[i] = contract_recess_at(p_points[i]);
+	}
+}
+
+void RockField3D::contract_recess_state(void (*p_add)(void *p_user, const void *p_data, size_t p_size), void *p_user) const {
+	const uint8_t flags[3] = { uint8_t(cliff_kit), uint8_t(cliff_recess), uint8_t(_layer_on(LAYER_CLIFF) && layer_density[LAYER_CLIFF] > 0.0) };
+	p_add(p_user, flags, sizeof(flags));
+	const float slope = float(cliff_block_max_slope);
+	p_add(p_user, &slope, sizeof(slope));
+	const uint32_t version = 1; // the kit's rules: bump with any change to _kit_square
+	p_add(p_user, &version, sizeof(version));
+}
+
 Vector3 RockField3D::contract_cover_at(const Vector3 &p_position) const {
 	MutexLock lock(cover_data_mutex);
 	return _cover_sample(Vector2(p_position.x, p_position.z));
@@ -10317,6 +10620,8 @@ void RockField3D::_notification(int p_what) {
 	switch (p_what) {
 		case NOTIFICATION_ENTER_TREE: {
 			WorldContracts::register_cover(this);
+			WorldContracts::register_recess(this);
+			_kit_reset(true); // a landscape built before the field draws its recess now
 			// Before any node is ready, so the weather's first shelter bake finds the boulders.
 			if (wind_obstacles) {
 				add_to_group(SNAME("weather_shelter"));
@@ -10375,6 +10680,19 @@ void RockField3D::_notification(int p_what) {
 				}
 			}
 			WorldContracts::unregister_cover(this);
+			WorldContracts::unregister_recess(this);
+			{
+				bool had = false;
+				{
+					RWLockWrite kl(kit_lock);
+					had = !kit_cache.is_empty();
+				}
+				if (had) {
+					if (WorldGround *wg = WorldContracts::ground()) {
+						wg->notify_recess_changed(AABB(Vector3(-1e6, -1e5, -1e6), Vector3(2e6, 2e5, 2e6)));
+					}
+				}
+			}
 			_clear_react();
 			_clear_cover();
 			clear();
@@ -10442,6 +10760,9 @@ void RockField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_cliff_kit", "enabled"), &RockField3D::set_cliff_kit);
 	ClassDB::bind_method(D_METHOD("is_cliff_kit"), &RockField3D::is_cliff_kit);
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "cliff_kit"), "set_cliff_kit", "is_cliff_kit");
+	ClassDB::bind_method(D_METHOD("set_cliff_recess", "enabled"), &RockField3D::set_cliff_recess);
+	ClassDB::bind_method(D_METHOD("is_cliff_recess"), &RockField3D::is_cliff_recess);
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "cliff_recess"), "set_cliff_recess", "is_cliff_recess");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "cliff_block_max_slope", PROPERTY_HINT_RANGE, "50,89,0.5,suffix:°"), "set_cliff_block_max_slope", "get_cliff_block_max_slope");
 	ClassDB::bind_method(D_METHOD("get_scan_dir"), &RockField3D::get_scan_dir);
 	ClassDB::bind_method(D_METHOD("get_ground_material"), &RockField3D::get_ground_material);

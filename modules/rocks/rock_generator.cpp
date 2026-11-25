@@ -82,7 +82,7 @@ String RockGenerator::get_rock_type_name(RockType p_type) {
 }
 
 String RockGenerator::get_family_name(Family p_family) {
-	static const char *names[FAMILY_MAX] = { "rockfall", "scree", "glacial", "cobble", "pebble", "cliff_block", "corestone", "sea_stack", "sea_arch", "sea_platform", "hoodoo", "pavement", "fin", "pothole", "goblin", "cave_mouth", "ledge" };
+	static const char *names[FAMILY_MAX] = { "rockfall", "scree", "glacial", "cobble", "pebble", "cliff_block", "corestone", "sea_stack", "sea_arch", "sea_platform", "hoodoo", "pavement", "fin", "pothole", "goblin", "cave_mouth", "ledge", "cliff_pillar" };
 	return names[CLAMP(int(p_family), 0, int(FAMILY_MAX) - 1)];
 }
 
@@ -95,7 +95,7 @@ void RockGenerator::set_family(Family p_family) {
 }
 
 int RockGenerator::get_base_resolution() const {
-	static const int res[FAMILY_MAX] = { 112, 88, 96, 56, 48, 112, 104, 256, 224, 220, 200, 240, 224, 220, 128, 176, 192 };
+	static const int res[FAMILY_MAX] = { 112, 88, 96, 56, 48, 112, 104, 256, 224, 220, 200, 240, 224, 220, 128, 176, 192, 192 };
 	return resolution > 0 ? resolution : res[family];
 }
 
@@ -122,7 +122,7 @@ real_t RockGenerator::get_marks_metres_per_unit() const {
 }
 
 real_t RockGenerator::get_family_metres_per_unit(Family p_family) {
-	static const real_t mpu[FAMILY_MAX] = { 0.65, 0.16, 0.85, 0.11, 0.035, 0.65, 1.0, 3.5, 5.0, 5.0, 2.5, 4.0, 5.0, 2.5, 1.2, 5.0, 2.0 };
+	static const real_t mpu[FAMILY_MAX] = { 0.65, 0.16, 0.85, 0.11, 0.035, 0.65, 1.0, 3.5, 5.0, 5.0, 2.5, 4.0, 5.0, 2.5, 1.2, 5.0, 2.0, 2.5 };
 	return mpu[CLAMP(int(p_family), 0, int(FAMILY_MAX) - 1)];
 }
 
@@ -153,7 +153,7 @@ real_t RockGenerator::get_effective_weathering() const {
 	if (weathering >= 0.0) {
 		return weathering;
 	}
-	static const float w[FAMILY_MAX] = { 0.45f, 0.2f, 0.6f, 0.15f, 0.05f, 0.7f, 0.95f, 0.6f, 0.6f, 0.45f, 0.7f, 0.6f, 0.75f, 0.1f, 0.85f, 0.6f, 0.65f };
+	static const float w[FAMILY_MAX] = { 0.45f, 0.2f, 0.6f, 0.15f, 0.05f, 0.7f, 0.95f, 0.6f, 0.6f, 0.45f, 0.7f, 0.6f, 0.75f, 0.1f, 0.85f, 0.6f, 0.65f, 0.6f };
 	return w[family];
 }
 
@@ -790,11 +790,18 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 	}
 	// Coast forms (Trenhaile 1987; Sunamura 1992): one mass of bedrock each, cut by the joints and the beds.
 	const bool coast_form = family == FAMILY_SEA_STACK || family == FAMILY_SEA_ARCH || family == FAMILY_SEA_PLATFORM;
-	if (family == FAMILY_SEA_STACK) {
+	if ((family == FAMILY_SEA_STACK || family == FAMILY_CLIFF_PILLAR)) {
 		// x: the column's height when stood on end, several times its width (two to four: the Twelve Apostles, Old
 		// Harry); the top's breaks and the drowned foot take a share of it, so it is cut long.
 		a = 3.4f + 1.2f * rng.randf();
 		c = 0.75f + 0.2f * rng.randf();
+		if (family == FAMILY_CLIFF_PILLAR) {
+			// A joint-bounded pillar of a cliff face: a vertical joint set cuts a thick bed or a stack of beds into columns
+			// two to four times as tall as wide (through-going joints, Narr and Suppe 1991; Hoek and Bray's toppling
+			// columns), shallower into the wall than across it.
+			a = 2.4f + 1.6f * rng.randf();
+			c = 0.6f + 0.25f * rng.randf();
+		}
 	} else if (family == FAMILY_SEA_ARCH) {
 		a = 1.5f + 0.4f * rng.randf(); // x: the span along the coast; y: its height, as much as its thickness
 		c = 1.0f;
@@ -830,7 +837,7 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 		a = MAX(0.55f, c * (1.4f + 1.6f * rng.randf()));
 	}
 	const bool landform = family == FAMILY_HOODOO || family == FAMILY_PAVEMENT || family == FAMILY_FIN || family == FAMILY_POTHOLE || family == FAMILY_GOBLIN || family == FAMILY_CAVE_MOUTH;
-	const bool upright = family == FAMILY_SEA_STACK || family == FAMILY_HOODOO || family == FAMILY_GOBLIN; // stood on end in the field: beds cross x
+	const bool upright = (family == FAMILY_SEA_STACK || family == FAMILY_CLIFF_PILLAR) || family == FAMILY_HOODOO || family == FAMILY_GOBLIN; // stood on end in the field: beds cross x
 	// Fresh fragments spread over the Zingg classes rather than sitting near the cube: talus and rockfall hold many
 	// slabs and blades, rods and wedges as well as blocks (Domokos et al. 2020 give the mean, not the spread).
 	int fragment_form = 0; // 0 block, 1 slab, 2 rod, 3 wedge
@@ -857,34 +864,44 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 		const Vector3 r(rng.randf() * 2.0f - 1.0f, rng.randf() * 2.0f - 1.0f, rng.randf() * 2.0f - 1.0f);
 		return (p_axis + r * Math::tan(Math::deg_to_rad(p_degrees))).normalized();
 	};
-	if (family == FAMILY_SEA_STACK || family == FAMILY_HOODOO || family == FAMILY_GOBLIN) {
+	if ((family == FAMILY_SEA_STACK || family == FAMILY_CLIFF_PILLAR) || family == FAMILY_HOODOO || family == FAMILY_GOBLIN) {
 		// A stack is what is left of a headland between joints at all angles (Old Harry, the Twelve Apostles): in plan
 		// an irregular polygon of 6 to 9 joint faces at uneven azimuths and distances, each a few degrees off upright,
 		// the whole leaning a little one way and narrowing upward; the foot square across, the top two or three
 		// oblique breaks, ragged rather than flat.
 		const bool hoodoo = family == FAMILY_HOODOO || family == FAMILY_GOBLIN; // nearly upright, the neck carved later under its cap
 		// A hoodoo is rounded by rain wash rather than cut by joints: more, shorter faces, all at much the same reach.
-		const int sides = hoodoo ? 11 + int(rng.randf() * 4.99f) : 6 + int(rng.randf() * 3.99f);
+		// A cliff pillar is a block of the wall between two joint sets: four sides near square to each other (the sets
+		// meet at 70 to 90 degrees), a fifth now and then where a third set clips a corner.
+		const bool wall_pillar = family == FAMILY_CLIFF_PILLAR;
+		const int sides = hoodoo ? 11 + int(rng.randf() * 4.99f) : (wall_pillar ? 4 + int(rng.randf() < 0.35f) : 6 + int(rng.randf() * 3.99f));
 		float th[16];
 		float acc = rng.randf() * float(Math::TAU);
+		if (wall_pillar) {
+			acc = (rng.randf() - 0.5f) * 0.2f; // square to the face: the joints bound it front, back and sides
+		}
 		for (int k = 0; k < sides; k++) {
 			th[k] = acc;
-			acc += float(Math::TAU) / sides * (0.45f + 1.1f * rng.randf());
+			acc += wall_pillar ? float(Math::TAU) / sides * (0.85f + 0.3f * rng.randf()) : float(Math::TAU) / sides * (0.45f + 1.1f * rng.randf());
 		}
 		float lean = (hoodoo ? 0.01f + 0.03f * rng.randf() : 0.04f + 0.08f * rng.randf());
 		const float lean_az = rng.randf() * float(Math::TAU);
-		const float taper = hoodoo ? 0.02f + 0.03f * rng.randf() : 0.05f + 0.08f * rng.randf();
-		if (!hoodoo) {
+		float taper = hoodoo ? 0.02f + 0.03f * rng.randf() : 0.05f + 0.08f * rng.randf();
+		if (wall_pillar) {
+			// Still in the wall: its joint faces stand upright and parallel (the field leans the whole column).
+			lean = 0.0f;
+			taper = 0.01f * rng.randf();
+		} else if (!hoodoo) {
 			lean += 0.06f + 0.06f * float(rk_hash(nseed + 0x7703u) & 0xFFFu) / 4095.0f; // a stack leans plainly one way
 		}
 		for (int k = 0; k < sides; k++) {
 			const float cy = Math::cos(th[k]), sz = Math::sin(th[k]);
 			// Leaning toward lean_az tilts the faces on that side out, the far side in; all of them in for the taper.
-			const float tilt = taper - lean * Math::cos(th[k] - lean_az) + (rng.randf() - 0.5f) * 0.12f;
+			const float tilt = taper - lean * Math::cos(th[k] - lean_az) + (rng.randf() - 0.5f) * (wall_pillar ? 0.03f : 0.12f);
 			Vector3 n(tilt, cy, sz);
 			n.normalize();
 			const float radius = Math::sqrt(c * c * cy * cy + sz * sz);
-			planes.push_back({ n, float(radius * (hoodoo ? 0.88f + 0.12f * rng.randf() : 0.72f + 0.28f * rng.randf()) * n.dot(Vector3(0, cy, sz))), false });
+			planes.push_back({ n, float(radius * (hoodoo ? 0.88f + 0.12f * rng.randf() : (wall_pillar ? 0.9f + 0.1f * rng.randf() : 0.72f + 0.28f * rng.randf())) * n.dot(Vector3(0, cy, sz))), false });
 		}
 		planes.push_back({ jitter_dir(Vector3(-1, 0, 0), 3.0f), a, false });
 		const int tops = 2 + int(rng.randf() * 1.99f);
@@ -896,7 +913,12 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 			float az = rng.randf() * float(Math::TAU);
 			float slope = hoodoo ? 0.05f + 0.15f * rng.randf() : 0.15f + 0.6f * rng.randf(); // a caprock stays nearly flat
 			float off = 0.82f + 0.16f * rng.randf();
-			if (!hoodoo) {
+			if (wall_pillar) {
+				// Its top and foot are bed joints: near level, dipping a little with the beds; the next segment sits on it.
+				az = top_az;
+				slope = 0.04f + 0.1f * trng.randf();
+				off = k == 0 ? 0.97f + 0.03f * trng.randf() : 1.0f;
+			} else if (!hoodoo) {
 				az = top_az + (k == 0 ? 0.0f : (trng.randf() - 0.5f) * 1.6f);
 				slope = k == 0 ? 0.25f + 0.3f * trng.randf() : 0.45f + 0.35f * trng.randf();
 				off = k == 0 ? 0.92f + 0.06f * trng.randf() : 0.87f + 0.08f * trng.randf(); // a break off the top's edge, not a cut through it
@@ -948,21 +970,25 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 	}
 	// A stack's or arch's sides are old joint faces and falls, at all angles: big cuts off its edges and corners, so
 	// its plan and profile are irregular polygons, not a box.
-	if (family == FAMILY_SEA_STACK || family == FAMILY_SEA_ARCH) {
+	if ((family == FAMILY_SEA_STACK || family == FAMILY_CLIFF_PILLAR) || family == FAMILY_SEA_ARCH) {
 		// A stack's: one to three dominant joint faces, steep, at any azimuth, cutting deep into one side.
-		const int count = family == FAMILY_SEA_STACK ? 1 + int(rng.randf() * 2.99f) : 4 + int(rng.randf() * 3.0f);
+		const int count = family == FAMILY_CLIFF_PILLAR ? int(rng.randf() * 1.99f) : (family == FAMILY_SEA_STACK ? 1 + int(rng.randf() * 2.99f) : 4 + int(rng.randf() * 3.0f));
 		for (int k = 0; k < count; k++) {
-			Vector3 n(family == FAMILY_SEA_STACK ? Math::abs(rng.randfn(0.0f, 0.15f)) : rng.randfn(0.0f, 1.0f), rng.randfn(0.0f, 1.0f) * (family == FAMILY_SEA_ARCH ? 0.5f : 1.0f), rng.randfn(0.0f, 1.0f));
+			Vector3 n((family == FAMILY_SEA_STACK || family == FAMILY_CLIFF_PILLAR) ? Math::abs(rng.randfn(0.0f, 0.15f)) : rng.randfn(0.0f, 1.0f), rng.randfn(0.0f, 1.0f) * (family == FAMILY_SEA_ARCH ? 0.5f : 1.0f), rng.randfn(0.0f, 1.0f));
 			n = n.length_squared() > 1e-6f ? n.normalized() : Vector3(0, 0, 1);
 			// (A stack's face leans in toward the top: it takes more off up there and leaves the foot.)
-			const float support = family == FAMILY_SEA_STACK ? Math::abs(n.y) * c + Math::abs(n.z) + n.x * a * 0.3f : Math::abs(n.x) * a + Math::abs(n.y) * c + Math::abs(n.z);
+			if (family == FAMILY_CLIFF_PILLAR) {
+				n.x = 0.0f; // a wall pillar's extra joint is upright: a corner clipped, not a lean to the top
+				n = n.length_squared() > 1e-6f ? n.normalized() : Vector3(0, 0, 1);
+			}
+			const float support = (family == FAMILY_SEA_STACK || family == FAMILY_CLIFF_PILLAR) ? Math::abs(n.y) * c + Math::abs(n.z) + n.x * a * 0.3f : Math::abs(n.x) * a + Math::abs(n.y) * c + Math::abs(n.z);
 			// The last one or two are recent falls: a fresh scar face, paler and without the rind.
 			// (On a stack shallower: a deep one leaves a whole side as one flat slab face.)
 			// (Not on a stack: there a fresh face is a third of the column in another colour, a hard break at 30 m.)
 			const bool scar = k >= count - 1 - int(rng.randf() * 1.5f);
-			planes.push_back({ n, support * ((family == FAMILY_SEA_STACK ? 0.74f : 0.62f) + (family == FAMILY_SEA_STACK ? 0.14f : 0.2f) * rng.randf()), scar && family != FAMILY_SEA_STACK });
+			planes.push_back({ n, support * (((family == FAMILY_SEA_STACK || family == FAMILY_CLIFF_PILLAR) ? 0.74f : 0.62f) + ((family == FAMILY_SEA_STACK || family == FAMILY_CLIFF_PILLAR) ? 0.14f : 0.2f) * rng.randf()), scar && family != FAMILY_SEA_STACK });
 		}
-		if (family == FAMILY_SEA_STACK) {
+		if ((family == FAMILY_SEA_STACK || family == FAMILY_CLIFF_PILLAR)) {
 			// The foot stands on the wave-cut platform, full width: the body's rounded end would stand it on a stem.
 			planes.push_back({ Vector3(-1.0f, 0.0f, 0.0f), 0.8f * a, false });
 		}
@@ -1027,7 +1053,7 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 		planes.push_back({ n, float(n.y * c * (0.15f + 0.25f * rng.randf()) + Math::abs(n.x) * a * 0.3f), true });
 	}
 	// Impact chips: conchoidal scoops off corners and edges (bed-load chipping, Novák-Szabó et al. 2018), fresh.
-	static const int chips_per_family[FAMILY_MAX] = { 3, 5, 3, 3, 1, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1 };
+	static const int chips_per_family[FAMILY_MAX] = { 3, 5, 3, 3, 1, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0 };
 	LocalVector<RockScoop> scoops;
 	const int chips = chips_per_family[family] + int(rng.randf() * 2.0f);
 	for (int k = 0; k < chips; k++) {
@@ -1085,7 +1111,7 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 	}
 	// (A stack's relief swells out past its planes by up to about half of c: room for it across the column, or the
 	// grid's wall cuts a flat face; none needed along it, where the cell size is set.)
-	const Vector3 half_box = extent * 1.04f + Vector3(0.08f, 0.08f, 0.08f) + (family == FAMILY_SEA_STACK ? Vector3(0.0f, 0.5f * c, 0.5f * c) : Vector3());
+	const Vector3 half_box = extent * 1.04f + Vector3(0.08f, 0.08f, 0.08f) + ((family == FAMILY_SEA_STACK || family == FAMILY_CLIFF_PILLAR) ? Vector3(0.0f, 0.5f * c, 0.5f * c) : Vector3());
 	const float h = 2.0f * half_box.x / float(res - 1);
 	// The abrasion runs on the base shape's coarse grid whatever the fine grid, so a close-up shape is the same stone
 	// (the flow's step count is capped, and a finer coarse grid would round it less).
@@ -1149,7 +1175,7 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 	// for a corner radius r is about r^2 / 2. A fully rounded stone has corners as round as half its thickness.
 	// Spheroidal weathering of granite and basalt rounds blocks in place along the joints in the same way (corners
 	// attacked from three sides), so it adds to the rounding of blocks left lying (tors, corestones).
-	static const float spheroidal_share[FAMILY_MAX] = { 0.05f, 0.0f, 0.5f, 0.15f, 0.15f, 0.25f, 0.75f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.1f }; // coast and landforms: their own shaping
+	static const float spheroidal_share[FAMILY_MAX] = { 0.05f, 0.0f, 0.5f, 0.15f, 0.15f, 0.25f, 0.75f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.1f, 0.0f }; // coast and landforms: their own shaping
 	const float spheroidal = lith.spheroidal * weather * spheroidal_share[family];
 	// Tor blocks rotted in place for a long time: woolsack edges whatever the rock (at least half rounded).
 	const float round_eff = MIN(1.0f, MAX(roundness + spheroidal * (1.0f - roundness), family == FAMILY_CORESTONE ? 0.55f : 0.0f));
@@ -1238,19 +1264,19 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 	// - platform: the bench cut flush at the cliff foot, crossed by two joint sets opened into grooves, with pools.
 	if (coast_form) {
 		const float layered = (rock_type == ROCK_GRANITE || rock_type == ROCK_BASALT) ? 0.45f : 1.0f;
-		const int bed_axis = family == FAMILY_SEA_STACK ? 0 : 1;
+		const int bed_axis = (family == FAMILY_SEA_STACK || family == FAMILY_CLIFF_PILLAR) ? 0 : 1;
 		// Beds of uneven thickness (Paris et al. 2020; Trenhaile 1987): boundaries at random intervals, each bed hard
 		// (it stands out, its underside an overhang) or soft (weathered back into a recess). The step between two beds
 		// is one cell wide, so a ledge has an arris; a field offset smoothed over a bed read as stacked cushions.
 		LocalVector<float> bed_at, bed_rec;
 		if (family != FAMILY_SEA_PLATFORM) {
-			const float mean = (family == FAMILY_SEA_STACK ? 0.42f : 0.3f) * (layered < 1.0f ? 1.5f : 1.0f);
+			const float mean = ((family == FAMILY_SEA_STACK || family == FAMILY_CLIFF_PILLAR) ? 0.42f : 0.3f) * (layered < 1.0f ? 1.5f : 1.0f);
 			const float lo = -extent[bed_axis] - 0.2f, hi = extent[bed_axis] + 0.2f;
 			float b = lo - rng.randf() * mean;
 			bed_at.push_back(b);
 			while (b < hi) {
 				const float u = rng.randf();
-				b += mean * (family == FAMILY_SEA_STACK ? 0.35f + 3.0f * u * u * u : 0.2f + 2.4f * u * u * u); // many thin beds, a few very thick ones
+				b += mean * ((family == FAMILY_SEA_STACK || family == FAMILY_CLIFF_PILLAR) ? 0.35f + 3.0f * u * u * u : 0.2f + 2.4f * u * u * u); // many thin beds, a few very thick ones
 				bed_at.push_back(b);
 			}
 			bool prev_soft = false;
@@ -1262,7 +1288,7 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 			}
 		}
 		// (A stack's beds dip plainly, 3 to 10 degrees: level courses on a column read as masonry.)
-		const float dip_k = family == FAMILY_SEA_STACK ? 2.8f : 1.0f;
+		const float dip_k = (family == FAMILY_SEA_STACK || family == FAMILY_CLIFF_PILLAR) ? 2.8f : 1.0f;
 		const Vector3 dip = (Vector3(0.0f, 0.0f, (rng.randf() - 0.5f) * 0.12f) + (bed_axis == 0 ? Vector3(0, (rng.randf() - 0.5f) * 0.12f, 0) : Vector3((rng.randf() - 0.5f) * 0.12f, 0, 0))) * dip_k;
 		const float step_w = 0.75f * h;
 		// The recess at p: its bed's, eased into the neighbours' over a cell, varying along the bed, and hard beds
@@ -1304,7 +1330,7 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 		// bed weathers back 0.3 to 1 m under the hard one above, which overhangs it; the breaks between beds are
 		// sharp. Big enough to read from the shore at 30 m, where block-scale relief is lost.
 		LocalVector<float> bed_shift;
-		if (family == FAMILY_SEA_STACK) {
+		if ((family == FAMILY_SEA_STACK || family == FAMILY_CLIFF_PILLAR)) {
 			bool prev_soft = false;
 			for (uint32_t k = 0; k + 1 < bed_at.size(); k++) {
 				const bool soft = jrng.randf() < (prev_soft ? 0.25f : 0.55f);
@@ -1325,7 +1351,7 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 				}
 			}
 		}
-		const float notch_x = x_lo + 0.22f * (x_hi - x_lo);
+		const float notch_x = family == FAMILY_CLIFF_PILLAR ? x_lo - 10.0f * (x_hi - x_lo) : x_lo + 0.22f * (x_hi - x_lo); // a cliff pillar has no notch
 		const float notch_w = 0.11f * a, notch_d = 0.07f * c; // (shallow: deeper and the column stands on a pedestal)
 		// A stack is lopsided (Sunamura 1992; Trenhaile 1987): the side facing the dominant swell is undercut much
 		// deeper than the lee, and its top has stepped down where the blocks over a joint fell, so one corner stands
@@ -1336,13 +1362,13 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 		const float exp_r = Math::sqrt(c * c * exp_dir.y * exp_dir.y + exp_dir.z * exp_dir.z);
 		// (Off for now: at the field's scale the cut left a thin figure standing on a block; the tilted top, its edge
 		// breaks and the broken crest carry the asymmetry. The draw stays so the stacks keep their shapes.)
-		const bool stepped = family == FAMILY_SEA_STACK && lrng.randf() < 0.0f;
-		const float stack_taper = 0.12f + 0.2f * lrng.randf();
+		const bool stepped = (family == FAMILY_SEA_STACK || family == FAMILY_CLIFF_PILLAR) && lrng.randf() < 0.0f;
+		const float stack_taper = family == FAMILY_CLIFF_PILLAR ? 0.02f * lrng.randf() : 0.12f + 0.2f * lrng.randf(); // (a wall pillar keeps its width all the way up)
 		struct NotchCave {
 			Vector3 c, r, out, side;
 		};
 		LocalVector<NotchCave> notch_caves;
-		if (family == FAMILY_SEA_STACK) {
+		if ((family == FAMILY_SEA_STACK || family == FAMILY_CLIFF_PILLAR)) {
 			const int nn = int(lrng.randf() * 2.6f) * 0; // (off: a cave at the foot left the column on stilts)
 			for (int k = 0; k < nn; k++) {
 				const float az = exp_az + (lrng.randf() - 0.5f) * 1.4f;
@@ -1380,9 +1406,9 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 			float d, w, depth, x0;
 		};
 		LocalVector<Joint> joints;
-		if (family == FAMILY_SEA_STACK) {
+		if ((family == FAMILY_SEA_STACK || family == FAMILY_CLIFF_PILLAR)) {
 			// Not every stack has one open, and it is rarely through the middle or quite upright.
-			const int count = rng.randf() < 0.35f ? 0 : 1;
+			const int count = (rng.randf() < 0.35f || family == FAMILY_CLIFF_PILLAR) ? 0 : 1; // (a cliff pillar: its joints are the wall's, closed)
 			for (int k = 0; k < count; k++) {
 				const float th = rng.randf() * float(Math::TAU);
 				const Vector3 n = Vector3((rng.randf() - 0.5f) * 0.3f, Math::cos(th), Math::sin(th)).normalized();
@@ -1418,7 +1444,7 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 				pools.push_back({ Vector3((rng.randf() - 0.5f) * 1.6f * a, extent.y + r - depth, (rng.randf() - 0.5f) * 1.4f), r });
 			}
 		}
-		const float near = (family == FAMILY_SEA_STACK ? 1.2f : 0.5f) * c;
+		const float near = ((family == FAMILY_SEA_STACK || family == FAMILY_CLIFF_PILLAR) ? 1.2f : 0.5f) * c;
 		for (int z = 0; z < fine.nz; z++) {
 			for (int y = 0; y < fine.ny; y++) {
 				for (int x = 0; x < fine.nx; x++) {
@@ -1434,14 +1460,14 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 						if (v0 > -near) {
 							shape(p, &fr);
 						}
-						float rec = family == FAMILY_SEA_STACK ? 0.0f : bed_recess(p) * (fr ? 0.25f : 1.0f);
+						float rec = (family == FAMILY_SEA_STACK || family == FAMILY_CLIFF_PILLAR) ? 0.0f : bed_recess(p) * (fr ? 0.25f : 1.0f);
 						if (family == FAMILY_SEA_STACK) {
 							// Below the notch's roof the waves plane the beds back alike: no lips there to read as a plinth.
 							rec = Math::lerp(0.06f * c * layered * rg_smoothstep(notch_x - 2.5f * notch_w, notch_x - 1.5f * notch_w, p.x), rec, rg_smoothstep(notch_x + 0.6f * notch_w, notch_x + notch_w, p.x));
 						}
 						v += rec;
 					}
-					if (family == FAMILY_SEA_STACK) {
+					if ((family == FAMILY_SEA_STACK || family == FAMILY_CLIFF_PILLAR)) {
 						// A stack's faces are the faces of the blocks the joints and beds cut it into (Old Harry, the
 						// Twelve Apostles): each block between two vertical joints and two bed planes stands proud or
 						// sits back by its own amount, flat, so the face reads as masonry with sharp arrises where the
@@ -1545,7 +1571,8 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 						// A broken, jagged crest: blocks loosened along the top joints and fell at different times.
 						{
 							const float rid = rk_fbm(Vector3(0.0f, p.y * 0.8f / c, p.z * 0.8f), nseed + 111u, 2);
-							const float crest = x_hi - (x_hi - x_lo) * (0.02f + 0.09f * (1.0f - Math::abs(rid))) - 0.3f * c * (0.5f * rk_fbm(p * 1.4f, nseed + 117u, 3));
+							const float crest = family == FAMILY_CLIFF_PILLAR ? x_hi - (x_hi - x_lo) * (0.005f + 0.02f * (1.0f - Math::abs(rid))) - 0.08f * c * (0.5f * rk_fbm(p * 1.4f, nseed + 117u, 3)) // (a bed joint, worn at its edge)
+															  : x_hi - (x_hi - x_lo) * (0.02f + 0.09f * (1.0f - Math::abs(rid))) - 0.3f * c * (0.5f * rk_fbm(p * 1.4f, nseed + 117u, 3));
 							v = MAX(v, p.x - crest);
 						}
 						// Notch caves: where the swell's side is jointed the notch runs on into small caves at the
@@ -1619,7 +1646,7 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 				}
 			}
 		}
-		if (family == FAMILY_SEA_STACK) {
+		if ((family == FAMILY_SEA_STACK || family == FAMILY_CLIFF_PILLAR)) {
 			// No level wider than the rock under it, beyond a ledge's lip (a top-heavy column has already fallen;
 			// Hoek and Bray's toppling: a block stands while its weight falls inside its base). Going up from the
 			// foot, each level's plan must lie inside the plan of the levels just below it (their union over about a
@@ -2173,7 +2200,7 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 			tafoni *= 0.08f; // (a few: paired hollows on a column read as eyes)
 		}
 		// A stack's hollows are the swell's side's, a few big ones low down; a column dotted with them reads as a face.
-		if (family == FAMILY_SEA_STACK) {
+		if ((family == FAMILY_SEA_STACK || family == FAMILY_CLIFF_PILLAR)) {
 			tafoni *= 0.25f;
 		}
 		if (family == FAMILY_PEBBLE || family == FAMILY_COBBLE || family == FAMILY_ROCKFALL || family == FAMILY_SCREE || family == FAMILY_CLIFF_BLOCK) {
@@ -2183,7 +2210,7 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 	// The stone's up as the field stands it: a fin (and a cave-mouth block) on its z, a column (stack, hoodoo,
 	// goblin) on its x, everything else as built.
 	const bool z_up = family == FAMILY_FIN || family == FAMILY_CAVE_MOUTH;
-	const bool x_up = family == FAMILY_SEA_STACK || family == FAMILY_HOODOO || family == FAMILY_GOBLIN;
+	const bool x_up = (family == FAMILY_SEA_STACK || family == FAMILY_CLIFF_PILLAR) || family == FAMILY_HOODOO || family == FAMILY_GOBLIN;
 	// In the grid: the axis that becomes the local x is ax_long, y ax_short, z ax_b (to_local above).
 	const int up_axis = z_up ? ax_b : (x_up ? ax_long : ax_short);
 	Vector3 t_up, t_a1;
@@ -2419,7 +2446,7 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 	rk_reinitialize(fine, band, 3);
 	// One stone: carved columns can leave a block cut off from the rest (a cleft and a notch meeting); a loose piece
 	// hanging in the air is dropped (it would have fallen). The largest solid piece is kept.
-	if (family == FAMILY_SEA_STACK || family == FAMILY_SEA_ARCH || family == FAMILY_HOODOO || family == FAMILY_GOBLIN || family == FAMILY_FIN) {
+	if ((family == FAMILY_SEA_STACK || family == FAMILY_CLIFF_PILLAR) || family == FAMILY_SEA_ARCH || family == FAMILY_HOODOO || family == FAMILY_GOBLIN || family == FAMILY_FIN) {
 		const int total = fine.nx * fine.ny * fine.nz;
 		LocalVector<int> comp;
 		comp.resize(total);
@@ -3902,5 +3929,6 @@ void RockGenerator::_bind_methods() {
 	BIND_ENUM_CONSTANT(FAMILY_GOBLIN);
 	BIND_ENUM_CONSTANT(FAMILY_CAVE_MOUTH);
 	BIND_ENUM_CONSTANT(FAMILY_LEDGE);
+	BIND_ENUM_CONSTANT(FAMILY_CLIFF_PILLAR);
 	BIND_ENUM_CONSTANT(FAMILY_MAX);
 }
