@@ -1547,3 +1547,35 @@ layer off.
 
 On the cliff-foot view the fit tests pass 88 percent of the tried pieces. `cliff_kit` (on by default) and the bench's
 --no-cliff-kit give the before frame. The path tracer draws the same full meshes.
+
+## Cliff kit recess contract (25 Nov)
+
+Rigid pillars against flutes metres deep either sink in (only dark specks and feet show) or stand stuck on. No
+placement rule fixes that, so the terrain steps back under the kit the way Far Cry 5 sinks its heightfield under
+cliff meshes (Carrier, GDC 2018, "Procedural World Generation of Far Cry 5"): the pillars become the visible wall.
+Agreed with terrain on 25 Nov.
+
+- **Contract.** `WorldRecessProvider::contract_recess_at(p) -> (depth, share)` in world_contracts.h, script side
+  `WorldGround.recess_at(position)`, `has_recess()`, `notify_recess_changed(AABB)` and signal
+  `recess_changed(box)`. `p` is a point of the drawn, unrecessed face. Depth is metres back along the face's
+  horizontal outward normal. Share is 1 where a pillar's front covers the point and fades to 0 within the last 0.5 m
+  of its outline, unless a neighbouring segment or column continues the wall there (then the outline grows 0.3 m
+  under the joint). The deepest answer of all providers wins (depth times share). Zero with no provider.
+- **Producer: RockField3D** (`cliff_recess`, on by default). Kit boxes are built per 8 m plan square on first use
+  from the unrecessed face (`relief_at(p, true, false)`), from world hashes only, and cached until the kit's
+  settings or the generator change. The pillars each cell lays come from the same boxes, so pillars and recess
+  always agree. The query is const and thread-safe (RWLock; squares are built outside the lock because they read
+  the landscape's relief). A box stands at the face's mean plus up to 0.27 m; the face behind steps back by a third
+  of the column's width (0.5 to 1.1 m), and every pillar's back stays at least 0.15 m behind that. No box where the
+  face would step back more than 3 m or the pillar would bridge a gully deeper than 3 m.
+- **Consumer: Landscape3D** (terrain thread). It moves the finest cliff vertices back by depth times share,
+  includes the recess in its split test, fades its analytic relief by (1 - share), applies it in
+  `relief_at(p, steps, recess = true)`, and rebuilds the finest chunks a `recess_changed` box overlaps. Collision
+  is unchanged (heightfield tiles have no relief; pillars carry their own collision). With no provider its output is
+  byte-identical.
+- **Standalone tests.** Terrain alone: rocks bench `--no-rocks --recess-stub=x,y,z,nx,nz,w,h,d` installs a
+  WorldGround script stub that recesses one box. Rocks alone: with no landscape, or `--no-cliff-recess`, the pillars
+  stand just proud of the ridges as before. All together: the cliff-foot bench, raster pair and a cloud PT frame.
+- **Cache.** `contract_recess_object()` is the field; its state is cliff_kit, cliff_recess, the cliff layer's
+  on/density, cliff_block_max_slope and a rules version, bumped whenever `_kit_square` changes.
+

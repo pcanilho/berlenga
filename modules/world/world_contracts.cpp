@@ -1161,8 +1161,13 @@ void WorldGround::_bind_methods() {
 	GDVIRTUAL_BIND(_stones_near, "rect");
 	ClassDB::bind_method(D_METHOD("albedo_at", "position"), &WorldGround::albedo_at);
 	GDVIRTUAL_BIND(_albedo_at, "position");
-	ClassDB::bind_method(D_METHOD("relief_at", "position", "steps"), &WorldGround::relief_at, DEFVAL(true));
+	ClassDB::bind_method(D_METHOD("relief_at", "position", "steps", "recess"), &WorldGround::relief_at, DEFVAL(true), DEFVAL(true));
 	GDVIRTUAL_BIND(_relief_at, "position");
+	ClassDB::bind_method(D_METHOD("recess_at", "position"), &WorldGround::recess_at);
+	ClassDB::bind_method(D_METHOD("has_recess"), &WorldGround::has_recess);
+	GDVIRTUAL_BIND(_recess_at, "position");
+	ClassDB::bind_method(D_METHOD("notify_recess_changed", "box"), &WorldGround::notify_recess_changed);
+	ADD_SIGNAL(MethodInfo("recess_changed", PropertyInfo(Variant::AABB, "box")));
 	ClassDB::bind_method(D_METHOD("notify_relief_changed", "area"), &WorldGround::notify_relief_changed);
 	ADD_SIGNAL(MethodInfo("relief_changed", PropertyInfo(Variant::RECT2, "area")));
 	ClassDB::bind_method(D_METHOD("add_runoff_load", "position", "mineral_kg", "ash_kg"), &WorldGround::add_runoff_load);
@@ -1603,7 +1608,65 @@ void WorldGround::notify_relief_changed(const Rect2 &p_area) {
 	emit_signal(SNAME("relief_changed"), p_area);
 }
 
-Vector2 WorldGround::relief_at(const Vector3 &p_position, bool p_steps) const {
+void WorldContracts::register_recess(WorldRecessProvider *p_provider) {
+	if (singleton && p_provider && singleton->recess_providers.find(p_provider) < 0) {
+		singleton->recess_providers.push_back(p_provider);
+	}
+}
+
+void WorldContracts::unregister_recess(WorldRecessProvider *p_provider) {
+	if (singleton) {
+		singleton->recess_providers.erase(p_provider);
+	}
+}
+
+void WorldGround::notify_recess_changed(const AABB &p_box) {
+	emit_signal(SNAME("recess_changed"), p_box);
+}
+
+bool WorldGround::has_recess() const {
+	if (GDVIRTUAL_IS_OVERRIDDEN(_recess_at)) {
+		return true;
+	}
+	const LocalVector<WorldRecessProvider *> *list = WorldContracts::recess_providers_list();
+	return list && !list->is_empty();
+}
+
+Vector2 WorldGround::recess_at(const Vector3 &p_position) const {
+	Vector2 r;
+	if (GDVIRTUAL_CALL(_recess_at, p_position, r)) {
+		return Vector2(MAX(r.x, 0.0f), CLAMP(r.y, 0.0f, 1.0f));
+	}
+	Vector2 best;
+	const LocalVector<WorldRecessProvider *> *list = WorldContracts::recess_providers_list();
+	if (list) {
+		for (const WorldRecessProvider *p : *list) {
+			const Vector2 v = p->contract_recess_at(p_position);
+			if (Math::is_finite(v.x) && Math::is_finite(v.y) && v.x * v.y > best.x * best.y) {
+				best = Vector2(MAX(v.x, 0.0f), CLAMP(v.y, 0.0f, 1.0f));
+			}
+		}
+	}
+	return best;
+}
+
+void WorldGround::recess_points(const Vector3 *p_points, int p_count, Vector2 *r_recess) const {
+	const LocalVector<WorldRecessProvider *> *list = WorldContracts::recess_providers_list();
+	if (GDVIRTUAL_IS_OVERRIDDEN(_recess_at) || !list || list->size() != 1) {
+		for (int i = 0; i < p_count; i++) {
+			r_recess[i] = recess_at(p_points[i]);
+		}
+		return;
+	}
+	(*list)[0]->contract_recess_points(p_points, p_count, r_recess);
+	for (int i = 0; i < p_count; i++) {
+		const Vector2 v = r_recess[i];
+		r_recess[i] = (Math::is_finite(v.x) && Math::is_finite(v.y)) ? Vector2(MAX(v.x, 0.0f), CLAMP(v.y, 0.0f, 1.0f)) : Vector2();
+	}
+}
+
+Vector2 WorldGround::relief_at(const Vector3 &p_position, bool p_steps, bool p_recess) const {
+	(void)p_recess; // the relief producer (Landscape3D) applies the recess: forwarded once its contract takes it
 	Vector2 r;
 	if (GDVIRTUAL_CALL(_relief_at, p_position, r)) {
 		return r;

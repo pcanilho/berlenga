@@ -21,6 +21,10 @@ extends Node3D
 #   --hide=Node[,Node...]  hide those children of the bench (A/B which object draws something)
 #   --lod-error=px        Landscape3D.lod_error
 #   --no-cliff-kit        RockField3D.cliff_kit off (the fluted walls bare of their pillars: a before frame)
+#   --no-cliff-recess     RockField3D.cliff_recess off (the pillars stand proud of the ridges; no recess published)
+#   --recess-stub=x,y,z,nx,nz,w,h,d  a WorldGround stub answering recess_at alone: a w by h box (m, up and across the
+#                         face) centred at x,y,z whose face (horizontal outward normal nx,nz) steps back d m, fading
+#                         over its outline's last 0.5 m (the landscape's recess tested without a stone field: --no-rocks)
 #   --slope-map=cx,cz,half,step  print the terrain slope round that point (tens of degrees, '#' past 80)
 #   --face-spot=north|south  a rock wall facing that way, from its foot with the sky over it (--view=cliff);
 #                         --face-side=k moves the camera along the wall (k times --dist)
@@ -129,6 +133,26 @@ extends Node3D
 
 # A swell at the sea cave's mouth for the sea surge check: still sea plus 1 m amplitude, 12 s period, open water only
 # (it answers outside the cliff, as the ocean does).
+# The landscape's recess on its own (WorldGround.recess_at, RockField3D's contract): one box on a cliff face whose
+# drawn face steps back d m, share 1 inside and fading to 0 over its outline's last 0.5 m.
+class RecessBoxStub extends WorldGround:
+	var centre := Vector3.ZERO
+	var normal := Vector3(0, 0, 1) # horizontal, outward
+	var half := Vector2(2, 3) # across, up
+	var depth := 1.0
+
+	func _recess_at(p: Vector3) -> Vector2:
+		var along := Vector3.UP.cross(normal).normalized()
+		var d := p - centre
+		var v := absf(d.dot(along))
+		var u := absf(d.y)
+		var t := d.dot(normal)
+		if v > half.x or u > half.y or t < -depth - 6.0 or t > 4.0:
+			return Vector2.ZERO
+		var share := clampf((half.x - v) / 0.5, 0.0, 1.0) * clampf((half.y - u) / 0.5, 0.0, 1.0)
+		return Vector2(depth, share)
+
+
 class SwellStub extends WorldWater:
 	var sea := 0.0
 	var t := 0.0
@@ -172,6 +196,15 @@ func _ready() -> void:
 		# biotite flakes and facets point-sample into salt-and-pepper speckle (a fringe on the shaded side) that TAA
 		# resolves into the stone's real texture. --no-taa: the single-sample frame.
 		args["taa"] = "1"
+	if args.has("recess-stub"):
+		var rs: PackedStringArray = str(args["recess-stub"]).split(",")
+		var stub := RecessBoxStub.new()
+		stub.centre = Vector3(float(rs[0]), float(rs[1]), float(rs[2]))
+		stub.normal = Vector3(float(rs[3]), 0, float(rs[4])).normalized()
+		stub.half = Vector2(float(rs[5]), float(rs[6])) * 0.5
+		stub.depth = float(rs[7])
+		WorldContracts.set_ground(stub) # before the landscape builds: its drawn face reads the recess
+		print("recess stub: %s" % [rs])
 	WORLD = float(args.get("world-size", "2048"))
 	spp = int(args.get("spp", "16"))
 	out = args.get("out", "")
@@ -632,6 +665,8 @@ func _world() -> void:
 		rocks.ground_material = tm # the stones' feet blend into these layers
 		if args.has("no-cliff-kit"):
 			rocks.cliff_kit = false # --no-cliff-kit: the fluted walls without their kit pieces (the before frame)
+		if args.has("no-cliff-recess"):
+			rocks.cliff_recess = false # --no-cliff-recess: the pillars proud of the ridges, the face drawn whole
 		if args.has("cliff-max"):
 			rocks.cliff_block_max_slope = float(args["cliff-max"]) # --cliff-max=76: the wall's courses stop there (the before frame)
 		if args.get("stone-scans", "1") != "0" and not args.has("test"): # --stone-scans=0: no scan detail on stones and caves (A/B)

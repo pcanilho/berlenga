@@ -695,6 +695,30 @@ public:
 	virtual ~WorldReliefProvider() {}
 };
 
+// The cliff kit's recess (docs/ideas/rocks.md, "Cliff kit recess contract"): where a stone field stands rock pillars
+// as the wall of a steep face, the drawn face steps back under them so the pillars are the visible wall (terrain sunk
+// under cliff meshes: Carrier, GDC 2018, "Procedural World Generation of Far Cry 5"). Produced by RockField3D, read
+// by the landscape's drawn relief mesh (not its collision: the pillars carry their own). Several may register; the
+// deepest (depth * share) answers.
+class WorldRecessProvider {
+public:
+	// At a point of the drawn, unrecessed face (world, the relief's displaced position): x how far the face steps back
+	// (m, >= 0) along its horizontal outward normal to stand behind the pillar there, y the share (0..1: 1 where a
+	// pillar's front covers the point, fading to 0 within its outline's last 0.5 m where no neighbour continues the
+	// wall). (0, 0) where no pillar stands. Const and thread-safe (read from mesh workers, per vertex): a producer
+	// computes lazily under its own lock and caches.
+	virtual Vector2 contract_recess_at(const Vector3 &p_position) const = 0;
+	virtual void contract_recess_points(const Vector3 *p_points, int p_count, Vector2 *r_recess) const {
+		for (int i = 0; i < p_count; i++) {
+			r_recess[i] = contract_recess_at(p_points[i]);
+		}
+	}
+	// For results cached by what they read (the world cache), as the relief's.
+	virtual const Object *contract_recess_object() const { return nullptr; }
+	virtual void contract_recess_state(void (*p_add)(void *p_user, const void *p_data, size_t p_size), void *p_user) const {}
+	virtual ~WorldRecessProvider() {}
+};
+
 class WorldGround : public RefCounted {
 	GDCLASS(WorldGround, RefCounted);
 
@@ -727,6 +751,7 @@ protected:
 	GDVIRTUAL1RC(PackedFloat32Array, _stones_near, Rect2)
 	GDVIRTUAL1RC(Color, _albedo_at, Vector3)
 	GDVIRTUAL1RC(Vector2, _relief_at, Vector3)
+	GDVIRTUAL1RC(Vector2, _recess_at, Vector3)
 
 public:
 	bool has_provider() const { return provider != nullptr || get_script_instance() != nullptr; } // a script stub (set_*) counts
@@ -776,7 +801,17 @@ public:
 	// over terrain_relief_rect instead.
 	// p_steps false leaves out the terracettes' steps, for a placer that adds wc_terracette_step at each root itself (a
 	// height map sampled every few metres would alias them and count them twice). A script override ignores it.
-	Vector2 relief_at(const Vector3 &p_position, bool p_steps = true) const;
+	// p_recess false: the relief without the cliff kit's recess (for the kit itself, which is fitted to the unrecessed
+	// face). The relief producer applies the recess (recess_at) when p_recess is true.
+	Vector2 relief_at(const Vector3 &p_position, bool p_steps = true, bool p_recess = true) const;
+	// The cliff kit's recess at a point of the drawn, unrecessed face (WorldRecessProvider): x depth m back along the
+	// face's horizontal outward normal, y share (0..1). (0, 0) with no producer. Thread-safe for the built-in producers.
+	Vector2 recess_at(const Vector3 &p_position) const;
+	void recess_points(const Vector3 *p_points, int p_count, Vector2 *r_recess) const;
+	bool has_recess() const;
+	// A recess producer reports that the recess changed within a world box (it came or went, its pillars' settings
+	// changed): signal recess_changed(box), so the drawn relief there is built again.
+	void notify_recess_changed(const AABB &p_box);
 	// A relief producer reports that the relief over an area changed (its heights streamed in at full resolution, its
 	// relief settings changed, it came or went): signal relief_changed(area), so placers lay what sits there again.
 	void notify_relief_changed(const Rect2 &p_area);
@@ -907,6 +942,7 @@ class WorldContracts : public Object {
 	LocalVector<WorldCoverProvider *> cover_providers;
 	LocalVector<WorldGroundColorProvider *> ground_color_providers;
 	LocalVector<WorldReliefProvider *> relief_providers;
+	LocalVector<WorldRecessProvider *> recess_providers;
 	LocalVector<WorldClimateProvider *> climate_providers;
 	LocalVector<WorldPlantColorProvider *> plant_color_providers;
 	Ref<WorldWater> builtin_water;
@@ -1027,6 +1063,9 @@ public:
 	static void register_relief(WorldReliefProvider *p_provider); // any number: the first that knows the point answers
 	static void unregister_relief(WorldReliefProvider *p_provider);
 	static const LocalVector<WorldReliefProvider *> *relief_providers_list() { return singleton ? &singleton->relief_providers : nullptr; }
+	static void register_recess(WorldRecessProvider *p_provider); // any number: the deepest answers
+	static void unregister_recess(WorldRecessProvider *p_provider);
+	static const LocalVector<WorldRecessProvider *> *recess_providers_list() { return singleton ? &singleton->recess_providers : nullptr; }
 	static const LocalVector<WorldGroundColorProvider *> *ground_color_providers_list() { return singleton ? &singleton->ground_color_providers : nullptr; }
 	static void register_plant_color(WorldPlantColorProvider *p_provider); // any number: each lays its cover over the ground in turn
 	static void unregister_plant_color(WorldPlantColorProvider *p_provider);
