@@ -178,6 +178,9 @@ func _ready() -> void:
 	# Scanned bark detail on the generated trees (art/trees_scans, fetch_art.sh); --bark-scans=0: generated bark alone.
 	if args.get("bark-scans", "1") != "0":
 		_log("bark scans: %d presets" % TreeGenerator.load_scan_set(ProjectSettings.globalize_path("res://art/trees_scans")))
+	# Scanned forest floor detail (vegetation 81e3fda4, art terrain/layers); --floor-scans=0: generated floor alone.
+	if args.get("floor-scans", "1") != "0" and ClassDB.class_has_method("VegetationField3D", "load_floor_scans"):
+		_log("floor scans: %d" % ClassDB.class_call_static("VegetationField3D", "load_floor_scans", ProjectSettings.globalize_path("res://art/terrain_layers")))
 	if args.get("shadow-filter", "high") == "high":
 		# Stills have no TAA: soft-low shadow filtering leaves dithered penumbras in one frame; soft high does not.
 		RenderingServer.directional_soft_shadow_filter_set_quality(RenderingServer.SHADOW_QUALITY_SOFT_HIGH)
