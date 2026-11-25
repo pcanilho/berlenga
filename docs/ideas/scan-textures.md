@@ -136,4 +136,9 @@ Next on the terrain side: burn scars (WorldBurnScar3D draws its own char), water
   not needles), forest_leaves_03 3.77, mud_forest 5.06.
 - Grass bench `--forest=in --stand=beech|spruce --floor-scans[=DIR]` (=0 for the before shot). Raster pairs show finer,
   less even humus and duff with no loss; under a full sward most of it is hidden, as it should be.
+- Paulo saw no difference, rightly: within the 3D litter's 15 m the ground is fully covered by PRESET_LEAF_LITTER
+  leaves (a solid-red test on forest_floor() showed red only past it). So (Paulo's pick, 25 Nov) the plant shader's
+  `floor_scan` uniform (1 leaf litter, 2 needle litter) applies the same scans in world space on the 3D litter: the
+  scan at its tile (strength 0.7) and seven times larger (0.55) for metre-scale damp/dry drifts. The ground takes the
+  seven-times layer too, past the litter. Checker test confirmed it reaches the leaves. Mean brightness unchanged.
 - Not yet: moss detail on the 3D cushion and carpet meshes (plant material).
