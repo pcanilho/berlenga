@@ -1666,7 +1666,6 @@ void WorldGround::recess_points(const Vector3 *p_points, int p_count, Vector2 *r
 }
 
 Vector2 WorldGround::relief_at(const Vector3 &p_position, bool p_steps, bool p_recess) const {
-	(void)p_recess; // the relief producer (Landscape3D) applies the recess: forwarded once its contract takes it
 	Vector2 r;
 	if (GDVIRTUAL_CALL(_relief_at, p_position, r)) {
 		return r;
@@ -1674,7 +1673,7 @@ Vector2 WorldGround::relief_at(const Vector3 &p_position, bool p_steps, bool p_r
 	const LocalVector<WorldReliefProvider *> *list = WorldContracts::relief_providers_list();
 	if (list) {
 		for (const WorldReliefProvider *p : *list) {
-			const Vector2 v = p->contract_relief_at(p_position, p_steps);
+			const Vector2 v = p->contract_relief_at(p_position, p_steps, p_recess);
 			if (Math::is_finite(v.x)) {
 				return Vector2(v.x, CLAMP(v.y, 0.0f, 1.0f));
 			}

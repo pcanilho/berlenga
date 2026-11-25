@@ -695,6 +695,30 @@ void Landscape3D::_relief_frame_weights(real_t p_fx, real_t p_fz, ReliefFrame &r
 
 // As _cliff_point, keeping what it read at the point in r_frame (and reading only what r_frame lacks), so the mesh
 // build's other reads at a vertex (its CUSTOM channels) come from the same values instead of a second evaluation.
+// The cliff kit's recess: where a stone field stands rock pillars as the wall of a steep face, the drawn face steps
+// back under them, so the pillars are the visible wall (Far Cry 5's cliff meshes over a recessed heightfield). The
+// provider answers at a point of the drawn, unrecessed face; the point moves back along the face's horizontal normal.
+Vector3 Landscape3D::_recessed(const Vector3 &p_c, const Vector3 &p_n, real_t p_keep, real_t *r_share) const {
+	if (r_share) {
+		*r_share = 0.0;
+	}
+	if (!recess_on || p_keep <= 0.0) {
+		return p_c;
+	}
+	const real_t ml = Vector2(p_n.x, p_n.z).length();
+	if (ml < 1e-4f) {
+		return p_c;
+	}
+	const Vector2 r = WorldContracts::ground()->recess_at(recess_xform.xform(p_c));
+	if (!(r.x > 0.0f) || !(r.y > 0.0f)) {
+		return p_c;
+	}
+	if (r_share) {
+		*r_share = r.y;
+	}
+	return p_c - Vector3(p_n.x / ml, 0.0, p_n.z / ml) * (real_t(r.x) * real_t(r.y) * p_keep);
+}
+
 Vector3 Landscape3D::_cliff_point_framed(const Vector3 &p, real_t p_weight_scale, ReliefFrame &r_frame) const {
 	const real_t fx = (p.x - origin.x) / spacing, fz = (p.z - origin.y) / spacing;
 	if (!r_frame.has_n) {
@@ -819,7 +843,7 @@ void Landscape3D::_build_cliff_surface(MeshJob &r_job) const {
 	memset(has_disp.ptr(), 0, has_disp.size());
 	auto disp_of = [&](int a) -> Vector3 {
 		if (!has_disp[a]) {
-			disp[a] = _cliff_point(base[a], 1.0) - base[a];
+			disp[a] = _recessed(_cliff_point(base[a], 1.0), _normal_at((base[a].x - origin.x) / spacing, (base[a].z - origin.y) / spacing), 1.0) - base[a];
 			has_disp[a] = 1;
 		}
 		return disp[a];
@@ -851,7 +875,7 @@ void Landscape3D::_build_cliff_surface(MeshJob &r_job) const {
 			return false;
 		}
 		const Vector3 pm = (base[a] + base[b]) * 0.5f;
-		const Vector3 dm = _cliff_point(pm, 1.0) - pm;
+		const Vector3 dm = _recessed(_cliff_point(pm, 1.0), _normal_at((pm.x - origin.x) / spacing, (pm.z - origin.y) / spacing), 1.0) - pm;
 		mid_disp.insert(edge_key(a, b), dm);
 		return (dm - (da + db) * 0.5f).length() > 0.08f;
 	};
@@ -1005,9 +1029,12 @@ void Landscape3D::_build_cliff_surface(MeshJob &r_job) const {
 	for (uint32_t i = 0; i < base.size(); i++) {
 		const Vector3 p = base[i];
 		ReliefFrame frame; // the reads below at p, each once
-		vp[i] = _cliff_point_framed(p, keep[i], frame) - corner;
+		real_t rs = 0.0; // the recess's share: the material's analytic relief normal cannot see the recess, so its scales
+		// give way there and the recessed face shades by its mesh normals
+		vp[i] = _recessed(_cliff_point_framed(p, keep[i], frame), frame.n, keep[i], &rs) - corner;
 		_relief_frame_weights((p.x - origin.x) / spacing, (p.z - origin.y) / spacing, frame);
 		const Vector3 nb = frame.n;
+		const real_t rk = 1.0 - rs;
 		const Vector2 w = frame.w * frame.fold;
 		{
 			const real_t ml = Vector2(nb.x, nb.z).length();
@@ -1023,7 +1050,7 @@ void Landscape3D::_build_cliff_surface(MeshJob &r_job) const {
 				if (frame.cliff_limit < 0.0) {
 					frame.cliff_limit = _cliff_scale_limit(p, tn);
 				}
-				c0[i * 4 + 3] = float(MIN(kc, frame.cliff_limit));
+				c0[i * 4 + 3] = float(MIN(kc, frame.cliff_limit) * rk);
 			}
 			c1[i * 4 + 0] = nb.x;
 			c1[i * 4 + 1] = nb.y;
@@ -1035,9 +1062,9 @@ void Landscape3D::_build_cliff_surface(MeshJob &r_job) const {
 				if (frame.bank_limit < 0.0) {
 					frame.bank_limit = _bank_scale_limit(p, tn);
 				}
-				c1[i * 4 + 3] = float(MIN(kb, frame.bank_limit));
+				c1[i * 4 + 3] = float(MIN(kb, frame.bank_limit) * rk);
 			}
-			c2[i * 4 + 0] = ml < 1e-4f ? 0.0f : float(cliff_relief * w.x * keep[i]);
+			c2[i * 4 + 0] = ml < 1e-4f ? 0.0f : float(cliff_relief * w.x * keep[i] * rk);
 			const Vector3 np = _normal_central_at((p.x - origin.x) / spacing, (p.z - origin.y) / spacing);
 			c2[i * 4 + 1] = np.x;
 			c2[i * 4 + 2] = np.y;
@@ -1050,8 +1077,8 @@ void Landscape3D::_build_cliff_surface(MeshJob &r_job) const {
 		Vector3 t1 = nb.cross(Vector3(0, 1, 0));
 		t1 = t1.length_squared() > 1e-8f ? t1.normalized() : Vector3(1, 0, 0);
 		const Vector3 t2 = t1.cross(nb);
-		const Vector3 du = _cliff_point(p + t1 * e, keep[i]) - _cliff_point(p - t1 * e, keep[i]);
-		const Vector3 dv = _cliff_point(p + t2 * e, keep[i]) - _cliff_point(p - t2 * e, keep[i]);
+		const Vector3 du = _recessed(_cliff_point(p + t1 * e, keep[i]), nb, keep[i]) - _recessed(_cliff_point(p - t1 * e, keep[i]), nb, keep[i]);
+		const Vector3 dv = _recessed(_cliff_point(p + t2 * e, keep[i]), nb, keep[i]) - _recessed(_cliff_point(p - t2 * e, keep[i]), nb, keep[i]);
 		Vector3 nn = dv.cross(du);
 		if (nn.dot(nb) < 0.0) {
 			nn = -nn;
@@ -1717,6 +1744,9 @@ bool Landscape3D::_pick_lods(const Transform3D &p_camera, const Projection &p_pr
 void Landscape3D::_launch_meshes(bool p_wait) {
 	HashSet<uint64_t> queued;
 	mesh_jobs.clear();
+	// For the jobs' recess reads (_recessed); the jobs before these are done (mesh_jobs is clear).
+	recess_on = WorldContracts::ground()->has_recess();
+	recess_xform = is_inside_tree() ? get_global_transform() : Transform3D();
 	for (uint32_t i = 0; i < chunks.size(); i++) {
 		const uint64_t key = _mesh_key(i, target_lod[i], target_mask[i]);
 		if (meshes.has(key) || queued.has(key)) {
@@ -2172,6 +2202,24 @@ int Landscape3D::get_hole_quad_count() const {
 		}
 	}
 	return n;
+}
+
+// The cliff kit's recess changed within a world box: new meshes for the chunks it touches (their generation). Not
+// relief_changed: the kit fits to the unrecessed face, so it has nothing to refit, and its fit would come back here.
+void Landscape3D::_on_recess_changed(const AABB &p_box) {
+	if (chunks.is_empty() || !is_inside_tree()) {
+		return;
+	}
+	const AABB b = get_global_transform().affine_inverse().xform(p_box).grow(spacing);
+	const real_t size = chunk_quads * spacing;
+	for (uint32_t i = 0; i < chunks.size(); i++) {
+		const int cx = int(i) % cw, cz = int(i) / cw;
+		const Rect2 r(origin.x + cx * size, origin.y + cz * size, size, size);
+		if (r.intersects(Rect2(b.position.x, b.position.z, b.size.x, b.size.z), true)) {
+			chunks[i].gen++;
+		}
+	}
+	lods_dirty = true;
 }
 
 void Landscape3D::_on_holes_changed(const Rect2 &p_rect) {
@@ -2837,7 +2885,10 @@ void Landscape3D::_clear_stand_map() {
 // bank relief push a surface point out along the slope's horizontal normal m by d, so at a fixed xz the surface stands
 // d tan(slope) higher (outward is downhill). The full field: the stitch weight on sides next to coarser chunks and the
 // finest-chunk-only drawing are left out (both are under a pixel by design).
-Vector2 Landscape3D::_relief_at_local(const Vector3 &p, bool p_steps) const {
+Vector2 Landscape3D::_relief_at_local(const Vector3 &p, bool p_steps, Vector3 *r_drawn, real_t *r_drawn_tan) const {
+	if (r_drawn_tan) {
+		*r_drawn_tan = 0.0;
+	}
 	if (heights.is_empty() || (cliff_relief <= 0.0 && bank_relief <= 0.0 && terracette_relief <= 0.0)) {
 		return Vector2(0.0, 0.0);
 	}
@@ -2879,13 +2930,31 @@ Vector2 Landscape3D::_relief_at_local(const Vector3 &p, bool p_steps) const {
 	if (w.y > 0.0 && bank_relief > 0.0) {
 		d += _bank_scale(q, bank_relief * w.y * fold, ml / MAX(n.y, real_t(1e-3))) * _bank_offset(q);
 	}
+	if (r_drawn && r_drawn_tan) {
+		*r_drawn = q + Vector3(n.x / ml, 0.0, n.z / ml) * d;
+		*r_drawn_tan = ml / n.y;
+	}
 	return Vector2(d * ml / n.y + tc, MIN(w.x + w.y, real_t(1.0)));
 }
 
-Vector2 Landscape3D::contract_relief_at(const Vector3 &p_position, bool p_steps) const {
-	RWLockRead hl(heights_lock);
+Vector2 Landscape3D::contract_relief_at(const Vector3 &p_position, bool p_steps, bool p_recess) const {
 	const Transform3D xf = is_inside_tree() ? get_global_transform() : Transform3D();
-	return _relief_at_local(xf.affine_inverse().xform(p_position), p_steps);
+	Vector3 drawn;
+	real_t tn = 0.0;
+	Vector2 r;
+	{
+		RWLockRead hl(heights_lock);
+		r = _relief_at_local(xf.affine_inverse().xform(p_position), p_steps, &drawn, &tn);
+	}
+	// The cliff kit's recess, asked outside the lock (its producer fits its pillars to the unrecessed face through
+	// this same contract): the face steps back by depth x share, so at a fixed xz it stands that much times tan lower.
+	if (p_recess && tn > 0.0 && Math::is_finite(r.x) && WorldContracts::ground()->has_recess()) {
+		const Vector2 rc = WorldContracts::ground()->recess_at(xf.xform(drawn));
+		if (rc.x > 0.0f && rc.y > 0.0f) {
+			r.x -= real_t(rc.x) * real_t(rc.y) * tn;
+		}
+	}
+	return r;
 }
 
 // What contract_relief_at reads besides the stored properties: the placement, the grid and its heights as read so far.
@@ -3040,10 +3109,22 @@ void Landscape3D::_notification(int p_what) {
 				relief_registered = true;
 				_relief_changed(Rect2());
 			}
+			{
+				const Callable rcb = callable_mp(this, &Landscape3D::_on_recess_changed);
+				if (!WorldContracts::ground()->is_connected(SNAME("recess_changed"), rcb)) {
+					WorldContracts::ground()->connect(SNAME("recess_changed"), rcb);
+				}
+			}
 			set_process_internal(true);
 		} break;
 		case NOTIFICATION_EXIT_WORLD: {
 			_auto_disconnect();
+			{
+				const Callable rcb = callable_mp(this, &Landscape3D::_on_recess_changed);
+				if (WorldContracts::ground()->is_connected(SNAME("recess_changed"), rcb)) {
+					WorldContracts::ground()->disconnect(SNAME("recess_changed"), rcb);
+				}
+			}
 			_wait_all();
 			_free_instances();
 			_free_all_collision();

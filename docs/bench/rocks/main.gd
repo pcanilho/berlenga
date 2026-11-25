@@ -185,6 +185,12 @@ var form_stone := {} # the stone --form framed
 var spot_pos := Vector3.ZERO # the view's spot (--roll)
 var bank_side := Vector3.ZERO # --bank-spot: along the bank's contour, for a raking view down its length
 
+func _exit_tree() -> void:
+	# A script stub held by the engine singleton outlives the script language at shutdown (abort): drop it first.
+	if args.has("recess-stub"):
+		WorldContracts.set_ground(null)
+
+
 func _ready() -> void:
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--"):

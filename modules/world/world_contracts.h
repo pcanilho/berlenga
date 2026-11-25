@@ -686,7 +686,7 @@ public:
 	// surface out along the slope's horizontal normal by d, so about d tan(slope) here), y the relief's share
 	// (0..1, the cliff and bank weights). x NAN where the producer does not reach. p_steps: with the terracettes' steps
 	// (WorldContracts::terracette_step); false for placers that add the step at their own roots, as the GPU's do.
-	virtual Vector2 contract_relief_at(const Vector3 &p_position, bool p_steps = true) const = 0;
+	virtual Vector2 contract_relief_at(const Vector3 &p_position, bool p_steps = true, bool p_recess = true) const = 0; // p_recess false: without the cliff kit's recess
 	// For results cached by what they read (the world cache): the node whose stored properties set the relief, and
 	// the rest of its state through p_add (called for each piece of bytes). A provider that returns null here is not
 	// cached against, so its readers compute.

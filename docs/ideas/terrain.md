@@ -378,6 +378,25 @@ What Landscape3D does:
   64 m step frees and builds a row in 0.3 ms; rays land within 0.7 mm of the drawn triangles (grid points, edge
   midpoints and cell centres); first build while streaming 5 ms (the target's chunks read at once).
 
+## Landscape3D: cliff kit recess (25 Nov)
+
+The drawn cliff face steps back under the cliff kit's pillars, as Far Cry 5 sinks its heightfield under cliff meshes
+(Carrier, GDC 2018). The contract and the producer are in rocks.md, "Cliff kit recess contract"; this is the
+consumer side.
+
+- Each finest cliff vertex is moved back along the face's horizontal unit normal by depth x share x keep (keep being
+  the vertex's relief fade), queried at the drawn unrecessed point. The split test measures the recessed point, so
+  the mesh refines along pillar outlines. The analytic per-pixel relief (CUSTOM scales) fades by 1 - share, so the
+  covered face is flat behind the pillar rather than fluted through it.
+- `relief_at(p, steps, recess = true)` subtracts the recess outside the heights lock (the provider reads the
+  unrecessed relief from worker threads). The GPU relief map and `contract_relief_state` leave the recess out, so a
+  recess rebuild never emits `relief_changed` and cannot loop.
+- `recess_changed(box)` bumps the generation of every chunk the box (local, grown by one spacing) overlaps; only
+  those re-mesh. With no provider (`has_recess()` false) no query is made and the mesh is byte-identical.
+- Collision is unchanged: the tiles carry no relief, and the pillars have their own.
+- Test alone: rocks bench `--no-rocks --recess-stub=228,65,170,0,1,8,60,3` at the cliff view; only the box's columns
+  change in frame (raster and PT).
+
 ## Open questions
 
 - Region and chunk sizes against the partitioned TLAS cell (128 m columns in Valence, 1024 m

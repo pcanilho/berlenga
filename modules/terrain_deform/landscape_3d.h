@@ -197,7 +197,9 @@ class Landscape3D : public Node3D, public WorldReliefProvider {
 	bool relief_registered = false;
 	void _update_relief_map(const Vector3 &p_camera);
 	void _clear_relief_map();
-	Vector2 _relief_at_local(const Vector3 &p_local, bool p_steps = true) const; // p_steps: the terracettes' too
+	// p_steps: the terracettes' too. r_drawn: the drawn face point the relief pushes out to (landscape space) and its
+	// metres up per metre out (tan slope), for the recess; r_drawn_tan 0 where no relief reaches.
+	Vector2 _relief_at_local(const Vector3 &p_local, bool p_steps = true, Vector3 *r_drawn = nullptr, real_t *r_drawn_tan = nullptr) const;
 	// The cliff relief's share (its face weight, 0..1) over a wider square for the terrain material (no soil on a
 	// shelf between walls): terrain_cliff_map (R8) over terrain_cliff_rect, CLIFF_MAP_SIZE round the camera at
 	// CLIFF_MAP_RES texels, rebuilt with the relief map.
@@ -267,6 +269,13 @@ class Landscape3D : public Node3D, public WorldReliefProvider {
 	void _relief_frame_weights(real_t p_fx, real_t p_fz, ReliefFrame &r_frame) const;
 	Vector3 _cliff_point(const Vector3 &p_world, real_t p_weight_scale) const;
 	Vector3 _cliff_point_framed(const Vector3 &p_world, real_t p_weight_scale, ReliefFrame &r_frame) const;
+	// The cliff kit's recess (WorldGround.recess_at, docs/ideas/rocks.md "Cliff kit recess contract"): a drawn point c
+	// (landscape space) on the face whose heightfield normal is p_n, moved back along its horizontal normal by depth x
+	// share x p_keep; r_share the share. recess_on and recess_xform are set on the main thread before mesh jobs run.
+	Vector3 _recessed(const Vector3 &p_c, const Vector3 &p_n, real_t p_keep, real_t *r_share = nullptr) const;
+	bool recess_on = false;
+	Transform3D recess_xform;
+	void _on_recess_changed(const AABB &p_box);
 	void _build_cliff_surface(MeshJob &r_job) const;
 	const LocalVector<int> &_indices(int p_level, int p_mask);
 	void _crease_indices(int p_cx, int p_cz, int p_level, int p_mask, LocalVector<int> &r_indices) const;
@@ -331,7 +340,7 @@ public:
 	real_t get_bank_relief() const { return bank_relief; }
 	void set_terracette_relief(real_t p_share);
 	real_t get_terracette_relief() const { return terracette_relief; }
-	Vector2 contract_relief_at(const Vector3 &p_position, bool p_steps = true) const override;
+	Vector2 contract_relief_at(const Vector3 &p_position, bool p_steps = true, bool p_recess = true) const override;
 	const Object *contract_relief_object() const override { return this; }
 	void contract_relief_state(void (*p_add)(void *p_user, const void *p_data, size_t p_size), void *p_user) const override;
 	Vector3 get_cliff_point(const Vector3 &p_global_position) const;
