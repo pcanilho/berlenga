@@ -367,7 +367,7 @@
 			While streaming, the cells of the coarse layers (field stones, scree, river and shore stones, landforms) are placed on worker threads, and the main thread only adds their MultiMeshes and collision. A cell whose shapes are not built yet starts them on workers and is placed again once they are in. Landform cells stay on the main thread while [member cave_mouths] is on, as those open terrain holes. Off: placed on the main thread within [member build_budget_msec], as before.
 		</member>
 		<member name="cliff_block_max_slope" type="float" setter="set_cliff_block_max_slope" getter="get_cliff_block_max_slope" default="88.0">
-			Steepest terrain face, in degrees, that the cliff layer's coursed wall blocks cover. Above about 60 degrees a heightfield face is a stretched step that draws vertical bands, and the blocks cover it with real geometry; past 68 degrees their courses are nearly closed. 76 keeps the blocks off sheer walls.
+			Steepest terrain face, in degrees, that the cliff layer's wall blocks cover. Above about 60 degrees a heightfield face is a stretched step that draws vertical bands, and the blocks cover it with real geometry: beds of uneven thickness cut by joints, nearly closed, the hard beds standing proud of the soft ones. 76 keeps the blocks off sheer walls.
 		</member>
 		<member name="cliff_density" type="float" setter="set_layer_density" getter="get_layer_density" default="1.0">
 			Scales how many blocks are set into cliff faces.

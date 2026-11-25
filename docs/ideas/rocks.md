@@ -1469,3 +1469,25 @@ cell up and down the fall line landed on the bench above and the foot below, whi
 
 Bench (rocks, --world --world-size=1024 --view=cliff, fixed camera): 159k to 365k stones; frame primitives 6.9M to
 10.0M in 111 to 723 draw calls; rock build 34 s to 110 s. The path tracer uses the full meshes.
+
+### Jointed rock, not masonry (25 Nov, second pass)
+
+Fixed 1.4 m courses with one block per 3 m cell read as man-made rows of same-sized bricks. Real sheer faces break
+along bedding and joint sets:
+- **Bed thickness varies.** In a sedimentary pile it is close to log-normal. The height is now cut into packages of
+  about 3.6 m with jittered tops, each split into one to three beds of 0.4 m and up. The cut is the same for every
+  cell, so a bed runs on along the wall.
+- **Joints are spaced in proportion to bed thickness.** Thin beds break into short blocks and thick beds into long
+  ones (Narr and Suppe 1991, "Joint spacing in sedimentary rocks"; Bai and Pollard 2000, fracture spacing). Each bed
+  has its own ratio, 1 to 2.6 times its thickness, with joints jittered by a third. Joints are spaced along a world
+  axis, so neighbouring cells agree.
+- **Blocks fill the span between joints, less an open joint.** Of three shapes, the one whose proportions best match
+  the span is used. The open joints read as shadowed lines.
+- **Hard and soft beds weather apart (differential erosion).** Each bed has a hardness. On faces past 60 degrees a
+  hard bed stands out half its depth and a soft one a fifth, with more gaps where blocks have weathered out. The
+  setback blends in from 60 to 75 degrees, so the 50 to 60 degree faces keep the flush blocks that avoid pale shelves.
+- **On sheer faces the rock exposure map no longer gates placement.** Soil does not hold there, and the map fades
+  out over the flutes. Faces past 60 degrees need only 0.15 instead of 0.5.
+
+Rocks bench cliff view: 362k to 368k stones. --slope-map=cx,cz,half,step prints a slope map, to find the faces past
+60 degrees.

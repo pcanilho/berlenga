@@ -20,6 +20,7 @@ extends Node3D
 #   --mat-prop=name:value[;...]  any TerrainMaterial3D property or tm_ shader uniform (tm_sand_color:Color(1,0,1) marks a layer)
 #   --hide=Node[,Node...]  hide those children of the bench (A/B which object draws something)
 #   --lod-error=px        Landscape3D.lod_error
+#   --slope-map=cx,cz,half,step  print the terrain slope round that point (tens of degrees, '#' past 80)
 #   --face-spot=north|south  a rock wall facing that way, from its foot with the sky over it (--view=cliff);
 #                         --face-side=k moves the camera along the wall (k times --dist)
 #   --taa                 temporal antialiasing as in play (24 frames settle before a sea-cave still); on by default
@@ -910,6 +911,25 @@ func _world() -> void:
 		bank_side = Vector3(-tz, 0, tx).normalized()
 		print("terracette spot ", spot, " geology ", gen.get_material_geology_at(spot))
 	var face_out := Vector3.ZERO
+	if args.has("slope-map"):
+		# --slope-map=cx,cz,half,step: a map of slope (tens of degrees, '#' past 80) round that point, x across, z down.
+		var sm: PackedStringArray = str(args["slope-map"]).split(",")
+		var smc := Vector3(float(sm[0]), 0, float(sm[1]))
+		var smh := float(sm[2])
+		var sms := float(sm[3])
+		var zz2 := -smh
+		while zz2 <= smh:
+			var row := "%7.1f " % (smc.z + zz2)
+			var xx2 := -smh
+			while xx2 <= smh:
+				var q := smc + Vector3(xx2, 0, zz2)
+				var sx := gen.get_height(q + Vector3(1, 0, 0)) - gen.get_height(q - Vector3(1, 0, 0))
+				var sz := gen.get_height(q + Vector3(0, 0, 1)) - gen.get_height(q - Vector3(0, 0, 1))
+				var dg := rad_to_deg(atan(Vector2(sx, sz).length() / 2.0))
+				row += "#" if dg >= 80.0 else str(int(dg / 10.0))
+				xx2 += sms
+			print(row)
+			zz2 += sms
 	if args.has("face-spot"):
 		# --face-spot=north|south: a rock wall of 60 degrees or more facing that way (outward within 30 degrees,
 		# north is -z) and 15 m high or more, the nearest; seen from its foot looking up with the sky over its top.

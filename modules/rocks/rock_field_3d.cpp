@@ -1526,7 +1526,7 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_cell_rect, uint32_t p_see
 				const Vector3 down_dip(Math::sin(dd), 0, -Math::cos(dd));
 				bed_normal = (Vector3(0, 1, 0) * Math::cos(dip) - down_dip * Math::sin(dip)).normalized();
 			}
-			const float course = 1.4f; // m, course thickness
+			const float course = 1.4f; // m, the mean bed thickness (the face-fit tolerances scale by it)
 			const float min_tan = Math::tan(Math::deg_to_rad(50.0f));
 			// Up to near vertical: past about 60 degrees a heightfield face is a stretched step whose few vertices
 			// draw long vertical bands (draped folds) that no texture hides, so the wall's own blocks cover it there
@@ -1534,7 +1534,25 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_cell_rect, uint32_t p_see
 			// Run-Time Procedural Placement in Horizon Zero Dawn"; Carrier, GDC 2018, "Procedural World Generation of
 			// Far Cry 5"). docs/ideas/rocks.md, "Wall blocks on steep faces".
 			const float max_tan = Math::tan(Math::deg_to_rad(float(CLAMP(cliff_block_max_slope, real_t(50.0), real_t(89.0)))));
-			const float sheer_tan = Math::tan(Math::deg_to_rad(68.0f));
+			const float sheer_tan = Math::tan(Math::deg_to_rad(60.0f));
+			// Beds of uneven thickness (bed thickness in a sedimentary pile is near log-normal, not a fixed course): the
+			// height is cut into packages of about 3.6 m with jittered tops, each split into one to three beds of 0.4 m
+			// up. Every cell of every wall finds the same beds at the same heights, so a bed runs on along the cliff.
+			const float bed_pkg = 3.6f;
+			auto bed_hash = [](int64_t p_i, uint32_t p_salt) { return hash_fmix32(hash_murmur3_one_32(uint32_t(p_i) ^ uint32_t(p_i >> 32) * 0x9e3779b1u, p_salt)); };
+			auto u01 = [](uint32_t p_h) { return float(p_h & 0xffffu) / 65535.0f; };
+			auto pkg_base = [&](int64_t p_p) { return (float(p_p) + 0.38f * (u01(bed_hash(p_p, 0x6b3du)) - 0.5f)) * bed_pkg; };
+			auto beds_in = [&](int64_t p_p, float *r_bounds) {
+				const float b0 = pkg_base(p_p), b1 = pkg_base(p_p + 1);
+				const uint32_t h = bed_hash(p_p, 0x51f3u) % 100u;
+				const int nb = h < 20u ? 1 : (h < 65u ? 2 : 3);
+				r_bounds[0] = b0;
+				for (int i = 1; i < nb; i++) {
+					r_bounds[i] = b0 + (b1 - b0) * (float(i) + 0.6f * (u01(bed_hash(p_p * 4 + i, 0x3e77u)) - 0.5f)) / float(nb);
+				}
+				r_bounds[nb] = b1;
+				return nb;
+			};
 			const real_t gen_cell = gen->get_cell_size();
 			if (ledge_slabs) {
 				_place_ledges(gen, p_layer, p_rect, p_seed, r_stones);
@@ -1546,15 +1564,17 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_cell_rect, uint32_t p_see
 				for (real_t x = p_rect.position.x; x < p_rect.get_end().x; x += sub) {
 					const Vector3 c(x + sub * 0.5f, 0, z + sub * 0.5f);
 					const float rock = float(gen->get_rock_exposure(c));
-					if (rock < 0.5f) {
-						continue;
-					}
 					const real_t hc = rf_height(gen, c);
 					const real_t e = 1.0;
 					const Vector2 grad((rf_height(gen, c + Vector3(e, 0, 0)) - rf_height(gen, c - Vector3(e, 0, 0))) / (2.0 * e), (rf_height(gen, c + Vector3(0, 0, e)) - rf_height(gen, c - Vector3(0, 0, e))) / (2.0 * e));
 					const float gl = grad.length();
 					if (!(gl >= min_tan && gl <= max_tan) || !Math::is_finite(hc)) {
 						continue; // also off the generated world, where the heights are NaN
+					}
+					// Soil does not hold past about 45 degrees: a sheer face is bare rock whatever the exposure map's
+					// blend says (it fades rock out over talus and flutes the walls carry).
+					if (rock < (gl > sheer_tan ? 0.15f : 0.5f)) {
+						continue;
 					}
 					const Vector2 up_dir = grad / gl; // uphill, in plan
 					// Only where the terrain mesh really has this face: across one terrain cell up and down the fall
@@ -1569,99 +1589,144 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_cell_rect, uint32_t p_see
 						const real_t span = MIN(gen_cell, MAX(real_t(1.0), real_t(6.0f * course / gl)));
 						const Vector3 u(up_dir.x * span, 0, up_dir.y * span);
 						const real_t bend = rf_height(gen, c + u) + rf_height(gen, c - u) - 2.0 * hc;
-						if (!(Math::abs(bend) / Math::sqrt(1.0f + gl * gl) <= course * 0.32f)) {
+						if (!(Math::abs(bend) / Math::sqrt(1.0f + gl * gl) <= course * (gl > sheer_tan ? 0.5f : 0.32f))) {
 							continue;
 						}
 					}
 					// The span of heights the face covers inside this cell, along the fall line.
 					const float half = float(sub) * 0.5f;
 					const float y0 = float(hc) - gl * half, y1 = float(hc) + gl * half;
-					const int k0 = int(Math::floor(y0 / course)), k1 = int(Math::floor(y1 / course));
-					for (int k = k0; k <= k1; k++) {
-						// The course's middle height, wobbling a little along the wall; where it crosses the face.
-						const float yk = (k + 0.5f) * course;
-						const float along = (yk - float(hc)) / gl;
-						if (Math::abs(along) > half) {
-							continue;
-						}
-						// Past about 68 degrees the face is the stretched heightfield step the blocks are there to cover:
-						// courses nearly closed there, gaps only now and then.
-						const bool sheer = gl > sheer_tan;
-						if (rng.randf() > (sheer ? 0.95f : 0.75f * rock - 0.1f) * float(density)) {
-							continue; // a gap: the wall shows between blocks
-						}
-						const Vector2 pxz = Vector2(c.x, c.z) + up_dir * along;
-						// Blocks of a course stagger against the course below: shift along the strike by half a block.
-						const Vector2 strike(-up_dir.y, up_dir.x);
-						const Vector2 bp = pxz + strike * ((k & 1) ? 0.9f : 0.0f) * float(sub) * 0.5f * (rng.randf() * 0.4f + 0.8f);
-						if (!p_rect.has_point(bp)) {
-							continue;
-						}
-						const Vector3 pos3(bp.x, 0, bp.y);
-						const RockGenerator::RockType type = _type_at(gen, pos3 + Vector3(0, yk, 0));
-						const uint32_t key = _library_key(type, RockGenerator::FAMILY_CLIFF_BLOCK, 0);
-						Library *lib = _ensure_library(key);
-						if (!lib) {
-							continue;
-						}
-						Stone st;
-						st.layer = p_layer;
-						st.library = key;
-						st.variant = pick_variant(lib);
-						const Vector3 axes = lib->axes[st.variant];
-						st.scale = course * (0.85f + 0.2f * rng.randf()) / MAX(2.0f * axes.y, 0.05f);
-						// Long axis along the strike, short axis on the bed normal, b axis into the wall. The bed normal
-						// is turned most of the way toward the face's own up-slope direction: a heightfield face stands at
-						// 50 to 76 degrees, and a block kept square to level beds pushed its top out of it as a pale
-						// shelf (from afar a flake stuck on the slope); turned with the face it lies nearly flush.
-						const Vector3 fn = Vector3(-grad.x, 1.0f, -grad.y).normalized();
-						const Vector3 face_up = (Vector3(0, 1, 0) - fn * fn.y).normalized();
-						const Vector3 y_axis = bed_normal.slerp(face_up, 0.75f).normalized();
-						Vector3 x_axis = Vector3(strike.x, 0, strike.y);
-						x_axis = (x_axis - y_axis * y_axis.dot(x_axis)).normalized();
-						const Vector3 z_axis = x_axis.cross(y_axis).normalized();
-						Basis b;
-						b.set_column(0, x_axis);
-						b.set_column(1, y_axis);
-						b.set_column(2, z_axis);
-						b = Basis(y_axis, (rng.randf() - 0.5f) * 0.25f) * b;
-						// The face's outward normal at the crossing; the block's centre that far into the rock.
-						const Vector3 n = Vector3(-grad.x, 1.0f, -grad.y).normalized();
-						const Vector3 surface(bp.x, yk, bp.y);
-						// Set deep: a block standing a third of its depth out of a 50 to 76 degree face pushed its level top
-						// out as a pale shelf, read from afar as a flake stuck on the slope. Mostly flush, the course
-						// shows as edges and slight steps.
-						const Vector3 centre = surface - n * (axes.z * st.scale * (0.86f + 0.12f * rng.randf()));
-						// The centre must lie inside the rock (under the terrain at its own plan position), or the block
-						// stands out of a bend in the face rather than being set into it.
-						if (rf_height(gen, centre) < centre.y + 0.1f * course) {
-							continue;
-						}
-						// And the face is where the cell's plane put it: at the crossing and at both ends of the block
-						// (along the strike) the ground stands within a fifth of a course of the block's face, measured
-						// square to the face. Where the real face bends away or steps back (a gully, a convex corner),
-						// the block would stand out of it in the air, read from afar as a slab hung on the cliff.
-						{
-							bool out = false;
-							const real_t ext = axes.x * st.scale * 0.9;
-							for (int e = -1; e <= 1 && !out; e++) {
-								const Vector3 q = surface + x_axis * (ext * e);
-								const real_t gap = (q.y - rf_height(gen, q)) * n.y; // + where the face lies under the block's face
-								// On a sheer wall a block may stand proud of a fold (a joint block jutting from a wall);
-								// on a sloping face it would read as a shelf.
-								out = gap > (sheer ? 0.45f : 0.2f) * course;
-							}
-							if (out) {
+					// Past 60 degrees the face is the stretched heightfield step the blocks are there to cover:
+					// beds nearly closed there, and hard beds stand proud of soft ones.
+					const bool sheer = gl > sheer_tan;
+					const Vector2 strike(-up_dir.y, up_dir.x);
+					// Joints are spaced along one world axis (the one nearer the strike), so neighbouring cells of the same
+					// wall agree on where a bed's joints fall even as the strike turns a little between them.
+					const bool along_x = Math::abs(strike.x) >= Math::abs(strike.y);
+					const float strike_comp = along_x ? strike.x : strike.y;
+					const Rect2 sub_rect(c.x - half, c.z - half, float(sub), float(sub));
+					const int64_t p0 = int64_t(Math::floor(y0 / bed_pkg)) - 1, p1 = int64_t(Math::floor(y1 / bed_pkg)) + 1;
+					for (int64_t p = p0; p <= p1; p++) {
+						float bounds[4];
+						const int nb = beds_in(p, bounds);
+						for (int i = 0; i < nb; i++) {
+							const float yb0 = bounds[i], yb1 = bounds[i + 1];
+							const float bed = yb1 - yb0;
+							const float yk = 0.5f * (yb0 + yb1);
+							const float along = (yk - float(hc)) / gl;
+							if (Math::abs(along) > half) {
 								continue;
 							}
-						}
-						st.basis = b * Basis().scaled(Vector3(st.scale, st.scale, st.scale));
-						st.position = centre;
-						st.ground = yk - 50.0f; // no contact band on a wall
-						st.footprint = 0.0f;
-						r_stones.push_back(st);
-						if (int(r_stones.size()) >= max_stones_per_cell) {
-							return;
+							const uint32_t bed_id = bed_hash(p * 4 + i, 0x2c1bu);
+							const float hard = u01(bed_id); // 1: a hard bed (stands out, few gaps), 0: a soft one
+							// Joint spacing scales with the bed's thickness (Narr and Suppe 1991; Bai and Pollard 2000),
+							// 1 to 2.6 times it, its own ratio per bed.
+							const float spacing = bed * (1.0f + 1.6f * u01(bed_hash(p * 4 + i, 0x71a9u))) / MAX(Math::abs(strike_comp), 0.7f);
+							const Vector2 pxz = Vector2(c.x, c.z) + up_dir * along;
+							const float s_here = along_x ? pxz.x : pxz.y;
+							const int64_t j0 = int64_t(Math::floor((s_here - float(sub)) / spacing)) - 1;
+							const int64_t j1 = int64_t(Math::floor((s_here + float(sub)) / spacing)) + 1;
+							for (int64_t j = j0; j <= j1; j++) {
+								// Joints sit off the even spacing by up to a third of it; the block fills the span between two
+								// joints, less the open joint.
+								const float ja = (float(j) + 0.33f * (u01(bed_hash(j, bed_id)) - 0.5f)) * spacing;
+								const float jb = (float(j + 1) + 0.33f * (u01(bed_hash(j + 1, bed_id)) - 0.5f)) * spacing;
+								const Vector2 bp = pxz + strike * ((0.5f * (ja + jb) - s_here) / strike_comp);
+								if (!sub_rect.has_point(bp) || !p_rect.has_point(bp)) {
+									continue;
+								}
+								if (rng.randf() > (sheer ? 0.72f + 0.26f * hard : 0.75f * rock - 0.1f) * float(density)) {
+									continue; // a gap: a block weathered out, the wall shows behind
+								}
+								const float span = (jb - ja) * Math::abs(strike_comp); // along the strike, metres
+								const Vector3 pos3(bp.x, 0, bp.y);
+								const RockGenerator::RockType type = _type_at(gen, pos3 + Vector3(0, yk, 0));
+								const uint32_t key = _library_key(type, RockGenerator::FAMILY_CLIFF_BLOCK, 0);
+								Library *lib = _ensure_library(key);
+								if (!lib) {
+									continue;
+								}
+								Stone st;
+								st.layer = p_layer;
+								st.library = key;
+								// Of three shapes, the one whose length to height best matches the joint span to the bed.
+								{
+									const float want = span / MAX(bed, 0.05f);
+									float best = 1e9f;
+									for (int t = 0; t < 3; t++) {
+										const uint16_t v = pick_variant(lib);
+										const Vector3 ax = lib->axes[v];
+										const float d = Math::abs(Math::log(MAX(ax.x, 0.01f) / MAX(ax.y, 0.01f) / want));
+										if (d < best) {
+											best = d;
+											st.variant = v;
+										}
+									}
+								}
+								const Vector3 axes = lib->axes[st.variant];
+								// Fits the bed and the joint span, less the open joints (shadowed lines between blocks).
+								const float fill = 0.86f + 0.08f * rng.randf();
+								st.scale = fill * MIN(bed / MAX(2.0f * axes.y, 0.05f), 1.2f * span / MAX(2.0f * axes.x, 0.05f)); // a block may lap a little past its joint
+								// Long axis along the strike, short axis on the bed normal, b axis into the wall. The bed
+								// normal is turned most of the way toward the face's own up-slope direction: a block kept
+								// square to level beds on a 50 to 76 degree face pushed its top out of it as a pale shelf
+								// (from afar a flake stuck on the slope); turned with the face it lies nearly flush.
+								const Vector3 fn = Vector3(-grad.x, 1.0f, -grad.y).normalized();
+								const Vector3 face_up = (Vector3(0, 1, 0) - fn * fn.y).normalized();
+								const Vector3 y_axis = bed_normal.slerp(face_up, 0.75f).normalized();
+								Vector3 x_axis = Vector3(strike.x, 0, strike.y);
+								x_axis = (x_axis - y_axis * y_axis.dot(x_axis)).normalized();
+								const Vector3 z_axis = x_axis.cross(y_axis).normalized();
+								Basis b;
+								b.set_column(0, x_axis);
+								b.set_column(1, y_axis);
+								b.set_column(2, z_axis);
+								b = Basis(y_axis, (rng.randf() - 0.5f) * 0.25f) * b;
+								if (sheer) {
+									b = Basis(x_axis, (rng.randf() - 0.5f) * 0.1f) * b; // a block settled on its bed
+								}
+								// The face's outward normal at the crossing; the block's centre that far into the rock.
+								const Vector3 n = fn;
+								const Vector3 surface(bp.x, yk, bp.y);
+								// Set deep on a sloping face: a block standing a third of its depth out of a 50 to 76 degree
+								// face pushed its level top out as a pale shelf. On a sheer wall the beds weather apart
+								// (differential erosion): a hard bed stands out half its depth, a soft one a fifth, sitting back
+								// in the face, so the courses read as relief with shadowed bed lines, not tiles laid flat.
+								// Blended from 60 to 75 degrees, so a block on a face just past 60 still lies nearly flush.
+								const float sheer_t = CLAMP((Math::rad_to_deg(Math::atan(gl)) - 60.0f) / 15.0f, 0.0f, 1.0f);
+								const float set_in = Math::lerp(0.86f + 0.12f * rng.randf(), 0.5f + 0.3f * (1.0f - hard) + 0.08f * rng.randf(), sheer_t);
+								const Vector3 centre = surface - n * (axes.z * st.scale * set_in);
+								// The centre must lie inside the rock (under the terrain at its own plan position), or the
+								// block stands out of a bend in the face rather than being set into it.
+								if (rf_height(gen, centre) < centre.y + 0.1f * bed) {
+									continue;
+								}
+								// And the face is where the cell's plane put it: at the crossing and at both ends of the
+								// block (along the strike) the ground stands near the block's face, measured square to the
+								// face. Where the real face bends away or steps back (a gully, a convex corner), the block
+								// would stand out of it in the air, read from afar as a slab hung on the cliff. On a sheer
+								// wall a block may stand proud of a fold (a joint block jutting from a wall).
+								{
+									bool out = false;
+									const real_t ext = axes.x * st.scale * 0.9;
+									for (int e = -1; e <= 1 && !out; e++) {
+										const Vector3 q = surface + x_axis * (ext * e);
+										const real_t gap = (q.y - rf_height(gen, q)) * n.y; // + where the face lies under the block's face
+										out = gap > (sheer ? 0.45f : 0.2f) * course;
+									}
+									if (out) {
+										continue;
+									}
+								}
+								st.basis = b * Basis().scaled(Vector3(st.scale, st.scale, st.scale));
+								st.position = centre;
+								st.ground = yk - 50.0f; // no contact band on a wall
+								st.footprint = 0.0f;
+								r_stones.push_back(st);
+								if (int(r_stones.size()) >= max_stones_per_cell) {
+									return;
+								}
+							}
 						}
 					}
 				}
