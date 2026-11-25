@@ -3107,7 +3107,8 @@ Ref<ShaderMaterial> RockField3D::_material(RockGenerator::RockType p_type, RockG
 	// Hoodoos, goblins, stacks and arches are the bedrock left standing (cut from the slope or the cliff round them), so
 	// they take it too: in their own stone colour they read as pale pieces set on the hill or in the sea.
 	const bool p_group = p_family == RockGenerator::FAMILY_HOODOO || p_family == RockGenerator::FAMILY_GOBLIN;
-	const bool p_cliff = p_family == RockGenerator::FAMILY_CAVE_MOUTH || p_family == RockGenerator::FAMILY_CLIFF_BLOCK || p_family == RockGenerator::FAMILY_SEA_STACK || p_family == RockGenerator::FAMILY_SEA_ARCH || p_group;
+	// Ledge slabs are the caprock bed of the bench itself, standing out over its lip: the wall's rock too.
+	const bool p_cliff = p_family == RockGenerator::FAMILY_CAVE_MOUTH || p_family == RockGenerator::FAMILY_CLIFF_BLOCK || p_family == RockGenerator::FAMILY_LEDGE || p_family == RockGenerator::FAMILY_SEA_STACK || p_family == RockGenerator::FAMILY_SEA_ARCH || p_group;
 	const float age = rock_surface_age(p_family);
 	const int mkey = int(p_type) + (p_cliff ? 1000 : 0) + int(age * 10.0f + 0.5f) * 10000 + (p_detail ? 2000 : 0) + (p_group ? 4000 : 0);
 	if (Ref<ShaderMaterial> *m = materials.getptr(mkey)) {
@@ -8684,6 +8685,52 @@ void RockField3D::_apply_ground(const Ref<ShaderMaterial> &p_material) const {
 						const Color mean = (sum / 64.0f).linear_to_srgb();
 						c = Color(c.r * mean.r, c.g * mean.g, c.b * mean.b);
 					}
+				}
+			}
+			if (i == 0) {
+				// The rock layer's scan for the wall's own blocks (cliff_match): the same texture at the same tile
+				// size in world space, so a ledge or a course carries the face's grain, divided by the mean the
+				// ground colour above already holds (the layer's albedo_mean for a detail_only layer).
+				const Ref<Texture2D> ntex = ground->get_shader_parameter("tm_rock_normal_tex");
+				const Variant sc = ground->get_shader_parameter("tm_rock_scale");
+				const Variant ns = ground->get_shader_parameter("tm_rock_normal");
+				Vector3 lin_mean(1, 1, 1);
+				if (detail_only) {
+					lin_mean = am;
+				} else if (tex.is_valid()) {
+					Ref<Image> img = tex->get_image();
+					if (img.is_valid() && !img->is_empty()) {
+						img = img->duplicate();
+						if (img->is_compressed()) {
+							img->decompress();
+						}
+						if (!img->is_compressed()) {
+							img->convert(Image::FORMAT_RGBA8);
+							img->resize(8, 8, Image::INTERPOLATE_BILINEAR);
+							Color sum(0, 0, 0, 0);
+							for (int y = 0; y < 8; y++) {
+								for (int x = 0; x < 8; x++) {
+									sum += img->get_pixel(x, y).srgb_to_linear();
+								}
+							}
+							lin_mean = Vector3(sum.r, sum.g, sum.b) / 64.0f;
+						}
+					}
+				}
+				p_material->set_shader_parameter("cliff_scan", tex.is_valid());
+				if (tex.is_valid()) {
+					p_material->set_shader_parameter("cliff_scan_albedo", tex);
+					p_material->set_shader_parameter("cliff_scan_mean", lin_mean.max(Vector3(0.001, 0.001, 0.001)));
+				}
+				p_material->set_shader_parameter("cliff_scan_has_normal", ntex.is_valid());
+				if (ntex.is_valid()) {
+					p_material->set_shader_parameter("cliff_scan_normal", ntex);
+				}
+				if (sc.get_type() == Variant::FLOAT) {
+					p_material->set_shader_parameter("cliff_scan_scale", sc);
+				}
+				if (ns.get_type() == Variant::FLOAT) {
+					p_material->set_shader_parameter("cliff_scan_normal_strength", ns);
 				}
 			}
 			const Variant aa = ground->get_shader_parameter("tm_alluvium_area");

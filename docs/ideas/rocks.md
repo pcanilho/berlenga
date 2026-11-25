@@ -1425,3 +1425,12 @@ either side of the line, so they ran single file and evenly spaced along each st
 stones. Now the band is at least three medians wide (the bed's coarse grains sit side by side), the stones keep to the
 riffles (the detail bed's riffle phase, about six widths apart; pools between hold few) and gather about a thalweg
 that swings from bank to bank at twice the riffle spacing (alternate bars). Same count per segment on average.
+
+## Ledge slabs in the cliff's own rock (25 Nov)
+
+Ledge slabs drew in their own stone colour, pale procedural granite on a grey scanned face, so they read as wedges
+stuck on rather than the bench's caprock standing out. They now join the wall's blocks (cave mouths, cliff courses,
+stacks) under cliff_match, and cliff_match also takes the landscape rock layer's scan: TerrainMaterial3D's
+tm_rock_albedo_tex and tm_rock_normal_tex at the layer's tile size, triplanar in world space with the UDN normal blend
+(Golus 2017), the colour over the texture's mean so it keeps the face's mean colour. The stone keeps its own light
+and dark (beds, marks, rind) on top. Without a scan on the ground material nothing changes.
