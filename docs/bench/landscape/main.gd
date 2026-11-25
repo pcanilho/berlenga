@@ -36,6 +36,8 @@ extends Node3D
 #   --ground-scans=0      plain ground layers instead of the CC0 scans in art/terrain_layers (fetch_art.sh);
 #                         --ground-scans=rock,scree scans on those layers only
 #   --tex-report[=N]      after each memory line, the N (25) largest textures the renderer holds (size, format, path)
+#   --rt-report[=N]       every N (10) capture frames and while the path tracer settles: resident memory and its counters
+#                         (TLAS instances, BLAS builds and triangles, captured meshes, capture arena, scratch, pending)
 #   --far-shadows=0       no far sun shadows from the ground's horizon toward the sun (raster A/B)
 #   --sky-occlusion=0     ground ambient light without the hills' sky occlusion; --sky-light=0 an even sky for it
 #   --water-param=name:value[;...]   set water shader uniforms on the sea and lakes (floats, true/false, colours as r,g,b,a)
@@ -1140,6 +1142,8 @@ func _ready() -> void:
 			pt_waited += 1
 		_log("path tracer: surfaces ready after %d frames (%d pending)" % [pt_waited, get_viewport().get_render_info(Viewport.RENDER_INFO_TYPE_VISIBLE, Viewport.RENDER_INFO_RT_PENDING_SURFACES)])
 	for i in frames:
+		if args.has("rt-report") and i % int(args.get("rt-report", "10")) == 0:
+			_rt_log("capture frame %d" % i)
 		if args.has("far-published") and (i == frames - 1 or i % 40 == 0):
 			# --far-published: the widest grass field's published far state through the capture (view match rounds).
 			for g in sward:
@@ -1187,6 +1191,8 @@ func _ready() -> void:
 		while can_ask and w < 400 and not RenderingServer.call("is_pathtracing_ready"):
 			await get_tree().process_frame
 			w += 1
+			if args.has("rt-report") and w % int(args.get("rt-report", "10")) == 1:
+				_rt_log("waiting for the path tracer, frame %d" % w)
 		for i in int(args.get("spp-frames", "4")):
 			await get_tree().process_frame
 	if args.has("strike"):
@@ -7562,6 +7568,27 @@ func _mem_log(tag: String) -> void:
 		for i in mini(int(args.get("tex-report", "25")), tl.size()):
 			var t: Dictionary = tl[i]
 			_log("  %6.1f MB %dx%dx%d fmt %d %s" % [int(t["bytes"]) / 1048576.0, t["width"], t["height"], t["depth"], t["format"], t["path"]])
+
+
+# --rt-report[=N]: the path tracer's per-frame counters every N frames (10) while it settles (memory hunts).
+func _rt_log(tag: String) -> void:
+	var vp := get_viewport()
+	var t := Viewport.RENDER_INFO_TYPE_VISIBLE
+	var rss := 0
+	var st := FileAccess.open("/proc/self/status", FileAccess.READ)
+	while st != null and not st.eof_reached():
+		var ln := st.get_line()
+		if ln.begins_with("VmRSS:"):
+			rss = int(ln.substr(6).strip_edges().split(" ")[0]) >> 10
+			break
+	_log("rt %s: resident %d MB, buffers %d MB; tlas %d, blas builds %d (%d tris), refits %d, captured %d meshes / %d verts, arena %d/%d KB, scratch %d/%d KB, pending %d" % [tag, rss,
+			RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_BUFFER_MEM_USED) >> 20,
+			vp.get_render_info(t, Viewport.RENDER_INFO_RT_TLAS_INSTANCES), vp.get_render_info(t, Viewport.RENDER_INFO_RT_BLAS_BUILDS),
+			vp.get_render_info(t, Viewport.RENDER_INFO_RT_TRIANGLES_BUILT), vp.get_render_info(t, Viewport.RENDER_INFO_RT_BLAS_REFITS),
+			vp.get_render_info(t, Viewport.RENDER_INFO_RT_CAPTURED_MESHES), vp.get_render_info(t, Viewport.RENDER_INFO_RT_CAPTURED_VERTICES),
+			vp.get_render_info(t, Viewport.RENDER_INFO_RT_CAPTURE_ARENA_USED_KB), vp.get_render_info(t, Viewport.RENDER_INFO_RT_CAPTURE_ARENA_SIZE_KB),
+			vp.get_render_info(t, Viewport.RENDER_INFO_RT_SCRATCH_USED_KB), vp.get_render_info(t, Viewport.RENDER_INFO_RT_SCRATCH_SIZE_KB),
+			vp.get_render_info(t, Viewport.RENDER_INFO_RT_PENDING_SURFACES)])
 
 
 func _snow_strata() -> void:
