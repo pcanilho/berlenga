@@ -385,7 +385,7 @@ private:
 	// Burnt ground (WorldFire.burn_age_at): the sward is gone on a fresh burn and grows back, short
 	// blades first, over burn_recovery years (the rules' own burn_recovery when they set one).
 	// Sampled once a bake on a grid over the map (cell at least 2 m), like VegetationField3D.
-	float burn_recovery = 0.7f;
+	float burn_recovery = 2.0f;
 	LocalVector<float> burn_ages;
 	Rect2 burn_rect;
 	int burn_nx = 0;

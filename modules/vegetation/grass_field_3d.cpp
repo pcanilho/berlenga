@@ -1211,6 +1211,15 @@ void vertex() {
 	float t = VERTEX.y;
 	float side = VERTEX.x;
 	vec3 base_w = (MODEL_MATRIX * vec4(0.0, 0.0, 0.0, 1.0)).xyz;
+	// Regrowth on burnt ground comes up short: a year after a grassland wildfire the sward stands about 40% lower
+	// (visual obstruction -39%, Parker et al. 2024) and is largely back by two and a half. burn_flush_map is
+	// 1 - smoothstep(0, 1.5 yr, age): about a third of the height in the first months, two thirds by a year.
+	if (burn_flush_rect.z > 0.0) {
+		vec2 fuv_h = (base_w.xz - burn_flush_rect.xy) / burn_flush_rect.zw;
+		if (all(greaterThanEqual(fuv_h, vec2(0.0))) && all(lessThanEqual(fuv_h, vec2(1.0)))) {
+			h *= 1.0 - 0.8 * pow(textureLod(burn_flush_map, fuv_h, 0.0).r, 0.7);
+		}
+	}
 	mat3 to_local = inverse(mat3(MODEL_MATRIX));
 	// Deer lawns (Putman 1986; Kuijper et al. 2009): where deer graze hard the blades are bitten down to about
 	// graze_height, a few new leaves a little over it; the blade keeps its width, so the turf reads dense and even.

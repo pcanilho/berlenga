@@ -951,7 +951,8 @@ float PlantGenerator::get_trample_resistance(Preset p_preset) {
 
 // Years a preset takes to full cover after a fire (docs/ideas/vegetation.md, "Burnt ground and regrowth"): its share of
 // a stand on burnt ground rises from none to full over them (PlantSpecies.burn_recovery). Grasses and sedges resprout
-// from their crowns within weeks and close in a season (Grime et al. 2007); bracken from its rhizomes in one; herbs in
+// from their crowns within weeks (Grime et al. 2007) but close over about two years (Parker et al. 2024: a year after a
+// grassland megafire bare ground +59%, recovered by 2.5 years); bracken from its rhizomes in one; herbs in
 // one to two; heaths through the pioneer phase into building, 6 to 10 (Gimingham 1972); woodland mosses and lichens
 // need shade and a decade or more; litter takes some years to build up again; soil crust decades (Belnap and Lange
 // 2003). 0: not touched by fire (water plants, and the burn presets, placed by RULE_BURN_AGE).
@@ -1004,7 +1005,7 @@ float PlantGenerator::get_burn_recovery(Preset p_preset) {
 		case PRESET_ESPARTO:
 		case PRESET_THATCHING_GRASS:
 		case PRESET_DESERT_ANNUALS:
-			return 0.7f;
+			return 2.0f; // Resprout in weeks, but a year on bare ground is up by half; largely closed by 2.5 (Parker et al. 2024).
 		case PRESET_BRACKEN:
 		case PRESET_NETTLE:
 		case PRESET_BRAMBLE:

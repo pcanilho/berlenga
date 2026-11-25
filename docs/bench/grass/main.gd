@@ -92,7 +92,7 @@ extends Node3D
 #   --graze=P        a deer browse disc of pressure P (WorldStand.add_browse, 6.5 m) 6 m ahead, framed from 1.6 m: a
 #                    grazed lawn edged by the standing sward
 #   --burn=A         a burn scar A years old (WorldBurnScar3D, 20 x 12 m) in the view: the sward grows back over
-#                    GrassField3D.burn_recovery (0.7 years), short and sparse first; GRASS_NO_FLUSH=1 without the
+#                    GrassField3D.burn_recovery (2 years), short and sparse first; GRASS_NO_FLUSH=1 without the
 #                    regrowth flush (the before frame)
 #   GRASS_FIBRE=ab   with --out: also saves out_nofibre.png, the same frame with GrassField3D.fibre_shading 0
 #   --undergrowth-edge  with --undergrowth: its edge from 1 m up, 3.5 m along it (--no-margin: no margin)
@@ -2491,8 +2491,8 @@ func _checks() -> void:
 	_radius_zero_check()
 
 # Burnt ground (GrassField3D.burn_recovery, WorldFire.burn_age_at): two 8 m scars 6 m in front of the
-# camera, a fortnight and four months old, against the same ground unburnt. The sward is gone on the fresh
-# one and about half back, shorter, on the older one (smoothstep over 0.7 years), on the GPU and CPU fill.
+# camera, a fortnight and a year old, against the same ground unburnt. The sward is gone on the fresh
+# one and about half back, shorter, on the older one (smoothstep over 2 years), on the GPU and CPU fill.
 func _burn_checks() -> void:
 	var c := cam.global_position
 	var fwd := -cam.global_transform.basis.z
@@ -2500,7 +2500,7 @@ func _burn_checks() -> void:
 	fwd = fwd.normalized()
 	var side := Vector3(-fwd.z, 0.0, fwd.x)
 	var mid := c + fwd * 6.0
-	var ages := [0.04, 0.35]
+	var ages := [0.04, 1.0]
 	var centres := [mid - side * 5.0, mid + side * 5.0]
 	for gpu in [true, false]:
 		grass.gpu_fill = gpu
@@ -2519,11 +2519,11 @@ func _burn_checks() -> void:
 		var share := float(after[0][1]) / maxf(before[0][1], 1)
 		var hr: float = (after[1][1] / maxf(after[0][1], 1)) / maxf(before[1][1] / maxf(before[0][1], 1), 1e-6)
 		var res := [before[0], after[0], snappedf(share, 0.01), snappedf(hr, 0.01)]
-		_check("burnt ground (%s fill): sward gone on a fresh burn, about half back and shorter at four months" % ("GPU" if gpu else "CPU"), before[0][0] > 20 and after[0][0] * 20 <= before[0][0] and share > 0.3 and share < 0.75 and hr < 0.95, res)
+		_check("burnt ground (%s fill): sward gone on a fresh burn, about half back and shorter at a year" % ("GPU" if gpu else "CPU"), before[0][0] > 20 and after[0][0] * 20 <= before[0][0] and share > 0.3 and share < 0.75 and hr < 0.95, res)
 	grass.gpu_fill = true
 	_burn_count(c, centres)
 	# A fire burning ground after the grass was built (no rebuild): the scar's report (WorldFire.burn_changed)
-	# alone thins the tiles over it, and only those; then it ages to four months.
+	# alone thins the tiles over it, and only those; then it ages to a year.
 	var far_tiles := grass.get_tile_count()
 	var scar := WorldBurnScar3D.new()
 	scar.age_years = 0.04
@@ -2538,7 +2538,7 @@ func _burn_checks() -> void:
 		for i in 3:
 			grass.update_at(c)
 		live.append(_burn_tally(centres[0]))
-		scar.age_years = 0.35
+		scar.age_years = 1.0
 	scar.free()
 	var t1 := Time.get_ticks_msec()
 	while Time.get_ticks_msec() - t1 < 600:
