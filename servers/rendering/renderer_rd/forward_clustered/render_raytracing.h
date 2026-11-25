@@ -285,7 +285,8 @@ struct alignas(16) RT_MaterialData {
 		uint32_t direction : 2; // BaseMaterial3D::HairDirection.
 		uint32_t melanin : 1; // HAIR_COLOR_MELANIN: absorption from `absorption`, else from the albedo.
 		uint32_t cards : 1; // hair_cards: light passes through, no folding back.
-		uint32_t unused : 4;
+		uint32_t standing_water : 1; // BaseMaterial3D wetness_standing_water: puddles in the relief (any material).
+		uint32_t standing_relief : 3; // its wetness_standing_relief, (n + 1) * 4 mm
 	} hair;
 	uint32_t hair_absorption; // rt_medium_code() of the melanin absorption per fibre diameter.
 	struct { // texture_hair_mask: where the surface is hair; 0 (white) = everywhere.

@@ -171,7 +171,7 @@ struct MaterialData {
 	uint scatter; // unorm8x4: single-scatter albedo of that volume (rgb) and (g + 1) / 2 of its phase. See rt_material_scatter().
 	uint subsurface; // Bits 0-7 unorm8 subsurface scattering strength (0: none), bit 8 Skin Mode; wetness in 9-26, see rt_material_wetness(); snow 27-28; ground deform 29, terrain 30; mud 31.
 	uint subsurface_texture; // texture_subsurface_scattering: red scales the strength.
-	uint hair; // unorm8 beta_m, beta_n, (tilt + 10) / 20; bits 24-25 direction, 26 melanin, 27 cards. See rt_material_hair().
+	uint hair; // unorm8 beta_m, beta_n, (tilt + 10) / 20; bits 24-25 direction, 26 melanin, 27 cards; 28 standing water, 29-31 its relief (rt_material_standing_water()). See rt_material_hair().
 	uint hair_absorption; // Melanin absorption per fibre diameter (rt_medium_absorption() code).
 	uint hair_mask_texture; // Where the surface is hair; 0 (white) = everywhere.
 	uint hair_crown_xy; // fp16x2 hair_crown, object space.
@@ -302,6 +302,11 @@ bool rt_material_wetness_moving(MaterialData p_mat) {
 // The material cuts itself round the player (BaseMaterial3D camera_cutout, or a shader calling camera_cutout_discard()).
 bool rt_material_camera_cutout(MaterialData p_mat) {
 	return ((p_mat.subsurface_texture >> 28u) & 1u) != 0u;
+}
+
+// BaseMaterial3D wetness_standing_water: puddles in the relief; x on, y the relief (mm).
+vec2 rt_material_standing_water(MaterialData p_mat) {
+	return vec2(float((p_mat.hair >> 28u) & 1u), float((p_mat.hair >> 29u) + 1u) * 4.0);
 }
 
 // BaseMaterial3D snow_on_body: the body's own snow from instance uniform slot 12 (SnowBodies).

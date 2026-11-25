@@ -307,10 +307,16 @@
    "title": "Hair"
   },
   {
+   "name": "rendering/pathtracing/max_dispatch_time_ms",
+   "type": "float",
+   "default": "100.0",
+   "about": "The time one path tracing dispatch may take."
+  },
+  {
    "name": "rendering/pathtracing/max_samples_per_dispatch",
    "type": "int",
    "default": "4194304",
-   "about": "The most pixel samples (pixels times `Environment.pathtracing_samples_per_pixel`) one path tracing dispatch traces.",
+   "about": "The most pixel samples (pixels times `Environment.pathtracing_samples_per_pixel`) one path tracing dispatch traces, an upper bound on what `rendering/pathtracing/max_dispatch_time_ms` allows.",
    "page": "other",
    "title": "Other"
   },
@@ -726,12 +732,84 @@
    "topic": ""
   },
   {
-   "name": "Generate",
+   "name": "Editor preview",
    "settings": [
-    "TerrainGenerator3D"
+    "generate_on_ready",
+    "water_on_ready",
+    "auto_rebuild",
+    "editor_preview"
    ],
    "note": "",
-   "what": "runs the generator and writes the ground, sea, lakes and rivers into the scene.",
+   "what": "ground, water, material, data maps, plants, grass and stones appear in the editor as in the game; nothing generated is saved.",
+   "page": "level-design",
+   "title": "Level design",
+   "topic": "Editor tools"
+  },
+  {
+   "name": "Mask painting",
+   "settings": [
+    "*_map",
+    "*_mask"
+   ],
+   "note": "",
+   "what": "paint any `*_map` or `*_mask` slot on the ground with Add, Subtract, Replace and Smooth; each stroke is one undo step.",
+   "page": "level-design",
+   "title": "Level design",
+   "topic": "Editor tools"
+  },
+  {
+   "name": "Keep-out areas",
+   "settings": [
+    "WorldExclusion3D"
+   ],
+   "note": "",
+   "what": "a closed curve, open track or box keeps plants, grass or stones out, with a soft edge.",
+   "page": "level-design",
+   "title": "Level design",
+   "topic": "Editor tools"
+  },
+  {
+   "name": "Hand-placed plants",
+   "settings": [
+    "PlacedPlant3D"
+   ],
+   "note": "",
+   "what": "one plant of a species, with its footprint kept clear of procedural plants and stones.",
+   "page": "level-design",
+   "title": "Level design",
+   "topic": "Editor tools"
+  },
+  {
+   "name": "Biome map",
+   "settings": [
+    "biome_map",
+    "biome_channel"
+   ],
+   "note": "",
+   "what": "fields share one painted map, a channel each; overlapping paint splits the ground.",
+   "page": "level-design",
+   "title": "Level design",
+   "topic": "Editor tools"
+  },
+  {
+   "name": "Sculpt layers",
+   "settings": [
+    "TerrainSculptLayer3D"
+   ],
+   "note": "",
+   "what": "painted height offsets over the generated ground; lakes and rivers settle round them, and turning a layer off restores the ground.",
+   "page": "level-design",
+   "title": "Level design",
+   "topic": "Editor tools"
+  },
+  {
+   "name": "Generate",
+   "settings": [
+    "TerrainGenerator3D",
+    "generate_on_ready"
+   ],
+   "note": "",
+   "what": "generates the ground when the scene opens and writes it into the ground node on Generate.",
    "page": "level-design",
    "title": "Level design",
    "topic": "Terrain"
@@ -1862,13 +1940,14 @@
     "shore_",
     "cliff_",
     "layer_enabled",
+    "cliff_block_max_slope",
     "far_thinning",
     "far_radius",
     "far_min_size",
     "far_widen"
    ],
    "note": "",
-   "what": "rocks placed by the processes that put them there: rockfall, scree, glacial till, river beds, shores and cliff courses, streamed round the camera with colliders near it; past the near field, only the larger rocks carry on out to the horizon, grown so the slope keeps its stone cover.",
+   "what": "rocks placed by the processes that put them there: rockfall, scree, glacial till, river beds, shores and cliff courses, the coursed wall blocks covering even sheer faces, streamed round the camera with colliders near it; past the near field, only the larger rocks carry on out to the horizon, grown so the slope keeps its stone cover.",
    "page": "rocks",
    "title": "Rocks",
    "topic": "Placement"

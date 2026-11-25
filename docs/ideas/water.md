@@ -4013,3 +4013,9 @@ point as the raster (Newton), spreads the light as the bent tube does, and casts
 through the surface and the air leg on to the lamp (rt_volume_bent in the raygen). So the beam narrows toward the
 vertical under the surface as the patch on the bed does. Waves move the patch's lines (the map) but the beam's bend
 takes the surface as level over each point.
+
+## The sea's any-hit pass (22 Nov, a sea-cave PT frame lost the GPU)
+
+At a sea cave the path-traced frame cost grew with pixels times samples, about 72 ms of 83 at 480x270 and one sample. No sea property changed it. The sea writes ALPHA (the shoreline cut-out) and TRANSMISSION, so it gets its own any-hit shader. That shader ran the whole surface (FFT cascades, foam, shore trains, rings) for every candidate: the camera's ray, each bounce, and each shadow ray crossing the water. At a cave almost every path crosses the sea several times. NVIDIA's ray tracing best practices say to keep any-hit shaders minimal: alpha test and little else.
+
+Built: `IN_ANY_HIT` is a constant built-in (true only in the any-hit stage, false in raster and the closest hit), so the compiler drops the branch a stage never takes. The sea's any-hit pass computes only the coverage (clip capsules, shore signal, edge softness) and the light it lets through. The foam's share of a shadow comes from the mesh's own foam (v_foam): the per-pixel lace is finer than a shadow shows. The river shader (physx_river_3d.cpp, also the sea caves' and PhysXLiveWater3D's) takes the same branch: the lapping waterline, the bank fade and the sediment, without the ripples, foam structure or live waves.

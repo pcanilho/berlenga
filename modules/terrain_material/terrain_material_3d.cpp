@@ -2333,6 +2333,7 @@ void fragment() {
 	float por[5] = float[5](tm_rock_porosity, tm_scree_porosity, tm_soil_porosity, tm_alluvium_porosity, tm_sand_porosity);
 	float tm_sand_b = 0.0; // the sand's share of the blend, for its glitter
 	float tm_stone_b = 0.0; // rock and scree's share, for the salt bloom
+	float tm_rock_b = 0.0; // the rock layer's share, for the snow's facet rule
 	float tm_sand_dry = 1.0;
 	// The height blend's band widens with the pixel's footprint (about 0.1 m at 70 m to 1 m at 700 m at 1080p): a
 	// pixel far off spans many of the stones and patches whose heights decide the blend, so it takes their mix. A
@@ -2349,10 +2350,12 @@ void fragment() {
 		porosity += por[i] * b;
 		tm_sand_b = i == 4 ? b : tm_sand_b;
 		tm_stone_b += i < 2 ? b : 0.0;
+		tm_rock_b = i == 0 ? b : tm_rock_b;
 	}
 	total = max(total, 1e-5);
 	tm_sand_b /= total;
 	tm_stone_b /= total;
+	tm_rock_b /= total;
 	albedo /= total;
 	rough /= total;
 	dn /= total;
@@ -2943,7 +2946,12 @@ void fragment() {
 		// scan's detail normal draws it at this scale, so a fresh pack of a centimetre or two buries it about as soon
 		// as it buries a sward: the thin pack's flattest-facets rule took the scan's normal for bare relief and left
 		// bare patches brown under 1.6 cm of fresh snow while the turf round them was white. Taken by the bare share.
-		vec3 snow_n = normalize(mix(sn, wn, 0.75 * tm_bare_g));
+		// Gentle bedrock the same: a slab's relief is joints and pits of a few centimetres that a fresh pack fills
+		// first (snow smooths the ground it lands on, depressions before knobs: Veitinger et al. 2014), while the
+		// rule read the walls of the scan's joints (and of its macro variation's, a metre across) as steep facets and
+		// left them bare, black cracks through 2 cm of snow. Faces keep the rule and their broken patches.
+		float snow_slab = tm_rock_b * smoothstep(0.8, 0.92, tm_cn.y);
+		vec3 snow_n = normalize(mix(sn, wn, 0.75 * max(tm_bare_g, snow_slab)));
 		snow = snow_cover_weight(snow_s.x * tm_snow, tm_snow_max_slope, tm_pn, snow_n, wp, snow_face);
 		snow_wet = snow_s.z;
 		snow_cover_apply(snow, snow_s.y, snow_wet, albedo, rough, metallic, specular);

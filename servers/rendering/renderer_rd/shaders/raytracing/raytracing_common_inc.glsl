@@ -12,8 +12,11 @@ layout(constant_id = 0) const uint RT_FLAGS = 0u;
 layout(push_constant, std430) uniform RTLaunchBand {
 	uint offset_y; // the band's first row
 	uint height; // the frame's rows
-	uint pad0;
-	uint pad1;
+	// The samples this dispatch traces, [sample_begin, sample_end); sample_end 0 is all of them. A pixel whose samples
+	// alone outrun the dispatch cap is traced in runs of samples, one dispatch each (as Cycles' render scheduler sizes
+	// its kernel launches in samples): each run adds its share to the running mean in the output image.
+	uint sample_begin;
+	uint sample_end;
 }
 rt_launch_band;
 #define RT_LAUNCH_ID (gl_LaunchIDEXT + uvec3(0u, rt_launch_band.offset_y, 0u))

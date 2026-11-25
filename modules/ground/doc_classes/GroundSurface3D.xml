@@ -608,6 +608,12 @@
 				The number of tiles kept on disk in [member ruts_path] for this surface's fields (see [member keep_ruts]).
 			</description>
 		</method>
+		<method name="get_water_impacts" qualifiers="const">
+			<return type="PackedVector4Array" />
+			<description>
+				The footsteps, wheels and splashes whose wave trains are crossing the standing water now, newest last: x and z (world), age (seconds, each lasts 1.6) and amplitude (1 is a walker's step). Walkers' steps and bodies moving through the water make them, and so do [code]WorldWater.impulse()[/code] and [code]disturb()[/code] where water stands.
+			</description>
+		</method>
 		<method name="get_water_mud_at" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />

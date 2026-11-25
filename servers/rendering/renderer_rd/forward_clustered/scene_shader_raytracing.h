@@ -286,6 +286,11 @@ public:
 	static constexpr int RT_PARAM_CLOUD_SKY_MAP = 97;
 	static constexpr int RT_PARAM_CLOUD_SKY_X = 98;
 	static constexpr int RT_PARAM_CLOUD_SKY_Z = 99;
+	// With no weather map, the rain RainFall3D falls (weather_rain_fallback.x, mm/h liquid): the rings' rain then.
+	static constexpr int RT_PARAM_RAIN_FALLBACK = 87;
+	// Footsteps and splashes in the ground's standing water (water_impacts, water_impact_info): the impacts' texture
+	// and their count, packed as (bindless index + 1) * 32 + count; 0 none.
+	static constexpr int RT_PARAM_WATER_IMPACTS = 88;
 
 	static inline uint32_t rt_flags_pack(uint32_t p_flags, uint32_t p_sample_count, uint32_t p_max_bounces) {
 		uint32_t result = p_flags;

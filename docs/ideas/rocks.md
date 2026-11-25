@@ -1450,3 +1450,22 @@ Follow-up (25 Nov): the wall's blocks take the cliff overlay's face scan where t
 about 45 degrees shows, rock_face_03), not the rock layer's, divided so their mean is the face's own (the face's
 albedo_mean when detail_only, times the rock texture's mean that ground_rock already holds); and their light and dark
 is capped at the wall's colour (it ran to 1.3 times: a block paler than the face round it reads as a plate stuck on).
+
+## Wall blocks on steep faces (25 Nov)
+
+A heightfield cannot hold a wall. Past about 60 degrees one terrain cell covers metres of height with only a few
+vertices, so the face is a stretched step. Its shading and textures draw long vertical bands (draped folds) that no
+texture projection hides. Open worlds built on heightfields cover these faces with real geometry. Horizon Zero Dawn
+placed rock and cliff kit pieces by slope density maps (Guerrilla, GDC 2017, "GPU-Based Run-Time Procedural Placement
+in Horizon Zero Dawn"). Far Cry 5 placed cliff meshes along steep terrain (Carrier, GDC 2018, "Procedural World
+Generation of Far Cry 5").
+
+Here the cliff layer's coursed blocks are that kit. They used to stop at 76 degrees, the faces that need them most.
+Now they run to `cliff_block_max_slope` (88 degrees by default, 76 for the old look). On faces steeper than 68 degrees
+the courses are nearly closed (95 percent kept, not about 65), and a block may stand up to 0.45 of a course proud of a
+fold, because on a sheer wall that reads as a jutting joint block, not a shelf. The face-fit test (the face must stay
+near planar where the block sits) is now measured square to the face and over the wall's own width. A whole terrain
+cell up and down the fall line landed on the bench above and the foot below, which rejected every sheer wall.
+
+Bench (rocks, --world --world-size=1024 --view=cliff, fixed camera): 159k to 365k stones; frame primitives 6.9M to
+10.0M in 111 to 723 draw calls; rock build 34 s to 110 s. The path tracer uses the full meshes.

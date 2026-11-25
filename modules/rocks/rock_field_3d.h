@@ -223,6 +223,7 @@ private:
 	Ref<ShaderMaterial> ground_material;
 	RockScan stone_scans[2]; // scans.cfg [stone] and [stone_variant] (load_scan_set): detail on the stones
 	String scan_dir;
+	real_t cliff_block_max_slope = 88.0; // the wall's block courses up to this face angle (76: the courses before 25 Nov)
 	mutable Ref<ShaderMaterial> auto_ground; // the landscape's TerrainMaterial3D when ground_material is unset
 	mutable bool auto_ground_found = false;
 	Ref<ShaderMaterial> _ground_source() const;
@@ -882,6 +883,11 @@ public:
 	real_t get_ground_blend_height() const { return ground_blend_height; }
 	void set_ground_material(const Ref<ShaderMaterial> &p_material);
 	int load_scan_set(const String &p_dir);
+	void set_cliff_block_max_slope(real_t p_degrees) {
+		cliff_block_max_slope = p_degrees;
+		rebuild();
+	}
+	real_t get_cliff_block_max_slope() const { return cliff_block_max_slope; }
 	String get_scan_dir() const { return scan_dir; }
 	Ref<ShaderMaterial> get_ground_material() const { return ground_material; }
 	void set_layer_enabled(int p_layer, bool p_enabled);

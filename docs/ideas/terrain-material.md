@@ -434,6 +434,11 @@ grey-brown silt 10YR 6/2.
   the soil scan's normal drew bare ground as rough, so a 15 m bare patch stayed brown under 1.6 cm of fresh snow while
   the turf round it was white. Bare soil's relief is millimetres to a couple of centimetres, buried by the first
   centimetre or two, so the snow's hold takes a normal flattened toward the surface's by the bare share.
+- (25 Nov) Snow on gentle bedrock: the same rule read the walls of the rock scan's joints (and its macro variation's,
+  about a metre across) as steep facets and left them bare, black slivers through 2 cm of snow on the scree scout's
+  rock flat. A fresh pack fills a slab's joints and pits before it covers its knobs (snow smooths the ground it lands
+  on, depressions first: Veitinger et al. 2014), so rock below about 23 degrees takes the bare patches' flattened
+  normal by its share; faces keep the rule and their broken patches.
 
 ### Cured cover in summer-dry climates (24 Nov, the bare-soil scout read green)
 
