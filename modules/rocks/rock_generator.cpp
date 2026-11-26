@@ -3040,6 +3040,10 @@ uniform float rock_roughness = 0.8;
 uniform float porosity = 0.3;
 uniform float grain_bump = 0.2;
 uniform float lichen_cover = 0.5;
+// Rock varnish (docs/ideas/rocks.md, "Desert varnish"): 0 humid .. 1 arid (RockField3D.desert_varnish, from the
+// climate's precipitation).
+uniform float varnish = 0.0;
+uniform bool varnish_wall = false; // a piece of the terrain's own wall (its colour matched): left as the wall is
 uniform float surface_age = 1.0; // how long the face has stood exposed (0 fresh talus, 1 a tor or old boulder)
 // Limestone and other lime-rich rock take their own lichens (white-grey and dark crusts that etch it, orange
 // Caloplaca); siliceous rock (granite, sandstone, basalt, slate) the yellow-green map lichen and grey foliose ones.
@@ -3462,6 +3466,44 @@ void fragment() {
 		wn = normalize(wn + fw);
 	}
 
+	// Rock varnish (Dorn and Oberlander 1981; Dorn 2009; Liu and Broecker 2000): a manganese and iron oxide film,
+	// micrometres thick, laid by dust and microbes over thousands of years on stones that dry between rare wettings.
+	// Black (manganese-rich) on the exposed tops and in curtains down the paths runoff takes on steep faces (the mesh's
+	// flow routing, COLOR.a); orange-brown (iron-rich) on the undersides and the foot where the stone meets the soil;
+	// a pale ground-line band where it leaves the soil. None on fresh breaks or young surfaces (talus, rockfall), so a
+	// break shows bright; a faint sheen where it is thick. Not on pieces of the terrain's own wall (they keep its colour).
+	if (varnish > 0.0 && !varnish_wall) {
+		float age_v = smoothstep(0.35, 1.0, surface_age) * (1.0 - fresh);
+		float above_v = 1e3;
+		if (v_custom.z > 0.0) {
+			above_v = v_world.y - (v_custom.x + dot(v_slope, v_world.xz - v_origin.xz));
+			if (rock_tile_plane.y > 0.0) {
+				above_v = (dot(rock_tile_plane.xyz, v_world) + rock_tile_plane.w) / rock_tile_plane.y;
+			}
+		}
+		float amount = varnish * age_v;
+		if (amount > 0.0) {
+			float flow_v = 1.0 - COLOR.a;
+			float steep_v = 1.0 - smoothstep(0.55, 0.9, abs(wn.y));
+			float n_v = rk_fbm3(mp * 1.3 + 57.0);
+			// Curtains: streaks down the runoff lines, broken along their length.
+			float curtain = steep_v * smoothstep(0.2, 0.6, flow_v) * smoothstep(0.3, 0.6, rk_fbm3(vec3(mp.x * 6.0, mp.y * 0.8, mp.z * 6.0) + 19.0));
+			float top_v = smoothstep(0.0, 0.7, wn.y);
+			float black = clamp(0.85 * top_v + 0.9 * curtain + 0.35 * steep_v * cavity + 0.4 * (n_v - 0.5), 0.0, 1.0);
+			// The iron-rich bottoms: faces turned down and the band near the soil (Dorn 2009: orange on the undersides).
+			float sc_v = max(v_scale, 0.1);
+			float bottom = clamp(smoothstep(0.1, -0.5, wn.y) + (1.0 - smoothstep(0.05, 0.35 * sc_v + 0.05, above_v)), 0.0, 1.0);
+			vec3 mn = vec3(0.022, 0.018, 0.015) * (0.8 + 0.4 * n_v);
+			vec3 fe = vec3(0.16, 0.07, 0.026) * (0.85 + 0.3 * n_v);
+			col = mix(col, fe, amount * 0.7 * bottom);
+			col = mix(col, mn, amount * 0.85 * black * (1.0 - bottom));
+			rough = mix(rough, rough * 0.88, amount * black * (1.0 - bottom));
+			// The ground line: a pale band a few centimetres up where the stone leaves the soil (carbonate and salt).
+			float line_v = smoothstep(0.0, 0.015, above_v) * (1.0 - smoothstep(0.02, 0.05, above_v));
+			col = mix(col, vec3(0.42, 0.38, 0.33), amount * 0.5 * line_v);
+		}
+	}
+
 	// Ground contact: soil splashed up and damp where the stone sits in it.
 	float contact = 0.0;
 	float ground_cover = 0.0;
@@ -3548,6 +3590,9 @@ void fragment() {
 	// Cover by the surface's age (surface_age, from the stone's family): talus and rockfall stones keep turning over
 	// and are mostly bare, river and swash stones are scoured; tors, cliffs and old boulders carry the most.
 	float lcov = lichen_cover * surface_age;
+	// Dry climates: few lichens (they need wetting several times a week), varnish instead (lichen acids etch it away
+	// where both grow; Dorn 2009).
+	lcov *= 1.0 - 0.75 * varnish;
 	// By the sea the grey and orange lichens thin in over several metres above the splash zone's black band (the
 	// salt and the spray thin out with height), not at one line.
 	if (at_sea > 0.5) {
@@ -3635,7 +3680,7 @@ void fragment() {
 	// Not on stones that keep moving (talus, shingle) nor within the sea's salt spray.
 	float moss_place = smoothstep(0.2, 0.7, moss_term) * (1.0 - fresh) * smoothstep(0.15, 0.6, surface_age);
 	moss_place *= 1.0 - step(-1e4, sea_level) * (1.0 - smoothstep(tide_range * 3.0, tide_range * 6.0, v_world.y - sea_level));
-	float moss = moss_cover * moss_place * smoothstep(0.42, 0.58, rk_fbm3(mp * 2.2 + 17.0) + 0.25 * moss_cover - 0.12);
+	float moss = (1.0 - 0.85 * varnish) * moss_cover * moss_place * smoothstep(0.42, 0.58, rk_fbm3(mp * 2.2 + 17.0) + 0.25 * moss_cover - 0.12);
 	col = mix(col, moss_color * (0.7 + 0.6 * rk_fbm3(mp * 25.0)), moss);
 	rough = mix(rough, 0.95, moss);
 

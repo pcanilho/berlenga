@@ -353,6 +353,11 @@ private:
 	bool detail_rivers = true; // ground detail on the river beds
 	bool ground_wear = true; // ground detail worn by game trails and turned by boar rooting (WorldStand)
 	bool frost_sorting = true; // frost-sorted circles and stripes of stones on cold, wet, gentle soil (WorldWeather climate)
+	bool desert_varnish = true; // rock varnish on old stones in dry climates (the weather's precipitation)
+	float varnish_amount = 0.0f; // the materials' varnish now (0 humid .. 1 arid)
+	double varnish_clock = 0.0;
+	float _varnish_from_climate() const;
+	void _update_varnish(bool p_force);
 	bool block_fields = true; // frost-shattered block fields (felsenmeer) on cold, gentle, thin-soiled ground above the tree line
 	bool runoff_gravel = true; // a coarse lag in the terrain's rill and gully floors, fine grains on their fans
 	bool snow_burial = true; // stones under the snowpack are left out of the ground detail
@@ -932,6 +937,12 @@ public:
 		rebuild();
 	}
 	real_t get_cliff_block_max_slope() const { return cliff_block_max_slope; }
+	void set_desert_varnish(bool p_enabled) {
+		desert_varnish = p_enabled;
+		_update_varnish(true);
+	}
+	bool is_desert_varnish() const { return desert_varnish; }
+	float get_varnish_amount() const { return varnish_amount; }
 	void set_block_fields(bool p_enabled) {
 		if (block_fields == p_enabled) {
 			return;

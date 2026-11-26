@@ -3408,6 +3408,8 @@ Ref<ShaderMaterial> RockField3D::_material(RockGenerator::RockType p_type, RockG
 	Ref<ShaderMaterial> m = RockGenerator::get_material(p_type)->duplicate();
 	m->set_shader_parameter("cliff_match", p_cliff);
 	m->set_shader_parameter("lichen_cover", lichen_cover);
+	m->set_shader_parameter("varnish", varnish_amount);
+	m->set_shader_parameter("varnish_wall", p_cliff && !p_group);
 	m->set_shader_parameter("surface_age", age);
 	m->set_shader_parameter("instance_tint", p_group ? 0.45f : 0.0f);
 	m->set_shader_parameter("moss_cover", moss_cover);
@@ -7486,7 +7488,7 @@ void RockField3D::_update_process() {
 		set_physics_process_internal(false);
 		return;
 	}
-	set_process_internal(streaming || live_rockfall || ground_contact || frost_sorting);
+	set_process_internal(streaming || live_rockfall || ground_contact || frost_sorting || desert_varnish);
 	set_physics_process_internal(rockfall_dust || stones_react);
 }
 
@@ -9074,6 +9076,34 @@ void RockField3D::set_detail(real_t p_detail) {
 	clear(); // workers read the libraries
 	libraries.clear();
 	rebuild();
+}
+
+// Rock varnish forms where the rock dries out between rare wettings: thick and dark in deserts under about 150 to
+// 250 mm of rain a year, patchy and thin up to some 400 mm, washed away and outgrown by lichens where it is wetter
+// (Dorn 2009; Liu and Broecker 2000). From the weather's climate and the terrain's rain pattern at the field's middle.
+float RockField3D::_varnish_from_climate() const {
+	if (!desert_varnish) {
+		return 0.0f;
+	}
+	WeatherSeason::Climate cl;
+	if (!WorldContracts::weather() || !WorldContracts::weather()->season_climate(cl)) {
+		return 0.0f;
+	}
+	const Vector3 mid = is_inside_tree() ? get_global_position() : Vector3();
+	const float f = WorldContracts::climate_precipitation_factor_at(mid);
+	const float precip = cl.precipitation * (f >= 0.0f ? f : 1.0f);
+	return Math::smoothstep(400.0f, 180.0f, precip);
+}
+
+void RockField3D::_update_varnish(bool p_force) {
+	const float v = _varnish_from_climate();
+	if (!p_force && Math::abs(v - varnish_amount) < 0.01f) {
+		return;
+	}
+	varnish_amount = v;
+	for (KeyValue<int, Ref<ShaderMaterial>> &kv : materials) {
+		kv.value->set_shader_parameter("varnish", varnish_amount);
+	}
 }
 
 void RockField3D::set_lichen_cover(real_t p_cover) {
@@ -11174,6 +11204,11 @@ void RockField3D::_notification(int p_what) {
 			}
 			_update_frost_map();
 			_update_snow_cells(get_process_delta_time());
+			varnish_clock -= get_process_delta_time();
+			if (varnish_clock <= 0.0) {
+				varnish_clock = 2.0; // the climate changes slowly: checked every 2 s
+				_update_varnish(false);
+			}
 		} break;
 		case NOTIFICATION_INTERNAL_PHYSICS_PROCESS: {
 			if (rockfall_dust) {
@@ -11391,6 +11426,9 @@ void RockField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("is_rain_pedestals"), &RockField3D::is_rain_pedestals);
 	ClassDB::bind_method(D_METHOD("get_pedestal_at", "position"), &RockField3D::get_pedestal_at);
 	ClassDB::bind_method(D_METHOD("get_pedestal_spots", "rect", "step", "max_count"), &RockField3D::get_pedestal_spots, DEFVAL(2.0), DEFVAL(64));
+	ClassDB::bind_method(D_METHOD("set_desert_varnish", "enabled"), &RockField3D::set_desert_varnish);
+	ClassDB::bind_method(D_METHOD("is_desert_varnish"), &RockField3D::is_desert_varnish);
+	ClassDB::bind_method(D_METHOD("get_varnish_amount"), &RockField3D::get_varnish_amount);
 	ClassDB::bind_method(D_METHOD("set_block_fields", "enabled"), &RockField3D::set_block_fields);
 	ClassDB::bind_method(D_METHOD("is_block_fields"), &RockField3D::is_block_fields);
 	ClassDB::bind_method(D_METHOD("get_block_field_at", "position"), &RockField3D::get_block_field_at);
@@ -11480,6 +11518,7 @@ void RockField3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "ground_detail_rivers"), "set_ground_detail_rivers", "is_ground_detail_rivers");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "ground_wear"), "set_ground_wear", "is_ground_wear");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "block_fields"), "set_block_fields", "is_block_fields");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "desert_varnish"), "set_desert_varnish", "is_desert_varnish");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "frost_sorting"), "set_frost_sorting", "is_frost_sorting");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "runoff_gravel"), "set_runoff_gravel", "is_runoff_gravel");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "rain_pedestals"), "set_rain_pedestals", "is_rain_pedestals");

@@ -68,6 +68,7 @@ extends Node3D
 #   --prim-report         with --out: the rock MultiMeshes ranked by the triangles they draw at their LODs (perf hunts)
 #   --rain=mm/h           with --rock: rain on the stone for --rain-hours=h (0.5), then --dry-hours=h of drying;
 #                         --no-rivulets for a before frame; --film=f the water film of a stream bed's stones
+#   --varnish=k           with --rock: the rock varnish of a dry climate (0..1, RockField3D.desert_varnish)
 #   --salt=k              with --rock: a stand-in sea salt index (0..1) for the salt bloom; --no-salt-bloom: off
 #   --moss=k              the field's moss_cover (0..1)
 #   --cave-mouths         the retired cave-mouth portal blocks (and their terrain holes) in --world frames
@@ -116,7 +117,8 @@ extends Node3D
 #   --bank-relief=x       with --world: Landscape3D.bank_relief (0.8 m; 0 for a before frame); --bank-spot puts the
 #                         spot on a 42 to 52 degree soil bank; --spot=x,z puts the spot at a world point
 #   --rain-climate[=P]    with --world: a mild climate of P mm a year (350) for RockField3D.rain_pedestals (stones on rain
-#                         splash pedestals on bare soil); --pedestal-spot the tallest near the centre; --no-rain-pedestals off
+#                         splash pedestals on bare soil) and desert_varnish (under 400 mm; --no-varnish for its before
+#                         frame); --pedestal-spot the tallest near the centre; --no-rain-pedestals off
 #   --snow[=CM]           with --world: an even settled pack of CM cm (8) round the spot with its deep snow surface, for
 #                         RockField3D.snow_burial (stones under the pack left out); --no-snow-burial off;
 #                         --no-snow-surface leaves the deep snow surface out (the ground material's snow only)
@@ -467,6 +469,9 @@ func _one_rock() -> void:
 	print("rock: %d triangles, axes %s" % [m.surface_get_array_index_len(0) / 3, m.get_meta("rock_axes")])
 	if args.has("no-rivulets") and m.surface_get_material(0) is ShaderMaterial:
 		(m.surface_get_material(0) as ShaderMaterial).set_shader_parameter("rain_rivulets", false)
+	if args.has("varnish") and m.surface_get_material(0) is ShaderMaterial:
+		# --varnish=k: the rock varnish a dry climate gives (RockField3D.desert_varnish: 0 humid .. 1 arid).
+		(m.surface_get_material(0) as ShaderMaterial).set_shader_parameter("varnish", float(args["varnish"]))
 	if args.has("no-salt-bloom") and m.surface_get_material(0) is ShaderMaterial:
 		(m.surface_get_material(0) as ShaderMaterial).set_shader_parameter("salt_bloom", false)
 	if args.has("film") and m.surface_get_material(0) is ShaderMaterial:
@@ -1357,6 +1362,9 @@ func _world() -> void:
 		# --trail[=passes]: a game trail (0.8 m, 400 passes a year) across the spot along x, 1.5 m before it;
 		# --rooting[=years]: a boar rooting 1.5 m across, 2 m behind the spot, that age (0: fresh). WorldStand.
 		rocks.frost_sorting = not args.has("no-frost")
+		rocks.desert_varnish = not args.has("no-varnish") # --no-varnish: dry-climate stones without their varnish (a before frame)
+		if args.has("rain-climate"):
+			print("varnish: %.2f (precipitation factor at the field %.2f)" % [rocks.get_varnish_amount(), WorldContracts.climate_precipitation_factor_at(rocks.global_position)])
 		rocks.block_fields = not args.has("no-block-fields") # --no-block-fields: the cold plateaus without their blocks (a before frame)
 		rocks.runoff_gravel = not args.has("no-runoff-gravel") # --no-runoff-gravel: the rills and gullies without their lag (a before frame)
 		rocks.rain_pedestals = not args.has("no-rain-pedestals") # --no-rain-pedestals: bare soil without its stones and pedestals (a before frame)

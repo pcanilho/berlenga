@@ -1619,3 +1619,15 @@ and dipping upslope (imbrication; Boelhouwers and Sumner 2003). The climate join
 `--world --uplift=0.5 --frost=-6 --view=scree --block-spot[=stream] --eye=1.7 --dist=10 --beyond=25`,
 `--no-block-fields` for the before frame. Not yet: a second tier of blocks perched on the first, far cover maps
 (the far tier's big blocks only), lichen-dark tops by age (the shared lichen terms apply as on other stones).
+
+## Desert varnish, built (26 Nov)
+`desert_varnish` (on). The amount follows the climate's precipitation at the field (with the terrain's rain pattern):
+none over about 400 mm a year, full under about 180 mm (Dorn 2009: thick dark varnish in arid lands, patchy and thin
+in semi-arid, washed off and outgrown by lichens where wetter), checked every 2 s. In the rock shader, on old surfaces
+(surface_age, never fresh breaks): manganese-black on the exposed tops and in curtains down the runoff lines of steep
+faces (the mesh's flow routing, COLOR.a, broken along their length), iron orange-brown on the undersides and near the
+soil, a pale ground-line band, a faint sheen. Lichens and moss thin out with it (they need frequent wetting; lichen
+acids etch varnish). Not on pieces of the terrain's own wall (cliff blocks, pillars, ledges): the terrain material
+has no varnish, so it stays matched; varnish curtains on terrain cliffs belong to the terrain material. Bench:
+`--rock=granite,glacial --varnish=1` (one stone), `--world --rain-climate=150 --view=tor --dist=7` and
+`--no-varnish` for the world's before frame.
