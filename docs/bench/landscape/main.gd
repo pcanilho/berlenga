@@ -1353,7 +1353,10 @@ func _ready() -> void:
 			get_tree().paused = true
 			for kv in String(args.get("mat-pair-prop", "")).split(";", false):
 				var pv := kv.split(":")
-				landscape.material.set(pv[0], str_to_var(pv[1]))
+				if pv[0].begins_with("tm_"): # a shader uniform (tm_varnish:0 for the cliff varnish's before frame)
+					landscape.material.set_shader_parameter(pv[0], str_to_var(pv[1]))
+				else:
+					landscape.material.set(pv[0], str_to_var(pv[1]))
 			for i in int(args.get("mat-pair-frames", "12")):
 				await get_tree().process_frame
 			await RenderingServer.frame_post_draw
