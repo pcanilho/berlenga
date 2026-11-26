@@ -1924,7 +1924,7 @@
     "RockField3D.desert_varnish"
    ],
    "note": "",
-   "what": "in dry climates old stones darken with a black film on their tops and down the runoff paths of steep faces, and turn orange-brown underneath and near the soil; fresh breaks stay bright.",
+   "what": "in dry climates old stones darken with a black film on their tops and down the runoff paths of steep faces, and turn orange-brown underneath and near the soil; fresh breaks stay bright; cliff wall pieces take the same varnish as the cliff behind them.",
    "page": "rocks",
    "title": "Rocks",
    "topic": "Shapes"
@@ -2106,6 +2106,17 @@
    ],
    "note": "",
    "what": "caprock slabs overhang the lips of hard-bed benches, broken along their joints.",
+   "page": "rocks",
+   "title": "Rocks",
+   "topic": "Placement"
+  },
+  {
+   "name": "Karst springs",
+   "settings": [
+    "RockField3D.karst"
+   ],
+   "note": "",
+   "what": "streams running onto limestone sink at a swallet and come out again lower down the valley at a spring in its wall, building tufa mounds and dams.",
    "page": "rocks",
    "title": "Rocks",
    "topic": "Placement"
