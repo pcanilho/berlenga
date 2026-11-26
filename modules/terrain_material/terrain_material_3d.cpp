@@ -3524,8 +3524,8 @@ Color TerrainMaterial3D::contract_ground_albedo_at(const Vector3 &p_position) co
 		w[i] *= 1.0f - sand;
 	}
 	w[LAYER_SAND] = sand;
-	const float bare = climate_bare_soil ? MAX(WorldContracts::climate_bare_share_at(Vector3(p_position.x, y, p_position.z)), 0.0f) /* the cold share follows the ground height */ : 0.0f;
-	const float cured = climate_bare_soil ? MAX(WorldContracts::climate_cured_share_at(p_position), 0.0f) : 0.0f;
+	const float bare = climate_bare_soil ? MAX(WorldContracts::climate_bare_share_at(Vector3(p_position.x, y, p_position.z)), 0.0f) /* both shares follow the ground height */ : 0.0f;
+	const float cured = climate_bare_soil ? MAX(WorldContracts::climate_cured_share_at(Vector3(p_position.x, y, p_position.z)), 0.0f) : 0.0f;
 	Color c(0, 0, 0, 0);
 	float total = 0.0f;
 	for (int i = 0; i < LAYER_MAX; i++) {
