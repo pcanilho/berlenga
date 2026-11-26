@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="WorldCaves" inherits="RefCounted" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+	<brief_description>
+		The karst contract: where surface streams sink into caves and where the water comes out as springs.
+	</brief_description>
+	<description>
+		A cave producer ([code]CaveNetwork3D[/code]) lists its swallets (stream sinks) and resurgences (karst springs). The rivers ([code]TerrainGenerator3D.get_rivers[/code] with karst on) end at a swallet when the stream carries no more than the swallet's capacity, and start again at the resurgence it feeds, carrying the sunk water (after the lag) plus the spring's base flow. With no producer both lists are empty. Get it from [WorldContracts]; a test extends it in a script and sets it with [method WorldContracts.set_caves].
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="_get_resurgences" qualifiers="virtual const">
+			<return type="Array" />
+			<param index="0" name="rect" type="Rect2" />
+			<description>
+				Override in a stub to replace [method get_resurgences].
+			</description>
+		</method>
+		<method name="_get_swallets" qualifiers="virtual const">
+			<return type="Array" />
+			<param index="0" name="rect" type="Rect2" />
+			<description>
+				Override in a stub to replace [method get_swallets].
+			</description>
+		</method>
+		<method name="get_resurgences" qualifiers="const">
+			<return type="Array" />
+			<param index="0" name="rect" type="Rect2" />
+			<description>
+				The springs in the world xz rectangle, each a Dictionary: [code]id[/code] (unique), [code]position[/code] (the spring pool's surface at the cave mouth), [code]direction[/code] (horizontal unit vector the water leaves by) and [code]base_flow[/code] (m3/s of its own, all year).
+			</description>
+		</method>
+		<method name="get_swallets" qualifiers="const">
+			<return type="Array" />
+			<param index="0" name="rect" type="Rect2" />
+			<description>
+				The stream sinks in the world xz rectangle, each a Dictionary: [code]position[/code] (on the channel bed), [code]capacity[/code] (m3/s it takes; more runs on down the valley), [code]resurgence[/code] (id of the spring it feeds, -1 unknown or beyond the map), [code]lag_days[/code] and [code]id[/code].
+			</description>
+		</method>
+		<method name="has_provider" qualifiers="const">
+			<return type="bool" />
+			<description>
+				True when a cave producer is registered or a script stub is set.
+			</description>
+		</method>
+		<method name="notify_karst_changed">
+			<return type="void" />
+			<param index="0" name="rect" type="Rect2" />
+			<description>
+				A producer reports its sinks or springs changed within a world xz rectangle: emits [signal karst_changed].
+			</description>
+		</method>
+	</methods>
+	<signals>
+		<signal name="karst_changed">
+			<param index="0" name="rect" type="Rect2" />
+			<description>
+				Sinks or springs changed within the rectangle; the rivers there are laid again. Never emitted for a river rebuild.
+			</description>
+		</signal>
+	</signals>
+</class>

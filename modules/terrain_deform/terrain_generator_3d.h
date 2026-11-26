@@ -596,7 +596,11 @@ private:
 	void _publish_globals();
 	void _notification(int p_what);
 	Vector3 _cell_position(int p_cell) const;
-	Array _rivers(real_t p_min_area, bool p_cells) const;
+	Array _rivers(real_t p_min_area, bool p_cells, bool p_karst = false) const;
+	Array _karst_rivers(const Array &p_raw) const; // the rivers with the karst's sinks and springs (WorldCaves)
+	bool karst_rebuild_queued = false;
+	void _on_karst_changed(const Rect2 &p_rect);
+	void _karst_rebuild();
 	void _bake_runoff(const LocalVector<uint8_t> &p_sea);
 	float _runoff_sample(int p_field, real_t p_x, real_t p_z) const;
 	float _flow(int p_cell, int p_month) const;
@@ -1112,7 +1116,7 @@ public:
 	static String get_sand_shader_code();
 	String get_detail_shader_code() const;
 	real_t get_discharge(real_t p_area) const;
-	Array get_rivers(real_t p_min_area) const;
+	Array get_rivers(real_t p_min_area, bool p_karst = true) const;
 	Array build_river_paths(Node *p_parent, real_t p_min_area);
 
 	// Coast and lakes.

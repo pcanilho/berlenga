@@ -65,6 +65,9 @@ extends Node3D
 #   --touch=x,z,w,d,mode,y[,depth,falloff,bowl];...  TerrainBrush3D touch-ups under the generator (lower, raise,
 #                         flatten, add), the lakes and rivers re-solved after them
 #   --preview-test[=scale] move the first guide and time the generator's coarse guide preview
+#   --karst-stub=sx,sz,cap,rx,rz[,lag_days,base]|auto  a WorldCaves stub: one stream sink (on the river nearest sx,sz;
+#                         cap m3/s) feeding one spring at rx,rz; auto picks a sink a third down river 1 taking all
+#                         its water, and a spring 250 m off river 2. --map prints the karst rivers and the balance
 #   --map=path.png        save a top-down map of the generated land (hillshade, water, rivers, falls) and quit
 #                         (--map-clean: without the red fall markers, for docs pairs)
 #   --mesh=landscape|grid ground: Landscape3D, 1 m with LODs (default), or the 4 m grid mesh; --lod-error=px (2)
@@ -91,6 +94,20 @@ class SurgeSwell extends WorldWater:
 		if gen.get_height(p) > sea:
 			return -INF
 		return sea + 2.0 * sin(TAU * t / 12.0)
+
+
+# One stream sink and one karst spring for --karst-stub (WorldCaves, as CaveNetwork3D answers it): the generator's
+# rivers end at the sink and rise again at the spring.
+class KarstStub extends WorldCaves:
+	var sink := Vector3()
+	var capacity := 0.0
+	var spring := Vector3()
+	var lag := 0.0
+	var base := 0.0
+	func _get_swallets(r: Rect2) -> Array:
+		return [{"position": sink, "capacity": capacity, "resurgence": 0, "lag_days": lag, "id": 0}] if r.has_point(Vector2(sink.x, sink.z)) else []
+	func _get_resurgences(r: Rect2) -> Array:
+		return [{"id": 0, "position": spring, "direction": Vector3(), "base_flow": base}] if r.has_point(Vector2(spring.x, spring.z)) else []
 
 
 var no_till_tex: ImageTexture
@@ -246,6 +263,8 @@ func _ready() -> void:
 	t_start = Time.get_ticks_msec()
 	_generate()
 	_lake_and_fall()
+	if args.has("karst-stub"):
+		_karst_stub(str(args["karst-stub"]))
 	if args.has("no-till"):
 		# The ground material without the moraine till (its negative talus cleared): a till-only before shot.
 		var gi: Image = gen.get_geology_image()
@@ -2720,6 +2739,87 @@ func _save_dune_map(spec: String) -> void:
 	_log("dune map saved %s (%s, %.1f m a pixel, %d x %d)" % [spec.split(",")[0], r, step, sz.x, sz.y])
 
 
+func _karst_stub(spec: String) -> void:
+	var stub := KarstStub.new()
+	var min_area := float(args.get("min-area", "1500000"))
+	if spec == "auto" or spec == "1":
+		var raw: Array = gen.get_rivers(min_area, false)
+		if raw.size() < 3:
+			_log("karst stub: too few rivers")
+			return
+		var r1: Dictionary = raw[1]
+		var p1: PackedVector3Array = r1["points"]
+		stub.sink = p1[p1.size() / 3]
+		stub.capacity = 4.0 * float(Array(r1["monthly_discharge"]).max()) + 1.0
+		var r2: Dictionary = raw[2]
+		var p2: PackedVector3Array = r2["points"]
+		var k := p2.size() / 2
+		var t := (p2[mini(k + 1, p2.size() - 1)] - p2[maxi(k - 1, 0)])
+		var side := Vector3(-t.z, 0, t.x).normalized()
+		stub.spring = p2[k] + side * 250.0
+	else:
+		var v := spec.split(",")
+		stub.sink = Vector3(float(v[0]), 0, float(v[1]))
+		stub.capacity = float(v[2])
+		stub.spring = Vector3(float(v[3]), 0, float(v[4]))
+		stub.lag = float(v[5]) if v.size() > 5 else 0.0
+		stub.base = float(v[6]) if v.size() > 6 else 0.0
+	stub.sink.y = gen.get_height(stub.sink)
+	stub.spring.y = gen.get_height(stub.spring)
+	WorldContracts.set_caves(stub)
+	_log("karst stub: sink %s taking up to %.2f m3/s, spring %s (lag %.0f d, base %.2f m3/s)" % [str(stub.sink.round()), stub.capacity, str(stub.spring.round()), stub.lag, stub.base])
+
+
+func _exit_tree() -> void:
+	if args.has("karst-stub"):
+		WorldContracts.set_caves(null) # a script stub must not outlive the script language
+
+
+func _karst_report(path: String, img: Image, w: int, h: int) -> void:
+	var min_area := float(args.get("min-area", "1500000"))
+	var raw: Array = gen.get_rivers(min_area, false)
+	var kr: Array = gen.get_rivers(min_area)
+	var taken := 0.0
+	var given := 0.0
+	var base := 0.0
+	var stub = WorldContracts.get_caves()
+	if stub is KarstStub:
+		base = stub.base
+	for r in kr:
+		if r["ends_in"] == "swallet":
+			taken += float(r["sink_taken"])
+			_log("karst: river ends in swallet %d at %s, %.3f m3/s sinks" % [r["swallet"], str(r["points"][r["points"].size() - 1].round()), r["sink_taken"]])
+		if int(r["resurgence"]) >= 0:
+			given = maxf(given, float(r["spring_flow"]))
+			_log("karst: river rises at resurgence %d at %s, %.3f m3/s, %d pts, ends %s joins %d" % [r["resurgence"], str(r["points"][0].round()), r["spring_flow"], r["points"].size(), r["ends_in"], r["joins"]])
+		if r["ends_in"] == "dry":
+			_log("karst: a reach dries out at %s" % str(r["points"][r["points"].size() - 1].round()))
+	var lag: float = stub.lag if stub is KarstStub else 0.0
+	var ok := lag > 0.0 or absf(taken + base - given) <= 1e-3 * maxf(given, 1.0)
+	_log("karst: %d rivers raw, %d with karst; sunk %.3f + base %.3f = %.3f, spring gives %.3f m3/s: %s" % [raw.size(), kr.size(), taken, base, taken + base, given, "balance PASS" if ok else ("FAIL" if lag <= 0.0 else "lagged")])
+	# The dry reaches (raw rivers not in the karst set) dark, the sink red, the spring white.
+	for r in raw:
+		for q in r["points"]:
+			var pi := Vector2i(int((q.x - X0) / 16.0), int((q.z - Z0) / 16.0))
+			if pi.x >= 0 and pi.y >= 0 and pi.x < w and pi.y < h:
+				img.set_pixelv(pi, Color(0.12, 0.2, 0.28))
+	for r in kr:
+		for q in r["points"]:
+			var pi := Vector2i(int((q.x - X0) / 16.0), int((q.z - Z0) / 16.0))
+			if pi.x >= 0 and pi.y >= 0 and pi.x < w and pi.y < h:
+				img.set_pixelv(pi, Color(0.3, 0.9, 1.0))
+	if stub is KarstStub:
+		for pair in [[stub.sink, Color(1, 0.15, 0.1)], [stub.spring, Color(1, 1, 1)]]:
+			var c: Vector3 = pair[0]
+			var pi := Vector2i(int((c.x - X0) / 16.0), int((c.z - Z0) / 16.0))
+			for dy in range(-3, 4):
+				for dx in range(-3, 4):
+					var pp := pi + Vector2i(dx, dy)
+					if pp.x >= 0 and pp.y >= 0 and pp.x < w and pp.y < h and abs(dx) + abs(dy) <= 4:
+						img.set_pixelv(pp, pair[1])
+	img.save_png(path)
+
+
 func _save_map(path: String) -> void:
 	if args.has("profile"):
 		# Heights along rows (--profile=z1,z2,...): every 100 m across the map.
@@ -2763,6 +2863,8 @@ func _save_map(path: String) -> void:
 				if pp.x >= 0 and pp.y >= 0 and pp.x < w and pp.y < h:
 					img.set_pixelv(pp, Color(1, 0.1, 0.1))
 	img.save_png(path)
+	if args.has("karst-stub"):
+		_karst_report(path, img, w, h)
 	_log("map saved " + path)
 	# Discharge along the rivers, to place the high lake where the fall below it carries a real curtain.
 	var ri := 0

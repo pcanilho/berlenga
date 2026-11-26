@@ -48,6 +48,7 @@
 #include "terrain_runoff.h"
 #include "terrain_sky.h"
 #include "terrain_stream_power.h"
+#include "modules/world/world_contracts.h"
 
 #include "core/config/engine.h"
 #include "core/config/project_settings.h"
@@ -6573,9 +6574,21 @@ void TerrainGenerator3D::_notification(int p_what) {
 	switch (p_what) {
 		case NOTIFICATION_EXIT_TREE: {
 			_retire_globals();
+			const Callable kcb = callable_mp(this, &TerrainGenerator3D::_on_karst_changed);
+			if (WorldContracts::caves()->is_connected(SNAME("karst_changed"), kcb)) {
+				WorldContracts::caves()->disconnect(SNAME("karst_changed"), kcb);
+			}
 		} break;
 		case NOTIFICATION_READY:
 		case NOTIFICATION_ENTER_TREE: {
+			if (p_what == NOTIFICATION_ENTER_TREE) {
+				// The karst's sinks and springs come and go after the ground is made (caves are cut into it): the
+				// rivers are laid again where they change.
+				const Callable kcb = callable_mp(this, &TerrainGenerator3D::_on_karst_changed);
+				if (!WorldContracts::caves()->is_connected(SNAME("karst_changed"), kcb)) {
+					WorldContracts::caves()->connect(SNAME("karst_changed"), kcb);
+				}
+			}
 			if (p_what == NOTIFICATION_READY && generate_on_ready) {
 				// Deferred: a script that builds the world generates in its own _ready first, and is left alone.
 				callable_mp(this, &TerrainGenerator3D::_auto_generate).call_deferred();
@@ -8599,11 +8612,13 @@ real_t TerrainGenerator3D::get_discharge(real_t p_area) const {
 // Rivers draining at least p_min_area m^2, trunk rivers first. Each is a Dictionary: points (world, head to mouth,
 // on the ground), widths (m, hydraulic geometry w = a Q^0.5, Leopold and Maddock 1953), areas, discharge (m^3/s at
 // the mouth), own_discharge (that minus its tributaries'), joins (index of the river it joins, -1 at an outlet).
-Array TerrainGenerator3D::get_rivers(real_t p_min_area) const {
-	return _rivers(p_min_area, false);
+// p_karst (default): with the karst's stream sinks and springs (WorldCaves, "Karst sinks and springs" in
+// docs/ideas/terrain-generation.md); false: the rivers as the ground drains, which a cave producer fits its sinks to.
+Array TerrainGenerator3D::get_rivers(real_t p_min_area, bool p_karst) const {
+	return _rivers(p_min_area, false, p_karst);
 }
 
-Array TerrainGenerator3D::_rivers(real_t p_min_area, bool p_cells) const {
+Array TerrainGenerator3D::_rivers(real_t p_min_area, bool p_cells, bool p_karst) const {
 	Array out;
 	const int n = nx * ny;
 	if (nx <= 0 || river_receivers.size() != uint32_t(n) || river_area.size() != uint32_t(n)) {
@@ -8820,6 +8835,14 @@ Array TerrainGenerator3D::_rivers(real_t p_min_area, bool p_cells) const {
 			}
 		}
 		d["from_lake"] = from_lake;
+		if (p_karst) {
+			PackedInt32Array pc;
+			pc.resize(sm);
+			for (int k = 0; k < sm; k++) {
+				pc.set(k, scell[k]);
+			}
+			d["_scell"] = pc;
+		}
 		if (p_cells) {
 			PackedInt32Array cells;
 			cells.resize(m);
@@ -8829,6 +8852,408 @@ Array TerrainGenerator3D::_rivers(real_t p_min_area, bool p_cells) const {
 			d["cells"] = cells;
 		}
 		out.push_back(d);
+	}
+	if (p_karst && !p_cells) {
+		return _karst_rivers(out);
+	}
+	return out;
+}
+
+// Karst sinks and springs (WorldCaves; Ford and Williams, Karst Hydrogeology and Geomorphology, 2007, ch. 5 and 7).
+// Below a swallet a river carries its flow less what the swallet takes (up to its capacity), month by month, all the
+// way down; below a resurgence it carries that much more: what the resurgence's swallets took (lagged by whole and
+// part months) and its own base flow. A reach left with no water is dry (the blind valley below a sink in the dry
+// months), so each river is cut into its wet runs; a spring off every river gets a river of its own down the drainage
+// to the first wet one. Heights and channels stay as they are: the dry valley keeps the channel the water cut.
+Array TerrainGenerator3D::_karst_rivers(const Array &p_raw) const {
+	Array out;
+	const int n = nx * ny;
+	LocalVector<WorldSwallet> sw;
+	LocalVector<WorldResurgence> rs;
+	if (WorldContracts::caves()->has_provider() && n > 0 && river_receivers.size() == uint32_t(n) && river_area.size() == uint32_t(n)) {
+		const Rect2 rect = Rect2(result_rect.position, Vector2(real_t(nx - 1), real_t(ny - 1)) * result_cell).grow(result_cell);
+		WorldContracts::caves()->swallets(rect, sw);
+		WorldContracts::caves()->resurgences(rect, rs);
+	}
+	if (sw.is_empty() && rs.is_empty()) {
+		for (int i = 0; i < p_raw.size(); i++) {
+			Dictionary d = Dictionary(p_raw[i]).duplicate();
+			d.erase("_scell");
+			d["swallet"] = -1;
+			d["resurgence"] = -1;
+			out.push_back(d);
+		}
+		return out;
+	}
+	constexpr int M = 13; // the months, then the annual mean
+	const int mi = river_month >= 0 ? river_month : 12;
+	const double QMIN = 1.0e-3; // m3/s: less is a dry bed
+	auto raw_flow = [&](int p_c, int p_m) { return double(_flow(p_c, p_m == 12 ? -1 : p_m)); };
+	auto cell_at = [&](const Vector3 &p) {
+		const int x = int(Math::round((p.x - result_rect.position.x) / result_cell));
+		const int z = int(Math::round((p.z - result_rect.position.y) / result_cell));
+		return x >= 0 && z >= 0 && x < nx && z < ny ? z * nx + x : -1;
+	};
+
+	// Each swallet on the nearest river point within two cells (or the river's half width there).
+	struct Sink {
+		int river = -1;
+		int point = -1;
+		int cell = -1;
+		double taken[M] = {};
+	};
+	LocalVector<Sink> sinks;
+	sinks.resize(sw.size());
+	for (uint32_t s = 0; s < sw.size(); s++) {
+		real_t best = 1e30f;
+		for (int r = 0; r < p_raw.size(); r++) {
+			const Dictionary d = p_raw[r];
+			const PackedVector3Array pts = d["points"];
+			const PackedFloat32Array ws = d["widths"];
+			for (int k = 0; k < pts.size(); k++) {
+				const real_t dd = Vector2(pts[k].x - sw[s].position.x, pts[k].z - sw[s].position.z).length();
+				if (dd < best && dd <= MAX(real_t(2.0) * result_cell, real_t(0.5f * ws[k]))) {
+					best = dd;
+					sinks[s].river = r;
+					sinks[s].point = k;
+				}
+			}
+		}
+		if (sinks[s].river < 0) {
+			print_verbose(vformat("TerrainGenerator3D: swallet %d at %s is on no river; ignored.", sw[s].id, sw[s].position));
+			continue;
+		}
+		const PackedInt32Array sc = Dictionary(p_raw[sinks[s].river])["_scell"];
+		sinks[s].cell = sc[sinks[s].point];
+		double year = 0.0;
+		for (int m = 0; m < 12; m++) {
+			sinks[s].taken[m] = MIN(double(MAX(sw[s].capacity, 0.0f)), raw_flow(sinks[s].cell, m));
+			year += sinks[s].taken[m] * TerrainRunoff::DAYS[m];
+		}
+		sinks[s].taken[12] = year / 365.0;
+	}
+
+	// What each resurgence delivers.
+	struct Spring {
+		int cell = -1;
+		double delivered[M] = {};
+	};
+	LocalVector<Spring> springs;
+	springs.resize(rs.size());
+	for (uint32_t q = 0; q < rs.size(); q++) {
+		springs[q].cell = cell_at(rs[q].position);
+		for (int m = 0; m < M; m++) {
+			springs[q].delivered[m] = MAX(double(rs[q].base_flow), 0.0);
+		}
+		for (uint32_t s = 0; s < sw.size(); s++) {
+			if (sinks[s].cell < 0 || rs[q].id < 0 || sw[s].resurgence != rs[q].id) {
+				continue;
+			}
+			const double lag = MAX(double(sw[s].lag_days), 0.0) / (365.0 / 12.0);
+			const int whole = int(Math::floor(lag));
+			const double f = lag - whole;
+			for (int m = 0; m < 12; m++) {
+				const int a = ((m - whole) % 12 + 12) % 12;
+				const int b = ((m - whole - 1) % 12 + 12) % 12;
+				springs[q].delivered[m] += (1.0 - f) * sinks[s].taken[a] + f * sinks[s].taken[b];
+			}
+			springs[q].delivered[12] += sinks[s].taken[12]; // over a year the lag moves nothing
+		}
+	}
+
+	// The change down the drainage from each sink (from the cell below it) and each spring (from its own cell).
+	HashMap<int32_t, int> slot;
+	LocalVector<double> delta;
+	auto add_down = [&](int p_c, const double *p_v, double p_sign) {
+		for (int guard = 0; p_c >= 0 && guard < n; guard++) {
+			int k;
+			if (const int *sp = slot.getptr(p_c)) {
+				k = *sp;
+			} else {
+				k = int(slot.size());
+				slot.insert(p_c, k);
+				for (int m = 0; m < M; m++) {
+					delta.push_back(0.0);
+				}
+			}
+			for (int m = 0; m < M; m++) {
+				delta[k * M + m] += p_sign * p_v[m];
+			}
+			const int r = river_receivers[p_c];
+			if (r == p_c) {
+				break;
+			}
+			p_c = r;
+		}
+	};
+	for (const Sink &s : sinks) {
+		if (s.cell >= 0 && river_receivers[s.cell] != s.cell) {
+			add_down(river_receivers[s.cell], s.taken, -1.0);
+		}
+	}
+	for (const Spring &q : springs) {
+		if (q.cell >= 0) {
+			add_down(q.cell, q.delivered, 1.0);
+		}
+	}
+	auto flow = [&](int p_c, int p_m) {
+		double q = raw_flow(p_c, p_m);
+		if (const int *sp = slot.getptr(p_c)) {
+			q += delta[*sp * M + p_m];
+		}
+		return MAX(q, 0.0);
+	};
+
+	// Each river's wet runs.
+	struct Run {
+		int river = -1;
+		int a = 0;
+		int b = 0;
+		int sink = -1; // the swallet it ends in
+		int spring = -1; // the resurgence it rises at
+		int joins = -1;
+		String ends_in;
+		int lake = -1;
+	};
+	LocalVector<Run> runs;
+	LocalVector<LocalVector<int>> runs_of;
+	runs_of.resize(p_raw.size());
+	HashMap<int32_t, int> wet_cell_run; // a cell some run passes through: that run
+	for (int r = 0; r < p_raw.size(); r++) {
+		const Dictionary d = p_raw[r];
+		const PackedInt32Array sc = d["_scell"];
+		const int sm = sc.size();
+		LocalVector<int> cut;
+		LocalVector<uint8_t> wet;
+		cut.resize(sm);
+		wet.resize(sm);
+		for (int k = 0; k < sm; k++) {
+			cut[k] = -1;
+			wet[k] = flow(sc[k], mi) > QMIN;
+		}
+		for (uint32_t s = 0; s < sinks.size(); s++) {
+			if (sinks[s].river != r) {
+				continue;
+			}
+			cut[sinks[s].point] = int(s);
+			// Points after the sink still on its cell are below it: the cell reads its flow above the sink.
+			for (int k = sinks[s].point + 1; k < sm && sc[k] == sinks[s].cell; k++) {
+				wet[k] = raw_flow(sinks[s].cell, mi) - sinks[s].taken[mi] > QMIN;
+			}
+		}
+		for (int k = 0; k < sm;) {
+			if (!wet[k]) {
+				k++;
+				continue;
+			}
+			const int a = k;
+			while (k < sm && wet[k]) {
+				k++;
+			}
+			const int b = k - 1;
+			if (b - a < 1) {
+				continue;
+			}
+			Run run;
+			run.river = r;
+			run.a = a;
+			run.b = b;
+			run.sink = b < sm - 1 ? cut[b] : -1;
+			for (uint32_t q = 0; q < springs.size(); q++) {
+				if (springs[q].cell >= 0 && springs[q].cell == sc[a]) {
+					run.spring = int(q);
+				}
+			}
+			runs_of[r].push_back(int(runs.size()));
+			runs.push_back(run);
+		}
+	}
+	for (uint32_t i = 0; i < runs.size(); i++) {
+		const PackedInt32Array sc = Dictionary(p_raw[runs[i].river])["_scell"];
+		for (int k = runs[i].a; k <= runs[i].b; k++) {
+			if (!wet_cell_run.has(sc[k])) {
+				wet_cell_run.insert(sc[k], int(i));
+			}
+		}
+	}
+	// Where each run ends: the raw river's own end (its junction, now on a run of the river it joins, or dry), else the
+	// swallet it sinks in, else the bed it dries out in.
+	for (Run &run : runs) {
+		const Dictionary d = p_raw[run.river];
+		const PackedInt32Array sc = d["_scell"];
+		if (run.b == sc.size() - 1) {
+			const int j = int(d["joins"]);
+			if (j >= 0) {
+				const PackedInt32Array jc = Dictionary(p_raw[j])["_scell"];
+				for (int ri : runs_of[j]) {
+					for (int k = runs[ri].a; k <= runs[ri].b && run.joins < 0; k++) {
+						if (jc[k] == sc[run.b]) {
+							run.joins = ri;
+						}
+					}
+				}
+				run.ends_in = run.joins >= 0 ? "river" : "dry";
+			} else {
+				run.ends_in = d["ends_in"];
+				run.lake = d["lake"];
+			}
+		} else {
+			run.ends_in = run.sink >= 0 ? "swallet" : "dry";
+		}
+	}
+
+	// Rivers from springs that rise off every wet run: down the drainage to the first wet run, else to the water or
+	// the edge.
+	struct SpringRiver {
+		int spring = -1;
+		LocalVector<int32_t> cells;
+		int joins = -1;
+	};
+	LocalVector<SpringRiver> spring_rivers;
+	for (uint32_t q = 0; q < springs.size(); q++) {
+		if (springs[q].cell < 0 || wet_cell_run.has(springs[q].cell) || springs[q].delivered[mi] <= QMIN) {
+			continue;
+		}
+		SpringRiver sr;
+		sr.spring = int(q);
+		int c = springs[q].cell;
+		sr.cells.push_back(c);
+		for (int guard = 0; guard < n; guard++) {
+			const int r = river_receivers[c];
+			if (r == c) {
+				break;
+			}
+			c = r;
+			sr.cells.push_back(c);
+			if (const int *ri = wet_cell_run.getptr(c)) {
+				sr.joins = *ri;
+				break;
+			}
+		}
+		if (sr.cells.size() >= 2) {
+			spring_rivers.push_back(sr);
+		}
+	}
+
+	// Out: the runs, then the spring rivers.
+	LocalVector<int> mouth_cell;
+	LocalVector<int> joins_of;
+	for (const Run &run : runs) {
+		const Dictionary d = p_raw[run.river];
+		const PackedInt32Array sc = d["_scell"];
+		const PackedVector3Array pts = d["points"];
+		const PackedFloat32Array areas = d["areas"];
+		const int cnt = run.b - run.a + 1;
+		PackedVector3Array p2;
+		PackedFloat32Array w2, a2;
+		p2.resize(cnt);
+		w2.resize(cnt);
+		a2.resize(cnt);
+		for (int k = 0; k < cnt; k++) {
+			p2.set(k, pts[run.a + k]);
+			a2.set(k, areas[run.a + k]);
+			w2.set(k, river_width_coefficient * Math::sqrt(flow(sc[run.a + k], mi)));
+		}
+		const int mouth = run.joins >= 0 && cnt > 1 ? sc[run.b - 1] : sc[run.b];
+		Dictionary o;
+		o["points"] = p2;
+		o["widths"] = w2;
+		o["areas"] = a2;
+		o["discharge"] = flow(mouth, mi);
+		PackedFloat32Array monthly;
+		monthly.resize(12);
+		for (int m = 0; m < 12; m++) {
+			monthly.set(m, flow(mouth, m));
+		}
+		o["monthly_discharge"] = monthly;
+		o["joins"] = run.joins;
+		o["ends_in"] = run.ends_in;
+		o["lake"] = run.lake;
+		o["from_lake"] = run.a == 0 ? int(d["from_lake"]) : -1;
+		o["swallet"] = run.sink >= 0 ? sw[run.sink].id : -1;
+		o["resurgence"] = run.spring >= 0 ? rs[run.spring].id : -1;
+		if (run.sink >= 0) {
+			o["sink_taken"] = sinks[run.sink].taken[mi]; // m3/s into the swallet
+		}
+		if (run.spring >= 0) {
+			o["spring_flow"] = springs[run.spring].delivered[mi]; // m3/s out of the resurgence
+		}
+		mouth_cell.push_back(mouth);
+		joins_of.push_back(run.joins);
+		out.push_back(o);
+	}
+	for (const SpringRiver &sr : spring_rivers) {
+		const WorldResurgence &q = rs[sr.spring];
+		const int m_cnt = int(sr.cells.size());
+		std::vector<Vector3> pts(m_cnt);
+		pts[0] = q.position;
+		for (int k = 1; k < m_cnt; k++) {
+			pts[k] = _cell_position(sr.cells[k]);
+		}
+		for (int pass = 0; pass < 2 && m_cnt > 2; pass++) {
+			std::vector<Vector3> tmp = pts;
+			for (int k = 1; k < m_cnt - 1; k++) {
+				tmp[k] = (pts[k - 1] + pts[k] * 2.0 + pts[k + 1]) * 0.25;
+			}
+			pts = tmp;
+		}
+		PackedVector3Array p2;
+		PackedFloat32Array w2, a2;
+		p2.resize(m_cnt);
+		w2.resize(m_cnt);
+		a2.resize(m_cnt);
+		const int32_t end_body = water_body.size() == uint32_t(n) ? water_body[sr.cells[m_cnt - 1]] : 0;
+		for (int k = 0; k < m_cnt; k++) {
+			Vector3 p = pts[k];
+			if (k > 0) {
+				p.y = _ground(p.x, p.z);
+				const int32_t b = water_body.size() == uint32_t(n) ? water_body[sr.cells[k]] : 0;
+				if (b >= 1) {
+					const real_t level = b == 1 ? real_t(result_min) : lake_info[b - 2].level;
+					p.y = k == m_cnt - 1 ? level : MAX(p.y, level);
+				}
+			}
+			p2.set(k, p);
+			a2.set(k, river_area[sr.cells[k]]);
+			w2.set(k, river_width_coefficient * Math::sqrt(flow(sr.cells[k], mi)));
+		}
+		const int mouth = sr.joins >= 0 ? sr.cells[m_cnt - 2] : sr.cells[m_cnt - 1];
+		Dictionary o;
+		o["points"] = p2;
+		o["widths"] = w2;
+		o["areas"] = a2;
+		o["discharge"] = flow(mouth, mi);
+		PackedFloat32Array monthly;
+		monthly.resize(12);
+		for (int m = 0; m < 12; m++) {
+			monthly.set(m, flow(mouth, m));
+		}
+		o["monthly_discharge"] = monthly;
+		o["joins"] = sr.joins;
+		o["ends_in"] = sr.joins >= 0 ? "river" : (end_body == 1 ? "sea" : (end_body >= 2 ? "lake" : "edge"));
+		o["lake"] = sr.joins < 0 && end_body >= 2 ? end_body - 2 : -1;
+		o["from_lake"] = -1;
+		o["swallet"] = -1;
+		o["resurgence"] = q.id;
+		o["spring_flow"] = springs[sr.spring].delivered[mi];
+		mouth_cell.push_back(mouth);
+		joins_of.push_back(sr.joins);
+		out.push_back(o);
+	}
+	// Each river's own discharge: at its mouth, less the rivers joining it.
+	LocalVector<double> own;
+	own.resize(out.size());
+	for (uint32_t i = 0; i < out.size(); i++) {
+		own[i] = flow(mouth_cell[i], mi);
+	}
+	for (uint32_t i = 0; i < out.size(); i++) {
+		if (joins_of[i] >= 0) {
+			own[joins_of[i]] -= flow(mouth_cell[i], mi);
+		}
+	}
+	for (uint32_t i = 0; i < out.size(); i++) {
+		Dictionary o = out[i];
+		o["own_discharge"] = MAX(own[i], 0.0);
 	}
 	return out;
 }
@@ -9521,6 +9946,26 @@ void TerrainGenerator3D::_auto_water() {
 	build_river_paths(holder, water_river_min_area);
 }
 
+// The karst changed (WorldCaves.karst_changed): the auto water's rivers are laid again, once per frame at most.
+void TerrainGenerator3D::_on_karst_changed(const Rect2 &p_rect) {
+	if (!auto_water.is_valid() || !has_result() || karst_rebuild_queued) {
+		return;
+	}
+	const Rect2 mine(result_rect.position, Vector2(real_t(MAX(nx - 1, 0)), real_t(MAX(ny - 1, 0))) * result_cell);
+	if (!mine.intersects(p_rect, true)) {
+		return;
+	}
+	karst_rebuild_queued = true;
+	callable_mp(this, &TerrainGenerator3D::_karst_rebuild).call_deferred();
+}
+
+void TerrainGenerator3D::_karst_rebuild() {
+	karst_rebuild_queued = false;
+	if (auto_water.is_valid() && has_result() && is_inside_tree()) {
+		_auto_water();
+	}
+}
+
 void TerrainGenerator3D::set_generate_on_ready(bool p_enable) {
 	generate_on_ready = p_enable;
 }
@@ -9916,7 +10361,7 @@ void TerrainGenerator3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_water_depth", "global_position"), &TerrainGenerator3D::get_water_depth);
 	ClassDB::bind_method(D_METHOD("get_water_image"), &TerrainGenerator3D::get_water_image);
 	ClassDB::bind_method(D_METHOD("build_water", "parent"), &TerrainGenerator3D::build_water);
-	ClassDB::bind_method(D_METHOD("get_rivers", "min_area"), &TerrainGenerator3D::get_rivers);
+	ClassDB::bind_method(D_METHOD("get_rivers", "min_area", "karst"), &TerrainGenerator3D::get_rivers, DEFVAL(true));
 	ClassDB::bind_method(D_METHOD("build_river_paths", "parent", "min_area"), &TerrainGenerator3D::build_river_paths);
 	ClassDB::bind_method(D_METHOD("set_soil_production", "rate"), &TerrainGenerator3D::set_soil_production);
 	ClassDB::bind_method(D_METHOD("get_soil_production"), &TerrainGenerator3D::get_soil_production);
