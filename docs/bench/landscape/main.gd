@@ -7804,7 +7804,7 @@ func _frost_sorted_cam() -> void:
 	var upd := float(args.get("fs-up", "25"))
 	var gmax := 0.0
 	var fmin := float(args.get("fs-min", "0.6")) # --fs-min: the sorting strength a spot and its ring need
-	var bfg := 0.0 # the strongest flat point, for when no ring passes
+	var bfg := 0.0 # the best flat point (its sorting + its ring's mean), for when no ring passes
 	var bf := Vector3.INF
 	var xx := wr.position.x + 100.0
 	while xx < wr.end.x - 100.0:
@@ -7814,16 +7814,22 @@ func _frost_sorted_cam() -> void:
 			var g0: Vector2 = rocks.call("get_frost_at", p)
 			gmax = maxf(gmax, g0.x)
 			var flat_here := rad_to_deg(atan(_fs_grad(p).length())) < float(args.get("fs-flat", "2"))
-			if flat_here and g0.x > bfg:
-				bfg = g0.x
-				bf = p
 			if g0.x > fmin and flat_here:
 				var ok := true
 				var lo := 1.0
+				var mean := 0.0
+				var hstep := 0.0
+				var h0 := height_at(p.x, p.z)
 				for k in 8:
 					var q := p + Vector3(cos(TAU * k / 8.0), 0, sin(TAU * k / 8.0)) * 15.0
 					var gq: Vector2 = rocks.call("get_frost_at", q)
 					lo = minf(lo, gq.x)
+					mean += gq.x / 8.0
+					hstep = maxf(hstep, absf(height_at(q.x, q.z) - h0))
+				# The fallback: the most sorted ring round flat ground with no bank or cliff within 15 m (4 m of rise).
+				if hstep < 4.0 and g0.x + mean > bfg:
+					bfg = g0.x + mean
+					bf = p
 				if lo > fmin:
 					# upslope: the steepest rise within 40 m
 					var up := Vector3.ZERO
@@ -7884,7 +7890,7 @@ func _frost_sorted_cam() -> void:
 				bu = d
 		bp = Vector3(bf.x, height_at(bf.x, bf.z), bf.z)
 		best = bfg
-		_log("frost sorted: no ring passes; strongest flat point %s, sorting %.2f" % [str(bp.round()), bfg])
+		_log("frost sorted: no ring passes; best flat point %s, sorting + ring mean %.2f" % [str(bp.round()), bfg])
 	if best < 0.0:
 		_log("frost sorted: no sorted ground found (strongest sorting anywhere %.2f, strongest flat %.2f, needs %.2f)" % [gmax, bfg, fmin])
 		return
