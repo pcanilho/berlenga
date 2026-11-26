@@ -2010,7 +2010,7 @@
     "RockField3D.frost_sorting"
    ],
    "note": "",
-   "what": "on cold, wet, gentle soil, frost sorts the stones into circles round fine-soil centres, drawn out into stripes on slopes.",
+   "what": "on cold, wet, gentle soil, frost sorts the stones into circles round fine-soil centres, drawn out into stripes on slopes; the centres stay almost bare and plants keep to the stony borders.",
    "page": "rocks",
    "title": "Rocks",
    "topic": "Placement"
@@ -2694,10 +2694,12 @@
     "january_temperature_range",
     "precipitation_range",
     "aridity_range",
-    "sunlight_range"
+    "sunlight_range",
+    "GrassField3D.climate_bare",
+    "VegetationField3D.climate_bare"
    ],
    "note": "",
-   "what": "species by temperature, winter frost, rain, aridity and sunlight.",
+   "what": "species by temperature, winter frost, rain, aridity and sunlight; cold summers thin and lower the cover into open, low tundra.",
    "page": "vegetation",
    "title": "Vegetation",
    "topic": "Placement"
@@ -2927,11 +2929,13 @@
   {
    "name": "Trampling",
    "settings": [
+    "GrassField3D.trample_enabled",
+    "trample_recovery",
     "grass_trample",
-    "GrassField3D.trample_recovery"
+    "world_contact"
    ],
    "note": "",
-   "what": "bodies lay grass down and it springs back; grass, flowers and herbs lie flat on light ground prints and are gone from deep ruts and puddles. Lying snow presses grass, crops and plants down under its weight, soft stems first, and buries short grass; a river's current lays the plants under it downstream, fully flat in a fast stream. Wet gales lodge tall grass flat in swirled patches that stand again over days (`GrassField3D.lodging`).",
+   "what": "bodies lay grass down where their own collision shapes reach it, wheels pressing their tread and limbs and dragged objects their own prints, each pushing the blades along its motion, and it springs back; grass, flowers and herbs lie flat on light ground prints and are gone from deep ruts and puddles. Lying snow presses grass, crops and plants down under its weight, soft stems first, and buries short grass; a river's current lays the plants under it downstream, fully flat in a fast stream. Wet gales lodge tall grass flat in swirled patches that stand again over days (`GrassField3D.lodging`).",
    "page": "vegetation",
    "title": "Vegetation",
    "topic": "Grass"
@@ -2992,7 +2996,7 @@
     "RULE_DISTURBANCE"
    ],
    "note": "",
-   "what": "plants follow the years since the last fire, windthrow or beetle kill, so pioneers flood a fresh burn or blowdown and shade plants return as the stand closes; the ground is re-placed live when a disturbance moves a species across its range.",
+   "what": "plants follow the years since the last fire, windthrow or beetle kill, so pioneers flood a fresh burn or blowdown and shade plants return as the stand closes; the ground is re-placed live when a disturbance moves a species across its range, and a fire scar added while playing thins and shortens the plants under it.",
    "page": "vegetation",
    "title": "Vegetation",
    "topic": "Plants"
@@ -3079,10 +3083,11 @@
   {
    "name": "Grazing roughs and dung",
    "settings": [
-    "PlantGenerator.make_grazing()"
+    "PlantGenerator.make_grazing()",
+    "WorldStand.add_browse()"
    ],
    "note": "",
-   "what": "cattle pats ringed by ungrazed rank tufts, horse latrines and deer pellets on pastures and lawns.",
+   "what": "one grazing area makes a pasture of cropped lawn, with cattle pats ringed by ungrazed rank tufts, horse latrines and deer pellets.",
    "page": "vegetation",
    "title": "Vegetation",
    "topic": "Plants"
