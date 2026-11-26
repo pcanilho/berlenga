@@ -1,0 +1,1 @@
+- Snow: eave icicles grow lumpy, fluted and rippled as roof-melt icicles do, with a bulge near the root.
