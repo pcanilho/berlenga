@@ -177,6 +177,13 @@ func _arg_num(p_key: String, p_default: float) -> float:
 		return p_default
 	return float(args[p_key])
 
+
+# The same for a flag that takes an optional word (--mounds or --mounds=ants).
+func _arg_str(p_key: String, p_default: String) -> String:
+	if not args.has(p_key) or String(args[p_key]) == "" or OS.get_cmdline_user_args().has("--" + p_key):
+		return p_default
+	return String(args[p_key])
+
 func _ready() -> void:
 	for a in OS.get_cmdline_user_args():
 		var kv := a.trim_prefix("--").split("=", true, 1)
@@ -4163,7 +4170,7 @@ func _generated_forest(clearing: bool) -> Biome:
 		# --mistletoe=A (3) balls, --brooms=B (silver fir broom rust, 3), --host-spacing m apart (50); --host-cam frames
 		# one crown from below against the sky (--host-dist 14 m, --host-look 12 m up the stem).
 		var hosts := {"lime": TreeGenerator.PRESET_LIME, "silver_fir": TreeGenerator.PRESET_SILVER_FIR, "scots_pine": TreeGenerator.PRESET_SCOTS_PINE, "hawthorn": TreeGenerator.PRESET_HAWTHORN, "white_willow": TreeGenerator.PRESET_WHITE_WILLOW, "birch": TreeGenerator.PRESET_BIRCH, "oak": TreeGenerator.PRESET_OAK}
-		var hn := String(args["host-tree"]) if String(args["host-tree"]) != "" else "lime"
+		var hn := _arg_str("host-tree", "lime")
 		var keep_p = tg.preset
 		var keep_m: float = tg.mistletoe
 		var keep_w: float = tg.witches_brooms
@@ -5514,7 +5521,7 @@ func _build_cover() -> void:
 	if args.has("mounds") and ClassDB.class_has_method("PlantGenerator", "make_mounds"):
 		# --mounds=meadow|wood|both: ant hills and molehills in the meadows, wood ant nests at conifer edges
 		# (PlantGenerator.make_mounds, vegetation e90904e7); called by name so older binaries still parse.
-		var mk := String(args["mounds"]) if String(args["mounds"]) != "" else "both"
+		var mk := _arg_str("mounds", "both")
 		var msets := []
 		if mk == "meadow" or mk == "both":
 			msets.append(0) # MOUNDS_MEADOW
@@ -5545,7 +5552,7 @@ func _build_cover() -> void:
 	if args.has("grazing") and ClassDB.class_has_method("PlantGenerator", "make_grazing"):
 		# --grazing=cattle|horse|deer: dung and the ungrazed roughs round it over the open ground (PlantGenerator.
 		# make_grazing, vegetation fbc92404), listed after the stand's species; called by name for older binaries.
-		var gk := String(args["grazing"]) if String(args["grazing"]) != "" else "cattle"
+		var gk := _arg_str("grazing", "cattle")
 		var gset := {"cattle": 0, "horse": 1, "deer": 2}.get(gk, 0) as int
 		var graze: Array = ClassDB.class_call_static("PlantGenerator", "make_grazing", gset, 3, true, season)
 		for gsp in graze:
@@ -7320,7 +7327,7 @@ func _hut_rime() -> void:
 	add_child(rime)
 	rime.set("target_paths", [rime.get_path_to(root)])
 	rime.call("refresh_targets")
-	var hrs := float(args["hut-rime"]) if String(args["hut-rime"]) != "" else 24.0
+	var hrs := _arg_num("hut-rime", 24.0)
 	for h in int(hrs):
 		rime.call("grow", 1.0, float(args.get("rime-c", "-6")), wv, float(args.get("rime-fog", "0.25")))
 	_log("hut rime: %d targets, %d feathers after %.0f h, wind %s" % [int(rime.call("get_target_count")), int(rime.call("get_feather_count")), hrs, str(wv)])
@@ -7405,7 +7412,7 @@ func _hut_roof_snow() -> void:
 	weather.temperature = float(args.get("roof-temp", "-6"))
 	weather.snap_to_settings()
 	weather.advance(1.0)
-	var hrs := int(float(args["hut-roof-snow"]) if String(args["hut-roof-snow"]) != "" else 24.0)
+	var hrs := int(_arg_num("hut-roof-snow", 24.0))
 	var slide_shot := String(args.get("roof-slide", ""))
 	if slide_shot != "":
 		sb.set("slide_enabled", false) # the load builds first; it is let go for the shot
@@ -9041,7 +9048,7 @@ func _sastrugi() -> void:
 	weather.temperature = float(args.get("sas-temp", "-8"))
 	weather.snap_to_settings()
 	weather.advance(60.0)
-	var hrs := float(args["sastrugi"]) if String(args["sastrugi"]) != "" else 12.0
+	var hrs := _arg_num("sastrugi", 12.0)
 	snow.advance(hrs * 3600.0)
 	weather.wind_speed = float(args.get("sas-after-wind", "6"))
 	weather.snap_to_settings()
@@ -9104,7 +9111,7 @@ func _spindrift_cam() -> void:
 		_log("spindrift: no plume sources near the peak %s at %.0f m/s" % [str(top.round()), weather.wind_speed])
 		return
 	var src: Vector3 = srcs[0]["position"]
-	var d := float(args["spindrift-cam"]) if String(args["spindrift-cam"]) != "" else 140.0
+	var d := _arg_num("spindrift-cam", 140.0)
 	var cp := src + wind * d
 	cp.y = height_at(cp.x, cp.z) + float(args.get("sd-eye", "1.7"))
 	var c3: Camera3D = get_viewport().get_camera_3d()
@@ -9148,7 +9155,7 @@ func _gully_cam() -> void:
 	if found == Vector3.INF:
 		_log("gully cam: no gully on open soil")
 		return
-	var d := float(args["gully-cam"]) if String(args["gully-cam"]) != "" else 14.0
+	var d := _arg_num("gully-cam", 14.0)
 	var cp := found + down * d
 	cp.y = height_at(cp.x, cp.z) + float(args.get("gully-eye", "1.7"))
 	var c3: Camera3D = get_viewport().get_camera_3d()
@@ -9174,7 +9181,7 @@ func _dust_devil() -> void:
 	f.y = 0.0
 	f = f.normalized()
 	var w := Vector3(weather.wind_direction.x, 0, weather.wind_direction.y).normalized()
-	var secs := float(args["dust-devil"]) if String(args["dust-devil"]) != "" else 4.0
+	var secs := _arg_num("dust-devil", 4.0)
 	var at := c3.global_position + f * float(args.get("devil-ahead", "30")) - w * weather.wind_speed * 0.7 * secs
 	at.y = height_at(at.x, at.z)
 	var idx: int = dd.call("spawn", at, float(args.get("devil-radius", "3")), float(args.get("devil-swirl", "10")))
@@ -9222,7 +9229,7 @@ func _rime_ridge() -> void:
 	weather.cloud_cover = 1.0
 	weather.cloud_type = 0.0
 	weather.snap_to_settings()
-	var hrs := float(args["rime-ridge"]) if String(args["rime-ridge"]) != "" else 6.0
+	var hrs := _arg_num("rime-ridge", 6.0)
 	for i in int(hrs * 6.0):
 		weather.advance(600.0)
 		await get_tree().physics_frame
@@ -9274,7 +9281,7 @@ func _lodging() -> void:
 	# --lodging[=H]: H (1) hours of a wet summer gale (--lodge-wind 18 m/s at 10 m, --lodge-rain 15 mm/h) from behind
 	# the camera's left over every GrassField3D (GrassField3D.lodging, vegetation 2b052f8e): the tall grass laid down in
 	# swirled patches along the wind. Then the rain stops and the wind drops to --wind for the shot.
-	var hrs := float(args["lodging"]) if String(args["lodging"]) != "" else 1.0
+	var hrs := _arg_num("lodging", 1.0)
 	var c3: Camera3D = get_viewport().get_camera_3d()
 	var f := -c3.global_basis.z
 	var wd := Vector3(f.x, 0, f.z).normalized().rotated(Vector3.UP, deg_to_rad(float(args.get("lodge-yaw", "30"))))
@@ -9325,7 +9332,7 @@ func _lens_cam() -> void:
 	weather.wind_direction = Vector2(look.x, look.z) if downwind else Vector2(-look.x, -look.z)
 	if weather.has_method("rebake_terrain_wind"):
 		weather.rebake_terrain_wind()
-	var d := float(args["lens-cam"]) if String(args["lens-cam"]) != "" else 12000.0
+	var d := _arg_num("lens-cam", 12000.0)
 	var cp := Vector3(top.x, 0, top.z) + (look * d if downwind else -look * d)
 	var g := gen.get_height(cp)
 	var base := maxf(g if is_finite(g) else gen.sea_level, gen.sea_level)
