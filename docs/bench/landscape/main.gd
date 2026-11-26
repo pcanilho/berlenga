@@ -1048,6 +1048,18 @@ func _ready() -> void:
 		await _snow_strata()
 	if args.has("frost-sorted"):
 		_frost_sorted_cam()
+		if rocks != null:
+			# The stones were laid round the first camera: lay them again round the sorted ground (its border stones are
+			# ground detail, built round the camera), and wait for the detail cells.
+			var fcam := get_viewport().get_camera_3d()
+			if fcam:
+				var fc := fcam.global_position
+				rocks.build_area(Rect2(fc.x - 20.0, fc.z - 20.0, 40.0, 40.0)) # (the detail reaches only metres; more ran out of memory on top of the first build)
+				var fw := 0
+				while rocks.has_method("get_ground_detail_pending") and int(rocks.get_ground_detail_pending()) > 0 and fw < 1200:
+					await get_tree().process_frame
+					fw += 1
+				_log("frost sorted: stones laid round the camera (%d frames for the detail)" % fw)
 	if args.has("walker-snow"):
 		await _walker_snow()
 	if args.has("lodging"):
