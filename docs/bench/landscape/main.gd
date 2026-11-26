@@ -7858,7 +7858,7 @@ func _lobster_net(n: Node3D) -> void:
 
 # --block-field: frost-shattered block fields (RockField3D.block_fields, rocks a3fdfc1a; cold, gentle, thin-soiled
 # ground, so a cold climate: --climate-shift=-10). On a 16 m grid, the point whose block-field gate is strong
-# (over --bf-min, 0.8) all round it (eight points 20 m out), on a --bf-min-deg..--bf-max-deg (4..20) slope over
+# (over --bf-min, 0.8) with --bf-ring (0.5) of that all round it (eight points 20 m out), on a --bf-min-deg..--bf-max-deg (4..20) slope over
 # 8 m, away from sand and the sea, block streams (the gate's stripe share) counting extra. The camera stands
 # --bf-back (14) m downslope, --bf-up (6) m above the ground, looking up the slope at the spot so the streams run
 # away from it; the rocks are laid again round it and its detail waited for.
@@ -7873,6 +7873,9 @@ func _block_field_cam() -> void:
 	var best := -INF
 	var bp := Vector3.INF
 	var gmax := 0.0
+	var n_gate := 0
+	var n_dry := 0
+	var n_slope := 0
 	var xx := wr.position.x + 100.0
 	while xx < wr.end.x - 100.0:
 		var zz := wr.position.y + 100.0
@@ -7880,9 +7883,13 @@ func _block_field_cam() -> void:
 			var p := Vector3(xx, 0, zz)
 			var g: Vector2 = rocks.call("get_block_field_at", p)
 			gmax = maxf(gmax, g.x)
-			if g.x >= bmin and gen.get_height(p) > gen.sea_level + 30.0 and gen.get_sand_depth_at(Vector3(xx, gen.get_height(p), zz)) <= 0.0:
+			if g.x >= bmin:
+				n_gate += 1
+			if g.x >= bmin and gen.get_height(p) > gen.sea_level + 30.0 and gen.get_sand_depth_at(Vector3(xx, gen.get_height(p), zz)) <= 0.05:
+				n_dry += 1
 				var deg := rad_to_deg(atan(_fs_grad(p).length()))
 				if deg >= dmin and deg <= dmax:
+					n_slope += 1
 					var lo := 1.0
 					var stripe := g.y
 					for k in 8:
@@ -7890,7 +7897,7 @@ func _block_field_cam() -> void:
 						var gq: Vector2 = rocks.call("get_block_field_at", q)
 						lo = minf(lo, gq.x)
 						stripe += gq.y
-					if lo >= bmin * 0.75:
+					if lo >= bmin * float(args.get("bf-ring", "0.5")):
 						var score := lo + 0.05 * stripe
 						if score > best:
 							best = score
@@ -7898,7 +7905,7 @@ func _block_field_cam() -> void:
 			zz += 16.0
 		xx += 16.0
 	if bp == Vector3.INF:
-		_log("block field: none found (strongest gate %.2f, needs %.2f on %.0f..%.0f deg)" % [gmax, bmin, dmin, dmax])
+		_log("block field: none found (strongest gate %.2f; %d points over %.2f, %d of them dry and above the sea, %d on %.0f..%.0f deg)" % [gmax, n_gate, bmin, n_dry, n_slope, dmin, dmax])
 		return
 	var gr := _fs_grad(bp)
 	var down := Vector3(-gr.x, 0, -gr.y).normalized()
