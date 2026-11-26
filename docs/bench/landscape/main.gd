@@ -45,7 +45,7 @@ extends Node3D
 #   --prints=0            no GroundSurface3D (footprints) node
 #   --layout=desert       the range's peaks behind a wide low plain to the sea, with a sand sea over the plain
 #                         (--sand-sea defaults to it; Namib-like: the dunes run down to the beach)
-#   --buggy=x,z[,deg]|beach the offroad buggy from art/ (fetch_art.sh); --buggy-drive=throttle,s[,steer], --buggy-grains, --buggy-dust,
+#   --buggy=x,z[,deg]|beach|meadow the offroad buggy from art/ (fetch_art.sh); --buggy-drive=throttle,s[,steer], --buggy-grains, --buggy-dust,
 #                         --buggy-cam=dist,height[,side], --buggy-sun-cam=dist,height,off, --buggy-hold, --buggy-flow
 #   --snow-stats          after the winter bake: snow depth by slope and height, and the deepest gentle spots; quits
 #   --layout=range|valley range: the peaks to the sea (default); valley: a cirque with a high lake (--lake-x/z,
@@ -8550,7 +8550,14 @@ func _place_buggy() -> void:
 			if hh > float(band[0]) and hh < float(band[1]):
 				bz = zz
 				break
+	elif bp[0] == "meadow":
+		# --buggy=meadow[,,deg]: in the clearing at --treeline-x (300), --buggy-meadow-out m (40) out from its forest edge.
+		bx = float(args.get("treeline-x", "300"))
+		bz = _meadow_edge(bx) + float(args.get("buggy-meadow-out", "40"))
 	var car := (load(path) as PackedScene).instantiate() as Node3D
+	# its tyres press the grass (GrassField3D trample reads the body's real shapes); --buggy-trample=0 for none
+	if args.get("buggy-trample", "1") != "0":
+		car.add_to_group("grass_trample")
 	car.position = Vector3(bx, height_at(bx, bz) + 3.0, bz) # held clear of the ground until the ray places it
 	car.rotation.y = deg_to_rad(float(bp[2])) if bp.size() > 2 else 0.0
 	car.set("can_sleep", false) # a resting vehicle asleep ignores the throttle
