@@ -73,7 +73,7 @@ class StaticBody3D;
 // river stones carry the rock of their headwaters. Each layer streams in square cells round the follow target (or
 // the camera) out to its radius; instances share one mesh per shape (MultiMesh), so one acceleration structure per
 // shape serves every stone of it.
-class RockField3D : public Node3D, public WorldCoverProvider, public WorldRecessProvider, public WorldFrostSortedProvider {
+class RockField3D : public Node3D, public WorldCoverProvider, public WorldRecessProvider, public WorldFrostSortedProvider, public WorldCavesProvider {
 	GDCLASS(RockField3D, Node3D);
 
 public:
@@ -358,6 +358,15 @@ private:
 	double varnish_clock = 0.0;
 	float _varnish_from_climate() const;
 	void _update_varnish(bool p_force);
+	// Karst sinks and springs (WorldCaves; docs/ideas/rocks.md, "Stream sinks and springs"): laid on first ask from
+	// the generator's raw river network and the field's rock types, dropped with the generator's result.
+	bool karst = true;
+	mutable Mutex karst_lock;
+	mutable bool karst_ready = false;
+	mutable LocalVector<WorldSwallet> karst_sinks;
+	mutable LocalVector<WorldResurgence> karst_springs;
+	void _prepare_karst() const;
+	void _karst_reset(bool p_notify);
 	bool block_fields = true; // frost-shattered block fields (felsenmeer) on cold, gentle, thin-soiled ground above the tree line
 	bool runoff_gravel = true; // a coarse lag in the terrain's rill and gully floors, fine grains on their fans
 	bool snow_burial = true; // stones under the snowpack are left out of the ground detail
@@ -943,6 +952,16 @@ public:
 	}
 	bool is_desert_varnish() const { return desert_varnish; }
 	float get_varnish_amount() const { return varnish_amount; }
+	void set_karst(bool p_enabled) {
+		if (karst == p_enabled) {
+			return;
+		}
+		karst = p_enabled;
+		_karst_reset(true);
+	}
+	bool is_karst() const { return karst; }
+	void contract_swallets(const Rect2 &p_rect, LocalVector<WorldSwallet> &r_out) const override;
+	void contract_resurgences(const Rect2 &p_rect, LocalVector<WorldResurgence> &r_out) const override;
 	void set_block_fields(bool p_enabled) {
 		if (block_fields == p_enabled) {
 			return;

@@ -87,6 +87,8 @@ extends Node3D
 #   --only-layer          with --world: only the view's layer is placed
 #   --no-far-thinning     with --world: RockField3D.far_thinning off (each layer whole to its radius, then a cut)
 #   --save-far-cover=p    with --world: save the far cover map (32 m texels to 4 km) and count its stony texels
+#   --karst-report        with --world: RockField3D.karst's stream sinks and springs (WorldCaves) and the rivers laid
+#                         with them; --no-karst off (the before frame)
 #   --frost[=C]           with --world: a cold, wet climate (mean annual air C, -4) so the ground sorts into stone
 #                         circles and stripes (RockField3D.frost_sorting); --no-frost for the before frame;
 #                         --block-spot[=stream] the nearest block field (flat) or block stream (8 to 18 degrees);
@@ -899,6 +901,31 @@ func _world() -> void:
 		else:
 			spot = found_b
 			print("block spot ", spot, " (", tried_b, " points of full block field)")
+	if args.has("karst-report"):
+		# --karst-report (with --world): RockField3D's sinks and springs through WorldCaves, each sink's spring lower
+		# down, and the rivers the generator lays with them (ends at a sink, spring-fed heads).
+		var wc: WorldCaves = WorldContracts.get_caves()
+		var all := Rect2(-2000, -2000, 4000, 4000)
+		var sws: Array = wc.get_swallets(all)
+		var rss: Array = wc.get_resurgences(all)
+		var by_id := {}
+		for r in rss:
+			by_id[int(r["id"])] = r
+		var lower := 0
+		for w in sws:
+			var r = by_id.get(int(w["resurgence"]), null)
+			var drop := float(w["position"].y - r["position"].y) if r != null else NAN
+			if r != null and drop > 0.0:
+				lower += 1
+			print("  sink %s capacity %.2f m3/s -> spring %s, %.0f m lower, lag %.1f days" % [w["position"], float(w["capacity"]), r["position"] if r != null else "none", drop, float(w["lag_days"])])
+		var ends := 0
+		var fed := 0
+		for rv in gen.get_rivers(rocks.river_min_area):
+			if str(rv.get("ends_in", "")) == "swallet":
+				ends += 1
+			if int(rv.get("resurgence", -1)) >= 0:
+				fed += 1
+		print("karst: %d sinks, %d springs, %d springs lower than their sink; rivers: %d end at a sink, %d spring-fed" % [sws.size(), rss.size(), lower, ends, fed])
 	if args.has("frost-contract"):
 		# --frost-contract (with --frost): WorldGround.frost_sorted_at against RockField3D.get_frost_at over the world
 		# every 8 m and a 16 m square every 0.5 m round the first sorting point, on the main thread and from a
@@ -1365,6 +1392,7 @@ func _world() -> void:
 		rocks.desert_varnish = not args.has("no-varnish") # --no-varnish: dry-climate stones without their varnish (a before frame)
 		if args.has("rain-climate"):
 			print("varnish: %.2f (precipitation factor at the field %.2f)" % [rocks.get_varnish_amount(), WorldContracts.climate_precipitation_factor_at(rocks.global_position)])
+		rocks.karst = not args.has("no-karst") # --no-karst: limestone streams keep running over the karst (the before frame)
 		rocks.block_fields = not args.has("no-block-fields") # --no-block-fields: the cold plateaus without their blocks (a before frame)
 		rocks.runoff_gravel = not args.has("no-runoff-gravel") # --no-runoff-gravel: the rills and gullies without their lag (a before frame)
 		rocks.rain_pedestals = not args.has("no-rain-pedestals") # --no-rain-pedestals: bare soil without its stones and pedestals (a before frame)

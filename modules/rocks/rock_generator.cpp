@@ -3491,10 +3491,10 @@ void fragment() {
 			float curtain = steep_v * smoothstep(0.12, 0.45, flow_v) * smoothstep(0.25, 0.5, rk_fbm3(vec3(mp.x * 6.0, mp.y * 0.8, mp.z * 6.0) + 19.0));
 			float top_v = smoothstep(0.0, 0.7, wn.y);
 			// Thickest on the tops and in the curtains; a thinner brown film over the rest of an old face.
-			float black = clamp(0.35 + 0.65 * top_v + 0.9 * curtain + 0.3 * (n_v - 0.5), 0.0, 1.0);
+			float black = clamp(0.6 + 0.4 * top_v + 0.9 * curtain + 0.3 * (n_v - 0.5), 0.0, 1.0);
 			// The iron-rich bottoms: faces turned down and the band near the soil (Dorn 2009: orange on the undersides).
 			float sc_v = max(v_scale, 0.1);
-			float bottom = clamp(smoothstep(0.1, -0.5, wn.y) + (1.0 - smoothstep(0.05, 0.35 * sc_v + 0.05, above_v)), 0.0, 1.0);
+			float bottom = clamp(smoothstep(0.0, -0.6, wn.y) + (1.0 - smoothstep(0.03, 0.1 + 0.06 * sc_v, above_v)), 0.0, 1.0);
 			vec3 mn = vec3(0.026, 0.019, 0.013) * (0.8 + 0.4 * n_v);
 			vec3 fe = vec3(0.16, 0.07, 0.026) * (0.85 + 0.3 * n_v);
 			col = mix(col, fe, amount * 0.7 * bottom);

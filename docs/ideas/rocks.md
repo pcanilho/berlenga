@@ -1631,3 +1631,16 @@ acids etch varnish). Not on pieces of the terrain's own wall (cliff blocks, pill
 has no varnish, so it stays matched; varnish curtains on terrain cliffs belong to the terrain material. Bench:
 `--rock=granite,glacial --varnish=1` (one stone), `--world --rain-climate=150 --view=tor --dist=7` and
 `--no-varnish` for the world's before frame.
+
+## Stream sinks and springs, built (26 Nov)
+`karst` (on). RockField3D answers WorldCaves (terrain's contract, dd8e6009) from the generator's raw river network
+(`get_rivers(area, false)`) and its own rock types (`_type_at`: limestone, or the soft strata when soft_rock_type is
+limestone). A swallet where a stream first runs onto limestone after two points off it (an allogenic sink at the
+contact; Ford and Williams 2007, ch. 5), capacity 0.6 to 1.8 times its mean flow (it sinks whole in the dry months,
+floods run on down the blind valley), not on rivers over 20 m3/s, the shore or the map's edge. Its resurgence lower
+down the same valley: where the river leaves the limestone (a contact spring), else 1.2 km on or at the river's end,
+at least 8 m lower and 150 m on, on the valley wall 0.5 to 12 m above the bed (the water table), facing the channel;
+base flow 0.02 to 0.08 m3/s; lag at 1.7 km a day (Worthington 1991). karst_changed on a new ground or a change of
+rock types, seed or river area. The river layer's stones follow the raw network, so a blind valley keeps its
+boulder bed. Bench: `--world --world-size=2048 --karst-report` (2 sinks, 2 springs lower, 2 rivers ending at a sink,
+1 spring-fed), `--no-karst`. Not yet: tufa at the springs, a sink's swallow hole in the bed.
