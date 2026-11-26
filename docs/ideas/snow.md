@@ -2189,6 +2189,19 @@ layers back and leaves hard ones standing, by hand hardness (F, 4F, 1F, P, K). T
 back by its hardness (fist new snow and hoar furthest, a crust standing proud), draws the step at each boundary as
 a lit lip or an overhang's shadow line (which reads in shade too), and keeps only faint tool marks.
 
+Off-grid walls, round 3 (26 Nov, after ground's full-texel print edge e453fcf9): a trench turned 30 degrees off the
+grid still drew teeth along its foot and lip and spikes in path tracing. The field was straight (wobble 0.1 mm);
+the mesh was not: each row of vertices met the 3 cm wall at another offset, so the triangles from top to foot leaned
+alternately. Vertices near a cut's edge now move onto it (feature-aligned, as dual contouring places a vertex on the
+feature; Ju et al. 2002): the edge is found along the step's gradient by bisection to the mid level of the plateaus
+two vertex steps either side, the vertex goes a texel onto its own side and takes that plateau's level, so the lip
+and the foot are two straight lines. Walls shade by the field's step over two vertex steps (one normal along the
+whole wall) in the wall's own tangent frame (the normal map's hemisphere is the geometry's, and a wall triangle's
+vertex normals are the top's and the floor's). Under the path tracer the hit re-runs vertex() on the rest pose for
+its varyings, which now moves points, so the fragment reads the hit itself (VERTEX) rather than w_pos, and vertex()
+does not move points there. Path traced at 30 degrees: straight lip, foot and shadow line, bands intact. Raster keeps
+faint vertical panels on a sunlit off-grid wall (specular and the sun's shadow on the triangles); open.
+
 ## Next round (proposed 19 Nov 2026, round 3): powder cloud, triggers, sharper flow
 
 **Triggers from people and vehicles.**

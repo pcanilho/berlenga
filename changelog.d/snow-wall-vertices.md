@@ -1,0 +1,1 @@
+- Snow: cut walls off the deformation grid keep a straight lip and foot (vertices aligned to the cut's edge), and path-traced snow shades the hit point itself.

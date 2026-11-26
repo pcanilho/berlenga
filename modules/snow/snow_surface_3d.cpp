@@ -483,15 +483,74 @@ vec2 snow_ripple_grad(vec2 p) {
 	return micro_relief * (g_strength * o + strength * g_o);
 }
 
+// The print field's height step (rim less dent) at p.
+float snow_cut(vec2 p) {
+	vec2 d = snow_deform(p);
+	return d.y - d.x;
+}
+
 void vertex() {
 	vec2 p = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xz;
 	vec2 duv = (p - deform_rect.xy) / max(deform_rect.zw, vec2(1e-4));
+	// Feature-aligned vertices at a cut's edge (as dual contouring puts a vertex on the feature, Ju et al. 2002):
+	// a wall a texel or two wide crosses the regular grid at any angle, and each row of vertices met it at another
+	// offset, so the triangles from its top to its foot leaned alternately, a row of teeth along an off-grid wall
+	// and its shadow. Where the field steps by over 5 cm within a vertex step, the edge is found along the step's
+	// gradient (bisection to its mid height) and the vertex moves to it, a texel onto its own side: the top's
+	// vertices line the lip, the floor's the foot, straight whatever the wall's heading.
+	bool snapped = false;
+	float snap_level = 0.0;
+	// Not under the path tracer: its hits re-run vertex() for the varyings only, on the rest pose, and the geometry
+	// it traces is the raster's, moved already.
+	if (!IN_PATH_TRACER && deform_rect.z > 0.0 && max(abs(duv.x - 0.5), abs(duv.y - 0.5)) < 0.5) {
+		float s = vertex_step;
+		vec2 g = vec2(snow_cut(p + vec2(s, 0.0)) - snow_cut(p - vec2(s, 0.0)), snow_cut(p + vec2(0.0, s)) - snow_cut(p - vec2(0.0, s)));
+		float gl = length(g);
+		if (gl > 0.1) {
+			vec2 dir = g / gl; // toward the top
+			// The levels either side from two steps out, on the floor and the top, so every vertex along the wall
+			// looks for the same mid height and they line up.
+			float fa = snow_cut(p - dir * 2.0 * s);
+			float fb = snow_cut(p + dir * 2.0 * s);
+			if (fb - fa > 0.05) {
+				float mid = 0.5 * (fa + fb);
+				float lo = -2.0 * s;
+				float hi = 2.0 * s;
+				for (int k = 0; k < 8; k++) {
+					float m = 0.5 * (lo + hi);
+					if (snow_cut(p + dir * m) < mid) {
+						lo = m;
+					} else {
+						hi = m;
+					}
+				}
+				float te = 0.5 * (lo + hi);
+				// Only the vertices nearest the edge (within half a cell's diagonal) move, all onto the same two lines,
+				// so none passes another and no triangle folds over.
+				if (abs(te) <= 0.7071 * s) {
+					float side = snow_cut(p) >= mid ? 1.0 : -1.0;
+					snap_level = side > 0.0 ? fb : fa;
+					snapped = true;
+					vec2 shift = dir * (te + side * min(detail_step, 0.5 * s));
+					p += shift;
+					VERTEX.xz += shift; // the surface follows its target unturned: world and local axes agree
+					duv = (p - deform_rect.xy) / max(deform_rect.zw, vec2(1e-4));
+				}
+			}
+		}
+	}
 	// The difference step eases from the field's fine one to the coarse one over the field's outer tenth, so the
 	// normals (and the light) carry no seam at the deformation field's edge.
 	float edge = max(abs(duv.x - 0.5), abs(duv.y - 0.5)) * 2.0;
 	float e = deform_rect.z > 0.0 ? mix(max(detail_step * 2.0, vertex_step), coarse_step, smoothstep(0.8, 1.0, edge)) : coarse_step;
 	vec3 hd = snow_height_diff(p, e, true);
 	float h = hd.x;
+	if (snapped) {
+		// On the lip or at the foot exactly: the step's level there, not the edge's slope a blurred sample half catches
+		// (which set every lip vertex at its own height, pleating the wall).
+		vec2 dv = snow_deform_vertex(p);
+		h += snap_level - (dv.y - dv.x);
+	}
 	float hx = hd.y;
 	float hz = hd.z;
 	vec3 n = normalize(vec3(-hx, 2.0 * e, -hz));
@@ -508,7 +567,10 @@ void vertex() {
 }
 
 void fragment() {
-	vec2 p = w_pos.xz;
+	// The point drawn: under the path tracer the hit, where vertex() is re-run only for the varyings on the rest
+	// pose (and moves the point as it moved the vertices), so w_pos is not the hit; in raster the same as w_pos.
+	vec3 w_hit = (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz;
+	vec2 p = w_hit.xz;
 	vec4 pack = snow_pack(p);
 	vec2 dr = snow_deform(p);
 	float compact = clamp(dr.x / max(pack.r, 0.01), 0.0, 1.0);
@@ -520,7 +582,7 @@ void fragment() {
 	// pack is deep and the drawn triangle stands more than 10 cm over the ground: that is a cut's wall, whose triangle
 	// stands high while the field at the pixel already reads the cut's floor, and testing the field alone cut the wall
 	// away in a sawtooth of holes.
-	if (hd.x - snow_ground(p) < 0.5 * min_depth && (pack.r < 0.3 || w_pos.y - snow_ground(p) < max(0.5 * min_depth, 0.1))) {
+	if (hd.x - snow_ground(p) < 0.5 * min_depth && (pack.r < 0.3 || w_hit.y - snow_ground(p) < max(0.5 * min_depth, 0.1))) {
 		discard;
 	}
 	float hx = hd.y;
@@ -529,7 +591,35 @@ void fragment() {
 	hx += rg.x;
 	hz += rg.y;
 	vec3 nf = normalize(vec3(-hx, 2.0 * e, -hz));
-	vec3 tn = vec3(dot(nf, normalize(w_t)), dot(nf, normalize(w_b)), dot(nf, normalize(w_n)));
+	// A cut's wall is drawn by triangles a vertex step across, while the field at the pixel turns from top to wall
+	// to floor within a texel or two: off the grid a wall triangle's pixels read the flat top or floor beside it and
+	// were lit as such, a row of bright teeth along the wall's foot and lip, and each triangle's face leans a little
+	// its own way (pleats). Where the field steps steeply within two vertex steps, the shading takes the wall's own
+	// normal from the field's step over that span: the same all along the wall, as the geometry stands.
+	// The tangent frame the normal map is read in (world): the vertices' own, or on a wall the wall's (below).
+	vec3 fb_t = normalize(w_t);
+	vec3 fb_b = normalize(w_b);
+	vec3 fb_n = normalize(w_n);
+	float tri_wall = 0.0;
+	if (deform_rect.z > 0.0 && (fb_n.y < 0.95 || nf.y < 0.95 || dr.x > 0.05)) {
+		float ew = 2.0 * vertex_step;
+		vec3 hw = snow_height_diff(p, ew, true);
+		vec3 nw = normalize(vec3(-hw.y, 2.0 * ew, -hw.z));
+		tri_wall = smoothstep(0.35, 0.6, 1.0 - nw.y);
+		nf = normalize(mix(nf, nw, tri_wall));
+		// The normal map is read about the geometry's normal and keeps only its hemisphere (z rebuilt from x and y): a
+		// wall triangle's vertex normals are the flat top's and floor's, so the wall's normal lay at the map's
+		// horizon and came out bent a different way on every triangle. On a wall the frame is the wall's own.
+		if (tri_wall > 0.99) {
+			fb_n = nw;
+			fb_t = normalize(cross(vec3(0.0, 1.0, 0.0), fb_n) + vec3(1e-6, 0.0, 0.0));
+			fb_b = cross(fb_n, fb_t);
+			NORMAL = normalize((VIEW_MATRIX * vec4(fb_n, 0.0)).xyz);
+			TANGENT = normalize((VIEW_MATRIX * vec4(fb_t, 0.0)).xyz);
+			BINORMAL = normalize((VIEW_MATRIX * vec4(fb_b, 0.0)).xyz);
+		}
+	}
+	vec3 tn = vec3(dot(nf, fb_t), dot(nf, fb_b), dot(nf, fb_n));
 	// The wet channel: liquid saturation to 1, then 1 + the share of the depth that is slush (SnowCover3D).
 	float wet = min(pack.b, 1.0);
 	// Slush whose water table nears the surface: water fills the pores between the grains, so light goes deep
@@ -554,19 +644,19 @@ void fragment() {
 	// glazed snow has lost that grain, and walls keep their strata's own.
 	if (snow_grain_params.w > 0.5) {
 		float g_pix = 2.0 / (abs(PROJECTION_MATRIX[1][1]) * VIEWPORT_SIZE.y);
-		float g_fp = (PROJECTION_MATRIX[3][3] != 0.0 ? g_pix : distance(w_pos, INV_VIEW_MATRIX[3].xyz) * g_pix) * snow_grain_params.x;
+		float g_fp = (PROJECTION_MATRIX[3][3] != 0.0 ? g_pix : distance(w_hit, INV_VIEW_MATRIX[3].xyz) * g_pix) * snow_grain_params.x;
 		mat2 g_rot = mat2(vec2(0.799, 0.602), vec2(-0.602, 0.799));
 		vec2 g_u0 = p * snow_grain_params.x;
 		vec2 g_u1 = g_rot * g_u0 + vec2(0.37, 0.61);
 		vec2 g_dx = vec2(g_fp, 0.0);
-		vec2 g_dy = vec2(0.0, g_fp / max(abs(dot(normalize(w_pos - INV_VIEW_MATRIX[3].xyz), nf)), 0.2));
+		vec2 g_dy = vec2(0.0, g_fp / max(abs(dot(normalize(w_hit - INV_VIEW_MATRIX[3].xyz), nf)), 0.2));
 		float g_k = smoothstep(0.3, 0.7, snow_vnoise(vec3(p / 3.0, 7.0)));
 		vec2 g_n0 = textureGrad(snow_grain_normal, g_u0, g_dx, g_dy).xy * 2.0 - 1.0;
 		vec2 g_n1 = transpose(g_rot) * (textureGrad(snow_grain_normal, g_u1, g_rot * g_dx, g_rot * g_dy).xy * 2.0 - 1.0);
 		vec2 g_n = mix(g_n0, g_n1, g_k) * snow_grain_params.y;
 		float g_keep = (1.0 - compact) * (1.0 - slush) * (1.0 - pool) * (1.0 - polish) * smoothstep(0.35, 0.65, nf.y);
 		nf = normalize(nf + vec3(g_n.x, 0.0, g_n.y) * g_keep);
-		tn = vec3(dot(nf, normalize(w_t)), dot(nf, normalize(w_b)), dot(nf, normalize(w_n)));
+		tn = vec3(dot(nf, fb_t), dot(nf, fb_b), dot(nf, fb_n));
 		if (snow_grain_params.z > 0.0) {
 			float g_r = mix(textureGrad(snow_grain_roughness, g_u0, g_dx, g_dy).g, textureGrad(snow_grain_roughness, g_u1, g_rot * g_dx, g_rot * g_dy).g, g_k) / snow_grain_params.z;
 			ROUGHNESS = clamp(ROUGHNESS * mix(1.0, g_r, g_keep * (1.0 - wet)), 0.02, 1.0);
@@ -582,7 +672,7 @@ void fragment() {
 	float strata_wall = has_strata ? smoothstep(0.35, 0.75, 1.0 - nf.y) : 0.0;
 	if (strata_wall > 0.0) {
 		vec2 suv = (p - snow_rect.xy) / max(snow_rect.zw, vec2(1e-4));
-		float d = snow_ground(p) + pack.r - w_pos.y;
+		float d = snow_ground(p) + pack.r - w_hit.y;
 		d += 0.006 * (snow_vnoise(vec3(p * 9.0, 0.0)) - 0.5) + 0.003 * (snow_vnoise(vec3(p * 31.0, 3.0)) - 0.5);
 		if (snow_inside(suv) && d > 0.02) {
 			vec4 st = textureLod(strata_tex, suv, 0.0);
@@ -650,10 +740,10 @@ void fragment() {
 				// size; the path tracer averages them itself over its jittered samples, so it keeps them.
 				float grain_seen = 1.0;
 				if (!IN_PATH_TRACER) {
-					float foot = (PROJECTION_MATRIX[3][3] != 0.0 ? 1.0 : distance(w_pos, INV_VIEW_MATRIX[3].xyz)) * 2.0 / (abs(PROJECTION_MATRIX[1][1]) * VIEWPORT_SIZE.y);
+					float foot = (PROJECTION_MATRIX[3][3] != 0.0 ? 1.0 : distance(w_hit, INV_VIEW_MATRIX[3].xyz)) * 2.0 / (abs(PROJECTION_MATRIX[1][1]) * VIEWPORT_SIZE.y);
 					grain_seen = clamp(0.7 * grain / max(foot, 1e-6) - 0.75, 0.0, 1.0);
 				}
-				vec3 q = w_pos / grain;
+				vec3 q = w_hit / grain;
 				vec3 e3 = vec3(0.37, 0.0, 0.0);
 				float n0 = snow_vnoise(q) + 0.5 * snow_vnoise(q * 2.3 + 7.1);
 				float nx = snow_vnoise(q + e3.xyy) + 0.5 * snow_vnoise((q + e3.xyy) * 2.3 + 7.1);
@@ -662,10 +752,10 @@ void fragment() {
 				vec3 gn = vec3(nx - n0, ny - n0, nz - n0) / 0.37;
 				if (kind == 5.0) {
 					// Depth hoar's cups and prisms: faceted, not rounded; the grain cell's own tilt instead of a smooth bump.
-					vec3 fc = floor(w_pos / grain) + 5.0;
+					vec3 fc = floor(w_hit / grain) + 5.0;
 					gn = mix(gn, vec3(snow_vhash(fc) - 0.5, snow_vhash(fc + 1.7) - 0.5, snow_vhash(fc + 3.1) - 0.5) * 3.0, 0.6);
 				}
-				vec3 tq = vec3(w_pos.x * 7.0, w_pos.y * 0.6, w_pos.z * 7.0);
+				vec3 tq = vec3(w_hit.x * 7.0, w_hit.y * 0.6, w_hit.z * 7.0);
 				float tm0 = snow_vnoise(tq);
 				vec3 tg = vec3(snow_vnoise(tq + vec3(0.2, 0.0, 0.0)) - tm0, 0.0, snow_vnoise(tq + vec3(0.0, 0.0, 0.2)) - tm0) / 0.2;
 				vec3 pert = gn * bump * grain_seen + tg * 0.03; // a brushed wall keeps only faint marks of the cut
@@ -682,10 +772,10 @@ void fragment() {
 				// the overhang over it, a standing band's top edge is a lit lip.
 				shade *= 1.0 + mix(0.12, -0.4, step(br_step, 0.0)) * clamp(abs(br_step) / 0.006, 0.0, 1.0) * br_w;
 				nf = nb;
-				tn = vec3(dot(nf, normalize(w_t)), dot(nf, normalize(w_b)), dot(nf, normalize(w_n)));
+				tn = vec3(dot(nf, fb_t), dot(nf, fb_b), dot(nf, fb_n));
 				// Grains also break the colour up: each grain cell its own brightness (crystal faces turned to the
 				// light or into the shade), loose coarse grains most, the pores between them darker.
-				float speck = snow_vhash(floor(w_pos / (grain * 0.7)) + 11.0);
+				float speck = snow_vhash(floor(w_hit / (grain * 0.7)) + 11.0);
 				float loose = kind == 5.0 ? 1.0 : (kind == 2.0 ? 0.45 : 0.25);
 				float pores = mix(1.0, (0.86 + 0.14 * n0 / 1.5) * mix(0.82, 1.12, speck), clamp(bump * 2.0, 0.0, 1.0) * loose * grain_seen);
 				ALBEDO = mix(ALBEDO, ALBEDO * tint_b * shade * pores, strata_wall);
@@ -702,7 +792,7 @@ void fragment() {
 	// snow's normal (as BaseMaterial3D's snow pass). Packed snow keeps fewer whole grains; melt water smooths
 	// them away.
 	float pix = 2.0 / (abs(PROJECTION_MATRIX[1][1]) * VIEWPORT_SIZE.y);
-	float fp = PROJECTION_MATRIX[3][3] != 0.0 ? pix : distance(w_pos, INV_VIEW_MATRIX[3].xyz) * pix;
+	float fp = PROJECTION_MATRIX[3][3] != 0.0 ? pix : distance(w_hit, INV_VIEW_MATRIX[3].xyz) * pix;
 	// Surface hoar (mm) from the cover's catch map alpha (1 + mm / 10, plus 100 under shelter); trodden snow has none left.
 	float hoar = 0.0;
 	if (has_catch) {
@@ -717,11 +807,11 @@ void fragment() {
 		// normal. Trodden snow keeps fewer whole grains, the rest stays rough.
 		float ew = (1.0 - smoothstep(0.05, 0.3, wet)) * (1.0 - 0.7 * compact);
 		if (ew > 0.0) {
-			SPECULAR_NORMAL = normalize((VIEW_MATRIX * vec4(snow_grain_facet(w_pos, nf, hoar), 0.0)).xyz);
+			SPECULAR_NORMAL = normalize((VIEW_MATRIX * vec4(snow_grain_facet(w_hit, nf, hoar), 0.0)).xyz);
 			ROUGHNESS = mix(ROUGHNESS, 0.22, ew);
 		}
 	} else {
-		vec4 g = snow_glint(w_pos, nf, fp, hoar);
+		vec4 g = snow_glint(w_hit, nf, fp, hoar);
 		float gw = g.w * (1.0 - smoothstep(0.05, 0.3, wet)) * (1.0 - 0.7 * compact);
 		vec3 f = normalize((VIEW_MATRIX * vec4(g.xyz, 0.0)).xyz);
 		mat3 tbf = mat3(TANGENT, BINORMAL, f);
