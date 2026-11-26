@@ -7636,8 +7636,8 @@ func _snow_strata() -> void:
 	# --snow-strata: a dug trench in a real pack (snow strata walls, a3d61431): the highest gentle snow at least
 	# --strata-min (0.8) m deep, its season's pack topped by a week's history (a crust on a storm's snow, buried
 	# surface hoar, a gale's wind slab and a fresh fall), then a trench --strata-w (1.2) m wide pressed to the ground,
-	# running along the sun's bearing so the low light rakes the far wall. The camera stands --strata-dist (1.5) m from
-	# that wall at --strata-eye (1.7) m over the snow, looking down into it.
+	# running along the sun's bearing so the low light rakes the far wall. The camera stands in the trench facing the
+	# far wall (--strata-cam=over: --strata-dist (1.5) m from that wall at --strata-eye (1.7) m over the snow).
 	# A pit study: the season's avalanches and falling roof slabs stay off (--strata-avalanches=1 keeps them), so the
 	# deepest gentle snow is not a debris cone and no powder cloud hangs in the frame.
 	if args.get("strata-avalanches", "0") != "1":
@@ -7741,9 +7741,21 @@ func _snow_strata() -> void:
 				_log("strata wall %+d %+.2f: %s" % [int(side), off, " ".join(vals)])
 	var top := g + snow.get_depth_at(best + nrm * 3.0)
 	var wall := best - nrm * (w * 0.5)
-	var cp := wall + nrm * float(args.get("strata-dist", "1.5"))
-	c3.global_position = Vector3(cp.x, top + float(args.get("strata-eye", "1.7")), cp.z)
-	c3.look_at(Vector3(wall.x, g + 0.5 * (top - g), wall.z) + sf * 0.8)
+	if args.get("strata-cam", "in") == "in":
+		# Stood in the trench against the near wall, as a pit wall is read and photographed: --strata-dist (1.1) m
+		# from the far wall, the eye --strata-eye (0.7) m under the snow's top (at least 1 m over the trench floor),
+		# looking square at the wall's top metre and a half, where the week's thin layers lie, a little along it so
+		# the raking light shows their relief. --strata-cam=over keeps the view from above the trench.
+		var floor_y := g + snow.get_depth_at(best) - float(surf.call("get_dent_at", best))
+		var cp := wall + nrm * float(args.get("strata-dist", "1.1"))
+		var eye_y := minf(maxf(top - float(args.get("strata-eye", "0.7")), floor_y + 1.0), top + 0.3)
+		c3.global_position = Vector3(cp.x, eye_y, cp.z)
+		c3.look_at(Vector3(wall.x, maxf(top - 0.75, floor_y + 0.3), wall.z) + sf * 0.4)
+		_log("snow strata: trench floor %.2f m, wall %.2f m high" % [floor_y, top - floor_y])
+	else:
+		var cp := wall + nrm * float(args.get("strata-dist", "1.5"))
+		c3.global_position = Vector3(cp.x, top + float(args.get("strata-eye", "1.7")), cp.z)
+		c3.look_at(Vector3(wall.x, g + 0.5 * (top - g), wall.z) + sf * 0.8)
 	_log("snow strata: %.2f m of snow at %s (%.0f m), trench %.1f m wide along the sun, cam %s" % [top - g, str(best.round()), best.y, w, str(c3.global_position.snapped(Vector3.ONE * 0.1))])
 	for o in [Vector3.ZERO, nrm * 3.0, nrm * 6.0, sf * 4.0]:
 		var q: Vector3 = best + o
