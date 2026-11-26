@@ -169,6 +169,14 @@ class Ground extends Node3D:
 		return bench.height_at(p.x, p.y)
 
 
+
+# A flag that takes an optional number (--haboob or --haboob=7): its value, or p_default when given bare (the
+# parser stores a bare flag as "1", which would read as a value of 1) or empty.
+func _arg_num(p_key: String, p_default: float) -> float:
+	if not args.has(p_key) or String(args[p_key]) == "" or OS.get_cmdline_user_args().has("--" + p_key):
+		return p_default
+	return float(args[p_key])
+
 func _ready() -> void:
 	for a in OS.get_cmdline_user_args():
 		var kv := a.trim_prefix("--").split("=", true, 1)
@@ -534,7 +542,7 @@ func _ready() -> void:
 		dam.set("pond_radius", float(args.get("pond-radius", "30")))
 		add_child(dam)
 		dam.global_position = Vector3(dx, height_at(dx, dz), dz)
-		var dy := float(args["beaver-dam"]) if String(args["beaver-dam"]) != "" else 0.0
+		var dy := _arg_num("beaver-dam", 0.0)
 		if dy > 0.0:
 			dam.set("years_drained", dy)
 			dam.call("breach")
@@ -552,7 +560,7 @@ func _ready() -> void:
 		var sc: Camera3D = get_viewport().get_camera_3d()
 		var sf := -sc.global_basis.z
 		var sf2 := Vector2(sf.x, sf.z).normalized()
-		var skm := float(args["storm-approach"]) if String(args["storm-approach"]) != "" else 17.0
+		var skm := _arg_num("storm-approach", 17.0)
 		var sp := Vector2(sc.global_position.x, sc.global_position.z) + sf2 * skm * 1000.0
 		weather.wind_direction = -sf2
 		if args.has("storm-wind-turn"):
@@ -571,7 +579,7 @@ func _ready() -> void:
 		lf.y = 0.0
 		var lp := lc.global_position + lf.normalized() * float(args.get("lawn-dist", "25"))
 		lp.y = height_at(lp.x, lp.z)
-		var lpress := float(args["deer-lawn"]) if String(args["deer-lawn"]) != "" else 0.9
+		var lpress := _arg_num("deer-lawn", 0.9)
 		WorldContracts.get_stand().add_browse(lp, float(args.get("lawn-radius", "22")), lpress)
 		_log("deer lawn at %s, browse %.2f there" % [str(lp.round()), WorldContracts.get_stand().browse_at(lp)])
 	if args.has("sand-vista") and "sand_sea_rect" in gen:
@@ -594,7 +602,7 @@ func _ready() -> void:
 		var hc: Camera3D = get_viewport().get_camera_3d()
 		var hf := -hc.global_basis.z
 		var hf2 := Vector2(hf.x, hf.z).normalized()
-		var hkm := float(args["haboob"]) if String(args["haboob"]) != "" else 5.0
+		var hkm := _arg_num("haboob", 5.0)
 		var hp := Vector2(hc.global_position.x, hc.global_position.z) + hf2 * hkm * 1000.0
 		weather.air_follows_climate = false
 		weather.temperature = 35.0
@@ -3683,7 +3691,7 @@ func _weather_settings() -> void:
 	if args.has("ice-storm") and "ice_storm_glaze" in weather:
 		# --ice-storm=MM: freezing rain's glaze (WeatherMap3D.ice_storm_glaze, mm floor; trees 441bba54 grow ice shells
 		# and icicles on near trees by its band), the air below freezing (--air-temp, else -3 C).
-		weather.ice_storm_glaze = float(args["ice-storm"]) if String(args["ice-storm"]) != "" else 15.0
+		weather.ice_storm_glaze = _arg_num("ice-storm", 15.0)
 		if not args.has("air-temp"):
 			weather.air_follows_climate = false
 			weather.temperature = -3.0
@@ -4141,7 +4149,7 @@ func _generated_forest(clearing: bool) -> Biome:
 		# (60); --view framing with --lightning-cam (side-lit, --lightning-dist 6 m).
 		var keep_preset = tg.preset
 		tg.preset = TreeGenerator.PRESET_NORWAY_SPRUCE
-		tg.lightning_years = float(args.get("lightning", "0.3")) if String(args["lightning"]) != "" else 0.3
+		tg.lightning_years = _arg_num("lightning", 0.3)
 		var struck: PlantSpecies = tg.make_species(false, 1)
 		tg.lightning_years = -1.0
 		tg.preset = keep_preset
@@ -7286,7 +7294,7 @@ func _stand_trail() -> void:
 		var d := 2.0 + float(i) * 2.0
 		var q := tc.global_position + tf * d + ts * (0.9 * sin(d * 0.12))
 		tpts.append(Vector2(q.x, q.z))
-	var tpass := float(args["stand-trail"]) if String(args["stand-trail"]) != "" else 600.0
+	var tpass := _arg_num("stand-trail", 600.0)
 	WorldContracts.get_stand().set_trails([{"points": tpts, "width": 0.8, "passes": tpass, "kind": "game_trail"}])
 	var rp := tc.global_position + tf * float(args.get("rooting-ahead", "7")) - ts * 2.0
 	rp.y = height_at(rp.x, rp.z)
