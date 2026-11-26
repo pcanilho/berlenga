@@ -2779,6 +2779,8 @@ func _test() -> void:
 				pillar_worst = maxf(pillar_worst, back.y - face)
 				if back.y > face + 0.3 and maxf(absf(p.x), absf(p.z)) < 0.98 * wr.size.x * 0.5:
 					pillar_out += 1 # (inside the world: its last 2% is clamped heightfield)
+					if pillar_out <= 4:
+						print("  pillar back proud at %s: %.2f m (back %s, basis %s)" % [p, back.y - face, back, pb])
 				if back.y > face + 0.1:
 					floating += 1
 					if floating <= 3:

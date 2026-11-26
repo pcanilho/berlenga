@@ -1626,7 +1626,7 @@ none over about 400 mm a year, full under about 180 mm (Dorn 2009: thick dark va
 in semi-arid, washed off and outgrown by lichens where wetter), checked every 2 s. In the rock shader, on old surfaces
 (surface_age, never fresh breaks): manganese-black on the exposed tops and in curtains down the runoff lines of steep
 faces (the mesh's flow routing, COLOR.a, broken along their length), iron orange-brown on the undersides and near the
-soil, a pale ground-line band, a faint sheen. Lichens and moss thin out with it (they need frequent wetting; lichen
+soil, a pale ground-line band, one satin sheen over the crystals. Lichens and moss go with it (they need frequent wetting; lichen
 acids etch varnish). Not on pieces of the terrain's own wall (cliff blocks, pillars, ledges): the terrain material
 has no varnish, so it stays matched; varnish curtains on terrain cliffs belong to the terrain material. Bench:
 `--rock=granite,glacial --varnish=1` (one stone), `--world --rain-climate=150 --view=tor --dist=7` and
