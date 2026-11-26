@@ -88,7 +88,7 @@ extends Node3D
 #   --no-far-thinning     with --world: RockField3D.far_thinning off (each layer whole to its radius, then a cut)
 #   --save-far-cover=p    with --world: save the far cover map (32 m texels to 4 km) and count its stony texels
 #   --karst-report        with --world: RockField3D.karst's stream sinks and springs (WorldCaves) and the rivers laid
-#                         with them; --no-karst off (the before frame)
+#                         with them; --spring-spot[=k] puts the spot below spring k (1 = first; its tufa); --no-karst off
 #   --frost[=C]           with --world: a cold, wet climate (mean annual air C, -4) so the ground sorts into stone
 #                         circles and stripes (RockField3D.frost_sorting); --no-frost for the before frame;
 #                         --block-spot[=stream] the nearest block field (flat) or block stream (8 to 18 degrees);
@@ -179,7 +179,7 @@ class SwellStub extends WorldWater:
 
 
 const TYPES := ["granite", "limestone", "sandstone", "basalt", "slate"]
-const FAMILIES := ["rockfall", "scree", "glacial", "cobble", "pebble", "cliff_block", "corestone", "sea_stack", "sea_arch", "sea_platform", "hoodoo", "pavement", "fin", "pothole", "goblin", "cave_mouth", "ledge"]
+const FAMILIES := ["rockfall", "scree", "glacial", "cobble", "pebble", "cliff_block", "corestone", "sea_stack", "sea_arch", "sea_platform", "hoodoo", "pavement", "fin", "pothole", "goblin", "cave_mouth", "ledge", "cliff_pillar", "tufa"]
 const LAYERS := ["rockfall", "scree", "glacial", "river", "shore", "cliff", "tor", "coast", "landform"]
 var WORLD := 2048.0 # --world-size=m (a smaller world for path traced stills that would not fit the memory)
 
@@ -926,6 +926,12 @@ func _world() -> void:
 			if int(rv.get("resurgence", -1)) >= 0:
 				fed += 1
 		print("karst: %d sinks, %d springs, %d springs lower than their sink; rivers: %d end at a sink, %d spring-fed" % [sws.size(), rss.size(), lower, ends, fed])
+		if args.has("spring-spot") and not rss.is_empty():
+			# --spring-spot[=k]: the view's spot on spring k (1 = first), 2 m down its outfall (the tufa mound and dams).
+			var sp: Dictionary = rss[clampi(int(args["spring-spot"]) - 1, 0, rss.size() - 1)]
+			spot = sp["position"] + Vector3(sp["direction"]) * 2.0
+			spot.y = 0.0
+			print("spring spot ", spot, " facing ", sp["direction"])
 	if args.has("frost-contract"):
 		# --frost-contract (with --frost): WorldGround.frost_sorted_at against RockField3D.get_frost_at over the world
 		# every 8 m and a 16 m square every 0.5 m round the first sorting point, on the main thread and from a
@@ -1418,6 +1424,22 @@ func _world() -> void:
 		if args.has("streaming"):
 			rocks.streaming = true # --streaming: the field streams and thins every frame as in play (stills draw every cell whole)
 		print("rocks: %d cells, %d stones in %d ms (shape libraries %.0f ms, %d library triangles)" % [built, rocks.get_stone_count(), Time.get_ticks_msec() - tb, rocks.get_last_library_msec(), rocks.get_library_triangle_count()])
+		if args.has("karst-report"):
+			# The tufa at each spring: stones standing within 12 m of its mouth (mound and dams), their tops over the ground.
+			var wgt: WorldGround = WorldContracts.get_ground()
+			for r in WorldContracts.get_caves().get_resurgences(Rect2(-2000, -2000, 4000, 4000)):
+				var rp3: Vector3 = r["position"]
+				var st: PackedFloat32Array = wgt.stones_near(Rect2(rp3.x - 12, rp3.z - 12, 24, 24))
+				var n := 0
+				var proud := 0.0
+				var big := 0
+				for i in range(0, st.size(), 7):
+					n += 1
+					proud = maxf(proud, st[i + 3] - st[i + 2])
+					if Vector2(st[i] - rp3.x, st[i + 1] - rp3.z).length() < 2.0:
+						big += 1
+						print("  by the mouth: %.1f, %.1f, ground %.2f, %.2f m proud, %.2f x %.2f m" % [st[i], st[i + 1], st[i + 2], st[i + 3] - st[i + 2], 2.0 * st[i + 4], 2.0 * st[i + 5]])
+				print("spring %d at %s facing %s: %d stones within 12 m (%d within 2 m: the mound), tallest %.2f m proud" % [r["id"], rp3, r["direction"], n, big, proud])
 		if args.has("recess-probe"):
 			# --recess-probe=cx,cz,half,step: over that square, how much of the steep face the cliff kit recesses (WorldGround.recess_at at the unrecessed drawn face).
 			var rp: PackedStringArray = str(args["recess-probe"]).split(",")

@@ -1141,6 +1141,14 @@ public:
 	// this code declares; wc_climate_july(p) the July temperature, 99 with none) and wc_bare_patch(vec3 p, float
 	// share, float footprint_m) the pattern, fading to the share past a footprint of about half a metre.
 	static String climate_bare_shader_code();
+	// GLSL for desert varnish on cliff faces (docs/ideas/terrain-material.md, "Desert varnish on cliffs"), one rule for
+	// every face that shows it: the terrain's cliffs (TerrainMaterial3D) and the cliff kit's wall pieces (RockField3D),
+	// so a piece and the wall round it carry the same film, curtains and iron band. Needs climate_bare_shader_code
+	// (wc_vn) before it, and the globals terrain_cliff_rect and terrain_cliff_foot_map declared by the includer.
+	// wc_drip(p, n, t, fp, seed, C, wmin, wmax): crisp drip stripes down a face (0..1 cover); wc_cliff_above_foot(p):
+	// metres over the wall's foot (1e3 off the map); wc_cliff_varnish(p, n, fp, k, shade, amount, above_foot): rgb the
+	// albedo factor, a the curtains' share (for the sheen).
+	static String cliff_varnish_shader_code();
 	// Terracettes: on steep grazed hillsides stock walk the slope across along the contours, and their paths settle into
 	// regularly spaced steps, flat treads they walk and risers they graze between (Seleb, Chatterjee and Bhamla 2025,
 	// a grazing model: bands parallel to the contours, regular by 40 degrees, about 3.4 m apart). One layout for the

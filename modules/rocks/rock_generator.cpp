@@ -31,6 +31,7 @@
 #include "rock_generator.h"
 
 #include "modules/terrain_deform/terrain_generator_3d.h"
+#include "modules/world/world_contracts.h"
 
 #include "core/math/random_pcg.h"
 #include "core/object/class_db.h"
@@ -82,7 +83,7 @@ String RockGenerator::get_rock_type_name(RockType p_type) {
 }
 
 String RockGenerator::get_family_name(Family p_family) {
-	static const char *names[FAMILY_MAX] = { "rockfall", "scree", "glacial", "cobble", "pebble", "cliff_block", "corestone", "sea_stack", "sea_arch", "sea_platform", "hoodoo", "pavement", "fin", "pothole", "goblin", "cave_mouth", "ledge", "cliff_pillar" };
+	static const char *names[FAMILY_MAX] = { "rockfall", "scree", "glacial", "cobble", "pebble", "cliff_block", "corestone", "sea_stack", "sea_arch", "sea_platform", "hoodoo", "pavement", "fin", "pothole", "goblin", "cave_mouth", "ledge", "cliff_pillar", "tufa" };
 	return names[CLAMP(int(p_family), 0, int(FAMILY_MAX) - 1)];
 }
 
@@ -95,7 +96,7 @@ void RockGenerator::set_family(Family p_family) {
 }
 
 int RockGenerator::get_base_resolution() const {
-	static const int res[FAMILY_MAX] = { 112, 88, 96, 56, 48, 112, 104, 256, 224, 220, 200, 240, 224, 220, 128, 176, 192, 192 };
+	static const int res[FAMILY_MAX] = { 112, 88, 96, 56, 48, 112, 104, 256, 224, 220, 200, 240, 224, 220, 128, 176, 192, 192, 72 };
 	return resolution > 0 ? resolution : res[family];
 }
 
@@ -122,7 +123,7 @@ real_t RockGenerator::get_marks_metres_per_unit() const {
 }
 
 real_t RockGenerator::get_family_metres_per_unit(Family p_family) {
-	static const real_t mpu[FAMILY_MAX] = { 0.65, 0.16, 0.85, 0.11, 0.035, 0.65, 1.0, 3.5, 5.0, 5.0, 2.5, 4.0, 5.0, 2.5, 1.2, 5.0, 2.0, 2.5 };
+	static const real_t mpu[FAMILY_MAX] = { 0.65, 0.16, 0.85, 0.11, 0.035, 0.65, 1.0, 3.5, 5.0, 5.0, 2.5, 4.0, 5.0, 2.5, 1.2, 5.0, 2.0, 2.5, 0.35 };
 	return mpu[CLAMP(int(p_family), 0, int(FAMILY_MAX) - 1)];
 }
 
@@ -153,7 +154,7 @@ real_t RockGenerator::get_effective_weathering() const {
 	if (weathering >= 0.0) {
 		return weathering;
 	}
-	static const float w[FAMILY_MAX] = { 0.45f, 0.2f, 0.6f, 0.15f, 0.05f, 0.7f, 0.95f, 0.6f, 0.6f, 0.45f, 0.7f, 0.6f, 0.75f, 0.1f, 0.85f, 0.6f, 0.65f, 0.6f };
+	static const float w[FAMILY_MAX] = { 0.45f, 0.2f, 0.6f, 0.15f, 0.05f, 0.7f, 0.95f, 0.6f, 0.6f, 0.45f, 0.7f, 0.6f, 0.75f, 0.1f, 0.85f, 0.6f, 0.65f, 0.6f, 0.9f };
 	return w[family];
 }
 
@@ -826,6 +827,11 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 	} else if (family == FAMILY_POTHOLE) {
 		a = 1.8f + 0.6f * rng.randf(); // x: down the channel; z: across; y: the slab's depth below the bed
 		c = 0.26f + 0.08f * rng.randf();
+	} else if (family == FAMILY_TUFA) {
+		// Spring tufa (Pentecost 2005, "Travertine"; Ford and Pedley 1996): calcite crusted round mosses and algae where
+		// the water degasses, built up in rounded knobs and lobes, no beds or joints to break along: squat lumps.
+		a = 1.1f + 0.4f * rng.randf();
+		c = 0.55f + 0.2f * rng.randf();
 	} else if (family == FAMILY_LEDGE) {
 		// A ledge slab: the hard caprock bed over a weaker one that weathers back faster, left standing out as a
 		// cantilever until it breaks off along its joints (differential erosion; Lamb and Dietrich 2009 for the
@@ -1053,7 +1059,7 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 		planes.push_back({ n, float(n.y * c * (0.15f + 0.25f * rng.randf()) + Math::abs(n.x) * a * 0.3f), true });
 	}
 	// Impact chips: conchoidal scoops off corners and edges (bed-load chipping, Novák-Szabó et al. 2018), fresh.
-	static const int chips_per_family[FAMILY_MAX] = { 3, 5, 3, 3, 1, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0 };
+	static const int chips_per_family[FAMILY_MAX] = { 3, 5, 3, 3, 1, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0 };
 	LocalVector<RockScoop> scoops;
 	const int chips = chips_per_family[family] + int(rng.randf() * 2.0f);
 	for (int k = 0; k < chips; k++) {
@@ -1175,10 +1181,10 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 	// for a corner radius r is about r^2 / 2. A fully rounded stone has corners as round as half its thickness.
 	// Spheroidal weathering of granite and basalt rounds blocks in place along the joints in the same way (corners
 	// attacked from three sides), so it adds to the rounding of blocks left lying (tors, corestones).
-	static const float spheroidal_share[FAMILY_MAX] = { 0.05f, 0.0f, 0.5f, 0.15f, 0.15f, 0.25f, 0.75f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.1f, 0.0f }; // coast and landforms: their own shaping
+	static const float spheroidal_share[FAMILY_MAX] = { 0.05f, 0.0f, 0.5f, 0.15f, 0.15f, 0.25f, 0.75f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.1f, 0.0f, 0.0f }; // coast and landforms: their own shaping
 	const float spheroidal = lith.spheroidal * weather * spheroidal_share[family];
 	// Tor blocks rotted in place for a long time: woolsack edges whatever the rock (at least half rounded).
-	const float round_eff = MIN(1.0f, MAX(roundness + spheroidal * (1.0f - roundness), family == FAMILY_CORESTONE ? 0.55f : 0.0f));
+	const float round_eff = MIN(1.0f, MAX(roundness + spheroidal * (1.0f - roundness), family == FAMILY_CORESTONE ? 0.55f : (family == FAMILY_TUFA ? 0.7f : 0.0f)));
 	// Corners round to at most 0.7 of the half thickness: a curvature flow run longer would shrink a thin stone to
 	// nothing (a sphere of radius r vanishes at t = r^2 / 4).
 	const float corner = round_eff * 0.7f * c;
@@ -2102,6 +2108,50 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 			}
 		}
 	}
+	if (family == FAMILY_TUFA) {
+		// Spring tufa (Pentecost 2005, "Travertine"; Ford and Pedley 1996; Arenas et al. 2014 on barrage tufa): calcite
+		// crusted round moss and algal tufts, so a lump grows as a cluster of rounded lobes (botryoidal, cauliflower)
+		// rather than a broken block, its skin knobbly at a centimetre and holed by vugs where the plants rotted out.
+		LocalVector<RockScoop> lobes;
+		const int nl = 7 + int(rng.randf() * 5.0f);
+		for (int k = 0; k < nl; k++) {
+			const float r = (0.3f + 0.22f * rng.randf()) * MIN(c * 1.6f, 1.0f);
+			lobes.push_back({ Vector3((rng.randf() - 0.5f) * 1.6f * MAX(a - r, 0.0f), (rng.randf() - 0.6f) * 0.8f * c, (rng.randf() - 0.5f) * 1.6f * MAX(1.0f - r, 0.0f)), r });
+		}
+		LocalVector<RockScoop> vugs;
+		const int nv = 30 + int(rng.randf() * 20.0f);
+		for (int k = 0; k < nv; k++) {
+			const Vector3 dir = Vector3(rng.randf() - 0.5f, (rng.randf() - 0.3f) * 0.8f, rng.randf() - 0.5f).normalized();
+			const float r = (0.015f + 0.04f * rng.randf() * rng.randf()) * MAX(c, 0.4f);
+			vugs.push_back({ Vector3(dir.x * a, dir.y * c, dir.z) * (0.95f + 0.1f * rng.randf()), r });
+		}
+		for (int z = 0; z < fine.nz; z++) {
+			for (int y = 0; y < fine.ny; y++) {
+				for (int x = 0; x < fine.nx; x++) {
+					const Vector3 p = fine.pos(x, y, z);
+					float &v = fine.v[fine.idx(x, y, z)];
+					if (v > 0.6f * c) {
+						continue;
+					}
+					// The lobes, smoothly joined (polynomial smooth minimum, Quilez), kept inside the block's reach.
+					float dl = 1e9f;
+					for (const RockScoop &lb : lobes) {
+						const float d = (p - lb.c).length() - lb.r;
+						const float k = 0.12f * lb.r;
+						const float hh = CLAMP(0.5f + 0.5f * (dl - d) / k, 0.0f, 1.0f);
+						dl = dl > 1e8f ? d : Math::lerp(dl, d, hh) - k * hh * (1.0f - hh);
+					}
+					v = MAX(Math::lerp(v, dl, 0.85f), v - 0.1f * c);
+					// Knobbly skin: rounded bumps (inverted ridged noise) at a few centimetres, finer warts over them.
+					v -= 0.09f * c * (1.0f - Math::abs(rk_fbm(p * 4.5f, nseed + 171u, 3)) * 2.0f);
+					v -= 0.035f * c * (1.0f - Math::abs(rk_fbm(p * 13.0f, nseed + 172u, 2)) * 2.0f);
+					for (const RockScoop &vg : vugs) {
+						v = MAX(v, vg.r - (p - vg.c).length());
+					}
+				}
+			}
+		}
+	}
 	// Where the surface is a fresh break (lighter, no rind, no lichen): from the fracture, worn away by the transport.
 	RockGrid fresh_grid;
 	fresh_grid.init(half_box, h_flow);
@@ -3018,6 +3068,12 @@ render_mode blend_mix, depth_draw_opaque, cull_back, diffuse_burley, specular_sc
 // stone (two 8-bit components, -2..2).
 )";
 	c += TerrainGenerator3D::get_geology_shader_code();
+	// The shared climate and cliff varnish rules (WorldContracts): the cliff kit's wall pieces carry the terrain wall's
+	// film, curtains and iron band (the terrain material module registers these globals).
+	c += "global uniform sampler2D terrain_climate_map : hint_default_black, filter_linear;\nglobal uniform vec4 terrain_climate_rect;\nglobal uniform vec4 weather_climate;\n";
+	c += "global uniform vec4 terrain_cliff_rect;\nglobal uniform sampler2D terrain_cliff_foot_map : hint_default_black, filter_linear;\n";
+	c += WorldContracts::climate_bare_shader_code();
+	c += WorldContracts::cliff_varnish_shader_code();
 	c += BaseMaterial3D::get_wetness_shader_code();
 	c += BaseMaterial3D::get_snow_shader_code();
 	c += R"(
@@ -3043,7 +3099,7 @@ uniform float lichen_cover = 0.5;
 // Rock varnish (docs/ideas/rocks.md, "Desert varnish"): 0 humid .. 1 arid (RockField3D.desert_varnish, from the
 // climate's precipitation).
 uniform float varnish = 0.0;
-uniform bool varnish_wall = false; // a piece of the terrain's own wall (its colour matched): left as the wall is
+uniform bool varnish_wall = false; // a piece of the terrain's own wall: the wall's varnish (wc_cliff_varnish)
 uniform float surface_age = 1.0; // how long the face has stood exposed (0 fresh talus, 1 a tor or old boulder)
 // Limestone and other lime-rich rock take their own lichens (white-grey and dark crusts that etch it, orange
 // Caloplaca); siliceous rock (granite, sandstone, basalt, slate) the yellow-green map lichen and grey foliose ones.
@@ -3471,7 +3527,7 @@ void fragment() {
 	// Black (manganese-rich) on the exposed tops and in curtains down the paths runoff takes on steep faces (the mesh's
 	// flow routing, COLOR.a); orange-brown (iron-rich) on the undersides and the foot where the stone meets the soil;
 	// a pale ground-line band where it leaves the soil. None on fresh breaks or young surfaces (talus, rockfall), so a
-	// break shows bright; a faint sheen where it is thick. Not on pieces of the terrain's own wall (they keep its colour).
+	// break shows bright; a faint sheen where it is thick. Pieces of the terrain's own wall take the wall's varnish (below).
 	float varnish_film = 0.0; // the black film's cover (no crystal glints through it)
 	if (varnish > 0.0 && !varnish_wall) {
 		float age_v = smoothstep(0.35, 1.0, surface_age) * (1.0 - fresh);
@@ -3494,7 +3550,7 @@ void fragment() {
 			float black = clamp(0.6 + 0.4 * top_v + 0.9 * curtain + 0.3 * (n_v - 0.5), 0.0, 1.0);
 			// The iron-rich bottoms: faces turned down and the band near the soil (Dorn 2009: orange on the undersides).
 			float sc_v = max(v_scale, 0.1);
-			float bottom = clamp(smoothstep(0.0, -0.6, wn.y) + (1.0 - smoothstep(0.03, 0.1 + 0.06 * sc_v, above_v)), 0.0, 1.0);
+			float bottom = clamp((1.0 - smoothstep(-0.6, 0.0, wn.y)) + (1.0 - smoothstep(0.03, 0.1 + 0.06 * sc_v, above_v)), 0.0, 1.0);
 			vec3 mn = vec3(0.026, 0.019, 0.013) * (0.8 + 0.4 * n_v);
 			vec3 fe = vec3(0.16, 0.07, 0.026) * (0.85 + 0.3 * n_v);
 			col = mix(col, fe, amount * 0.7 * bottom);
@@ -3505,6 +3561,23 @@ void fragment() {
 			// The ground line: a pale band a few centimetres up where the stone leaves the soil (carbonate and salt).
 			float line_v = smoothstep(0.0, 0.015, above_v) * (1.0 - smoothstep(0.02, 0.05, above_v));
 			col = mix(col, vec3(0.42, 0.38, 0.33), amount * 0.5 * line_v);
+		}
+	}
+
+	// On a piece of the terrain's own wall: the wall's varnish (WorldContracts::cliff_varnish_shader_code, the rule the
+	// terrain's cliffs draw by), so the piece and the face round it carry one film, one set of curtains, one iron band.
+	if (varnish > 0.0 && varnish_wall) {
+		vec3 wp_v = v_world;
+		float fp_v = length(wp_v - CAMERA_POSITION_WORLD) * 2.0 / (abs(PROJECTION_MATRIX[1][1]) * VIEWPORT_SIZE.y);
+		float vv = wc_varnish(wp_v) * (1.0 - smoothstep(0.55, 0.85, wn.y));
+		if (vv > 0.0) {
+			// Shaded as the terrain shades a face: by its insolation from the equator side (pole_direction the other way).
+			vec3 eq = -normalize(vec3(pole_direction.x, 0.0, pole_direction.z) + vec3(1e-5, 0.0, 0.0));
+			float shade_v = 1.0 - smoothstep(0.1, 0.7, clamp(dot(wn, normalize(eq * 0.64 + vec3(0.0, 0.77, 0.0))), 0.0, 1.0));
+			vec4 vf = wc_cliff_varnish(wp_v, wn, fp_v, 1.0 - smoothstep(0.15, 0.6, fp_v), shade_v, vv, wc_cliff_above_foot(wp_v));
+			col *= vf.rgb;
+			rough = mix(rough, rough * 0.85, vf.a);
+			varnish_film = vf.a;
 		}
 	}
 
@@ -3612,7 +3685,7 @@ void fragment() {
 		float soft = clamp(px / (cell_m * 0.35), 0.15, 0.5);
 		float inside = (1.0 - smoothstep(1.0 - soft, 1.0 + soft, r_eff)) * smoothstep(0.02, 0.3, open_face);
 		// Older centres die back and crumble: the thallus is thinner and broken inside the bigger rosettes.
-		inside *= mix(1.0, 0.45 + 0.55 * smoothstep(0.3, 0.6, rk_noise3(mp * 35.0 + lc.z * 5.0)), smoothstep(0.6, 0.15, lc.x));
+		inside *= mix(1.0, 0.45 + 0.55 * smoothstep(0.3, 0.6, rk_noise3(mp * 35.0 + lc.z * 5.0)), (1.0 - smoothstep(0.15, 0.6, lc.x)));
 		if (inside > 0.0) {
 			float top = smoothstep(0.65, 0.95, wn.y);
 			float k = fract(lc.z * 7.31);
@@ -3979,5 +4052,6 @@ void RockGenerator::_bind_methods() {
 	BIND_ENUM_CONSTANT(FAMILY_CAVE_MOUTH);
 	BIND_ENUM_CONSTANT(FAMILY_LEDGE);
 	BIND_ENUM_CONSTANT(FAMILY_CLIFF_PILLAR);
+	BIND_ENUM_CONSTANT(FAMILY_TUFA);
 	BIND_ENUM_CONSTANT(FAMILY_MAX);
 }

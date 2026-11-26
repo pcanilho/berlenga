@@ -1647,6 +1647,89 @@ float wc_bare_patch(vec3 p, float bare, float fp) {
 )";
 }
 
+String WorldContracts::cliff_varnish_shader_code() {
+	return R"(
+#define WC_CLIFF_VARNISH_CODE
+// Crisp drip stripes (ink streaks and varnish run down a face as sharp-edged stripes of their own width, not as a
+// blur): one stripe or none in each cell of width C along the face's horizontal u, at its own place and width
+// (wmin..wmax metres), meandering a little down the fall line; the edge filtered over the pixel's footprint fp (a
+// box-filtered step, Apodaca and Gritz 2000), and the cells fade to their mean cover once a pixel spans one.
+// t: 0 at the stripes' top, 1 where the longest run out; each runs out at its own length and narrows toward its end.
+// 0..1 cover.
+float wc_drip_1d(float u, float y, float t, float fp, float seed, float C, float wmin, float wmax) {
+	u += 0.3 * C * (wc_vn(vec3(u / (3.0 * C), y * 0.12, seed)) - 0.5);
+	float ci = floor(u / C);
+	float h1 = wc_vn_hash(vec3(ci, seed, 3.0));
+	float h2 = wc_vn_hash(vec3(ci, seed, 5.0));
+	float h3 = wc_vn_hash(vec3(ci, seed, 7.0));
+	float h4 = wc_vn_hash(vec3(ci, seed, 11.0));
+	// Thin trickles run out soon and stain less; only the broad stripes run the full length (a thin dark line ruled
+	// metres down a face read as a scratch).
+	float tt = t / (0.25 + 0.75 * mix(h4, h3, 0.7));
+	float present = step(0.4, h1) * step(tt, 1.0);
+	// Water stains swell and pinch down their run and wander a little (a stripe of one width ruled straight down read
+	// as a scratch or a stretched texture).
+	float w = mix(wmin, wmax, h3 * h3) * (1.0 - 0.7 * smoothstep(0.3, 1.0, tt)) * (0.6 + 0.8 * wc_vn(vec3(ci * 3.1, y / 0.9, seed + 2.0)));
+	float centre = (ci + 0.15 + 0.7 * h2) * C + 0.4 * C * (wc_vn(vec3(ci * 5.7, y / 1.8, seed + 4.0)) - 0.5);
+	float aa = max(max(0.5 * fp, 0.15 * w), 0.002); // half the footprint, or a stain's feathered edge
+	// The stripe's share of the footprint (a pulse box-filtered exactly, Apodaca and Gritz 2000): a stripe narrower than
+	// the pixel fades with its width. Each fades down its run as its water spreads and dries. Edged by smoothstep over the footprint, a 5 cm trickle drew as a half-dark line a
+	// whole pixel wide down metres of face, a scratch.
+	float cov = present * (0.55 + 0.45 * h3) * (1.0 - 0.7 * smoothstep(0.0, 1.0, tt)) * max(min(centre + 0.5 * w, u + aa) - max(centre - 0.5 * w, u - aa), 0.0) / (2.0 * aa);
+	float mean = 0.6 * 0.5 * (wmin + wmax) / C * (1.0 - smoothstep(0.35, 1.0, t));
+	return mix(cov, mean, smoothstep(0.3 * C, C, fp));
+}
+// On a face: u along the face's horizontal, x on faces turned toward z, z on faces turned toward x (a coordinate
+// along the face's own tangent swirled with every bump of the relief), blended between.
+float wc_drip(vec3 p, vec3 n, float t, float fp, float seed, float C, float wmin, float wmax) {
+	float k = smoothstep(0.35, 0.65, abs(n.x) / (abs(n.x) + abs(n.z) + 1e-5));
+	float a = k < 1.0 ? wc_drip_1d(p.x, p.y, t, fp, seed, C, wmin, wmax) : 0.0;
+	float b = k > 0.0 ? wc_drip_1d(p.z, p.y, t, fp, seed + 17.0, C, wmin, wmax) : 0.0;
+	return mix(a, b, k);
+}
+// Metres over the cliff's foot at p (Landscape3D's terrain_cliff_foot_map over terrain_cliff_rect), 1e3 off the map.
+float wc_cliff_above_foot(vec3 p) {
+	if (terrain_cliff_rect.z > 0.0) {
+		vec2 v_uv = (p.xz - terrain_cliff_rect.xy) / terrain_cliff_rect.zw;
+		if (all(greaterThan(v_uv, vec2(0.02))) && all(lessThan(v_uv, vec2(0.98)))) {
+			return p.y - textureLod(terrain_cliff_foot_map, v_uv, 0.0).r;
+		}
+	}
+	return 1e3;
+}
+// Desert varnish on a cliff face (Dorn and Oberlander 1981, Dorn 2009, Liu and Broecker 2000): a manganese and iron
+// oxide film laid over millennia on faces that dry out between rare wettings. Manganese-black curtains hang down a face
+// from where runoff pours over a ledge or the rim (Canyonlands' "tapestry" walls: stripes a fraction of a metre to
+// metres wide, tens of metres long, from lips about 30 m apart), over a thin patchy film on the whole face; iron
+// orange-brown low on the face, in the band the talus and soil keep moist. A tint over the rock's own colour, not
+// paint: the film is micrometres thick. p: the face point (world metres), n its normal, fp the pixel's footprint (m),
+// k the fine detail's weight (1 near, 0 far), shade 0 sunny .. 1 shaded (shaded faces stay damper), amount 0..1 (the
+// climate's, wc_varnish, times the face's share), above_foot from wc_cliff_above_foot.
+vec4 wc_cliff_varnish(vec3 p, vec3 n, float fp, float k, float shade, float amount, float above_foot) {
+	float vv = clamp(amount, 0.0, 1.0);
+	if (vv <= 0.0) {
+		return vec4(1.0, 1.0, 1.0, 0.0);
+	}
+	float v_sy = p.y + 6.0 * wc_vn(vec3(p.x / 25.0, 0.0, p.z / 25.0) + 41.0);
+	float v_band = floor(v_sy / 30.0);
+	float v_below = 30.0 * (1.0 - fract(v_sy / 30.0)); // metres under the pour-off lip
+	float v_run = 12.0 + 33.0 * wc_vn_hash(vec3(v_band, 83.0, 0.0));
+	float curtain = wc_drip(p, n, v_below / v_run, fp, v_band * 2.3 + 97.0, 3.0, 0.3, 2.5);
+	curtain *= smoothstep(0.25, 0.45, wc_vn(vec3(p.x / 9.0, v_band * 1.7, p.z / 9.0) + 23.0));
+	curtain *= 1.0 - 0.35 * shade;
+	float film = 0.5 + 0.5 * mix(0.5, wc_vn(p / 7.0 + 31.0), k);
+	float iron = clamp((1.0 - smoothstep(1.5 + 2.5 * wc_vn(vec3(p.x / 11.0, 0.0, p.z / 11.0) + 7.0), 7.0, above_foot)) * smoothstep(-0.5, 0.5, above_foot), 0.0, 1.0);
+	float v_n = mix(0.5, wc_vn(p * 0.7 + 13.0), k);
+	// The film: a brown-grey patina over the whole old face; the curtains: manganese black; low on the face iron
+	// orange-brown.
+	vec3 f = mix(vec3(1.0), vec3(0.62, 0.56, 0.5), vv * film * (1.0 - iron));
+	f *= mix(vec3(1.0), vec3(0.85, 0.52, 0.3) * (0.9 + 0.2 * v_n), vv * 0.75 * iron);
+	f *= mix(vec3(1.0), vec3(0.13, 0.11, 0.1) * (0.8 + 0.4 * v_n), vv * curtain * (1.0 - iron));
+	return vec4(f, vv * curtain * (1.0 - iron));
+}
+)";
+}
+
 void WorldContracts::register_ground_color(WorldGroundColorProvider *p_provider) {
 	if (singleton && p_provider && singleton->ground_color_providers.find(p_provider) < 0) {
 		singleton->ground_color_providers.push_back(p_provider);

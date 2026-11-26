@@ -447,7 +447,7 @@ void fragment() {
 	float t = tips(m_pos);
 	// Patches of colour at a few centimetres: shoots that grew in different years and spots.
 	float patch = mn(m_pos * 18.0) * 0.6 + mn(m_pos * 55.0) * 0.4;
-	vec3 tip = mix(moss_tip, moss_dry, smoothstep(0.55, 0.25, thick) * smoothstep(0.4, 0.9, COLOR.b * 2.0 - 1.0));
+	vec3 tip = mix(moss_tip, moss_dry, (1.0 - smoothstep(0.25, 0.55, thick)) * smoothstep(0.4, 0.9, COLOR.b * 2.0 - 1.0));
 	// Lit tuft tops, dark gaps between them; the shoots fleck the tops.
 	float lit = smoothstep(0.05, 0.85, u) * (0.75 + 0.35 * t);
 	vec3 col = mix(moss_deep, tip * (0.8 + 0.4 * patch), clamp(lit, 0.0, 1.0));

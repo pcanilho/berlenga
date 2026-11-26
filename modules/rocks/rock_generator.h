@@ -77,6 +77,7 @@ public:
 		FAMILY_CAVE_MOUTH, // a limestone outcrop at a cliff foot with a passage opening into it (x along, z up, y out)
 		FAMILY_LEDGE, // a ledge slab: the caprock bed standing out over the lip of a bench (x along the lip, y up, z out)
 		FAMILY_CLIFF_PILLAR, // a cliff face's joint-bounded pillar: a column between vertical joints (x up when stood on end, y across, z into the wall)
+		FAMILY_TUFA, // a lump of spring tufa: porous calcite laid round mosses where spring water degasses, knobbly and rounded
 		FAMILY_MAX,
 	};
 

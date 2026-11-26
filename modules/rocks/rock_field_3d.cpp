@@ -1438,6 +1438,58 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_cell_rect, uint32_t p_see
 					}
 				}
 			}
+			// Tufa at the karst springs (WorldCaves resurgences; Pentecost 2005, "Travertine"; Ford and Pedley 1996):
+			// the spring water degasses its CO2 as it leaves the mouth and where it tumbles, so calcite comes out of it
+			// as porous tufa: a mound of it framing the mouth and a flight of low crescent dams (barrages) across the
+			// outfall below, convex downstream, closer and smaller near the spring, each holding a pool behind it.
+			// Lumpy, pale limestone stones half sunk in their own deposit; the dams wet.
+			if (karst && !rf_far) {
+				LocalVector<WorldResurgence> springs;
+				contract_resurgences(p_rect, springs);
+				for (const WorldResurgence &sp : springs) {
+					RandomPCG trng(hash_murmur3_one_32(uint32_t(sp.id), uint32_t(p_seed) ^ 0x7f4au));
+					Vector3 dir = Vector3(sp.direction.x, 0, sp.direction.z);
+					dir = dir.length() > 1e-3f ? dir.normalized() : Vector3(1, 0, 0);
+					const Vector3 across(-dir.z, 0, dir.x);
+					const real_t flow_yaw = Math::atan2(-dir.x, -dir.z);
+					const uint32_t key = _library_key(RockGenerator::ROCK_LIMESTONE, RockGenerator::FAMILY_TUFA, 0);
+					auto put = [&](const Vector3 &p_at, float p_size, float p_sink, float p_film, real_t p_yaw, real_t p_tilt) {
+						Pending pd;
+						pd.xz = Vector3(p_at.x, 0, p_at.z);
+						pd.size = p_size;
+						pd.key = key;
+						pd.yaw = p_yaw;
+						pd.tilt_axis = across;
+						pd.tilt = p_tilt;
+						pd.sink = p_sink;
+						pd.follow = 0.8f;
+						pd.film = p_film;
+						pending.push_back(pd);
+					};
+					// The mound: lumps round the back and sides of the mouth, set in their own deposit (a fifth of their height).
+					const int mound = 7 + int(trng.randf() * 5.0f);
+					for (int k = 0; k < mound; k++) {
+						const float a = float(Math::PI) * (0.35f + 1.3f * (float(k) + trng.randf()) / float(mound));
+						const Vector3 at = sp.position + (-dir * Math::cos(a) + across * Math::sin(a)) * (0.9f + 0.8f * trng.randf());
+						put(at, 0.45f + 0.5f * trng.randf(), 0.15f + 0.1f * trng.randf(), 0.3f, trng.randf() * Math::TAU, Math::deg_to_rad(10.0f) * trng.randf());
+					}
+					// The dams down the outfall: 3 to 6, each a row of lumps across the flow, bowed downstream.
+					const int dams = 3 + int(trng.randf() * 4.0f);
+					float along = 1.2f;
+					for (int k = 0; k < dams; k++) {
+						along += 0.9f + 0.5f * float(k) + 0.6f * trng.randf();
+						const float half = 0.45f + 0.18f * float(k) + 0.2f * trng.randf();
+						const float lump = 0.22f + 0.06f * float(k) + 0.08f * trng.randf();
+						const Vector3 c = sp.position + dir * along;
+						const int m = MAX(2, int(Math::ceil(2.0f * half / (0.8f * lump))));
+						for (int i = 0; i < m; i++) {
+							const float t = (float(i) + 0.5f) / float(m) * 2.0f - 1.0f;
+							const Vector3 at = c + across * (t * half) + dir * (0.3f * half * (1.0f - t * t));
+							put(at, lump * (0.85f + 0.3f * trng.randf()), 0.12f, 0.9f, flow_yaw + (trng.randf() - 0.5f) * 0.6f, Math::deg_to_rad(6.0f) * trng.randf());
+						}
+					}
+				}
+			}
 		} break;
 		case LAYER_SHORE: {
 			// Shingle and boulders between the low water line and the storm ridge: coarser on steeper beaches (beach
@@ -1677,7 +1729,20 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_cell_rect, uint32_t p_see
 						}
 					}
 				}
+				// The karst springs' mouths stay open: no pillar stands in front of the water coming out of the wall (its
+				// tufa mound round the mouth, LAYER_RIVER).
+				LocalVector<WorldResurgence> mouths;
+				if (karst) {
+					contract_resurgences(p_rect.grow(3.0), mouths);
+				}
 				for (const KitBox &b : boxes) {
+					bool at_mouth = false;
+					for (const WorldResurgence &m : mouths) {
+						at_mouth = at_mouth || Vector2(b.surface.x - m.position.x, b.surface.z - m.position.z).length() < 2.5f + b.half_along;
+					}
+					if (at_mouth) {
+						continue;
+					}
 					const RockGenerator::RockType type = _type_at(gen, b.surface);
 					const uint32_t key = _library_key(type, RockGenerator::FAMILY_CLIFF_PILLAR, 0);
 					Library *lib = _ensure_library(key);
@@ -3402,7 +3467,8 @@ Ref<ShaderMaterial> RockField3D::_material(RockGenerator::RockType p_type, RockG
 	// Ledge slabs are the caprock bed of the bench itself, standing out over its lip: the wall's rock too.
 	const bool p_cliff = p_family == RockGenerator::FAMILY_CAVE_MOUTH || p_family == RockGenerator::FAMILY_CLIFF_BLOCK || p_family == RockGenerator::FAMILY_CLIFF_PILLAR || p_family == RockGenerator::FAMILY_LEDGE || p_family == RockGenerator::FAMILY_SEA_STACK || p_family == RockGenerator::FAMILY_SEA_ARCH || p_group;
 	const float age = rock_surface_age(p_family);
-	const int mkey = int(p_type) + (p_cliff ? 1000 : 0) + int(age * 10.0f + 0.5f) * 10000 + (p_detail ? 2000 : 0) + (p_group ? 4000 : 0);
+	const bool p_tufa = p_family == RockGenerator::FAMILY_TUFA;
+	const int mkey = int(p_type) + (p_cliff ? 1000 : 0) + int(age * 10.0f + 0.5f) * 10000 + (p_detail ? 2000 : 0) + (p_group ? 4000 : 0) + (p_tufa ? 8000 : 0);
 	if (Ref<ShaderMaterial> *m = materials.getptr(mkey)) {
 		return *m;
 	}
@@ -3414,6 +3480,17 @@ Ref<ShaderMaterial> RockField3D::_material(RockGenerator::RockType p_type, RockG
 	m->set_shader_parameter("surface_age", age);
 	m->set_shader_parameter("instance_tint", p_group ? 0.45f : 0.0f);
 	m->set_shader_parameter("moss_cover", moss_cover);
+	if (p_tufa) {
+		// Spring tufa (Pentecost 2005; Ford and Pedley 1996): cream to buff calcite, porous and spongy, no beds, no dark
+		// minerals; built round mosses and kept wet by the spring, so mossier than the rock round it.
+		m->set_shader_parameter("base_color", Vector3(0.40, 0.35, 0.24));
+		m->set_shader_parameter("speck_share", 0.02f);
+		m->set_shader_parameter("band_contrast", 0.0f);
+		m->set_shader_parameter("porosity", 0.75f);
+		m->set_shader_parameter("grain_bump", 0.45f);
+		m->set_shader_parameter("rock_roughness", 0.92f);
+		m->set_shader_parameter("moss_cover", MIN(1.0f, moss_cover + 0.35f));
+	}
 	// Ground detail grains: a foot band in proportion to the grain (the field's stones keep theirs), and the ground's
 	// dust coat the field's small stones carry, so a grain matches the pebbles round it.
 	m->set_shader_parameter("small_linear", p_detail);
@@ -9087,17 +9164,8 @@ void RockField3D::set_detail(real_t p_detail) {
 // 250 mm of rain a year, patchy and thin up to some 400 mm, washed away and outgrown by lichens where it is wetter
 // (Dorn 2009; Liu and Broecker 2000). From the weather's climate and the terrain's rain pattern at the field's middle.
 float RockField3D::_varnish_from_climate() const {
-	if (!desert_varnish) {
-		return 0.0f;
-	}
-	WeatherSeason::Climate cl;
-	if (!WorldContracts::weather() || !WorldContracts::weather()->season_climate(cl)) {
-		return 0.0f;
-	}
-	const Vector3 mid = is_inside_tree() ? get_global_position() : Vector3();
-	const float f = WorldContracts::climate_precipitation_factor_at(mid);
-	const float precip = cl.precipitation * (f >= 0.0f ? f : 1.0f);
-	return Math::smoothstep(400.0f, 180.0f, precip);
+	// The shared rule (WorldContracts::varnish_at; the terrain's cliffs read the same through wc_varnish).
+	return desert_varnish ? WorldContracts::varnish_at(is_inside_tree() ? get_global_position() : Vector3()) : 0.0f;
 }
 
 void RockField3D::_update_varnish(bool p_force) {
@@ -9386,7 +9454,8 @@ void RockField3D::set_ground_material(const Ref<ShaderMaterial> &p_material) {
 void RockField3D::set_moss_cover(real_t p_cover) {
 	moss_cover = CLAMP(p_cover, real_t(0.0), real_t(1.0));
 	for (KeyValue<int, Ref<ShaderMaterial>> &kv : materials) {
-		kv.value->set_shader_parameter("moss_cover", moss_cover);
+		const bool tufa = kv.key % 10000 >= 8000; // _material's key: spring tufa, mossier
+		kv.value->set_shader_parameter("moss_cover", tufa ? MIN(real_t(1.0), moss_cover + real_t(0.35)) : moss_cover);
 	}
 }
 

@@ -174,7 +174,10 @@
 		<constant name="FAMILY_CLIFF_PILLAR" value="17" enum="Family">
 			A cliff face's joint-bounded pillar: the column a vertical joint set cuts out of a thick bed or a stack of beds, two to four times as tall as wide (x up when stood on end, y across the face, z into the wall), its faces the joint planes, bedded across.
 		</constant>
-		<constant name="FAMILY_MAX" value="18" enum="Family">
+		<constant name="FAMILY_TUFA" value="18" enum="Family">
+			A lump of spring tufa: porous calcite laid round mosses and algae where spring water loses its carbon dioxide, rounded and knobbly with no beds or joints (RockField3D lays them round its karst springs).
+		</constant>
+		<constant name="FAMILY_MAX" value="19" enum="Family">
 			Number of families.
 		</constant>
 	</constants>

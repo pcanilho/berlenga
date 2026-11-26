@@ -1627,8 +1627,11 @@ in semi-arid, washed off and outgrown by lichens where wetter), checked every 2 
 (surface_age, never fresh breaks): manganese-black on the exposed tops and in curtains down the runoff lines of steep
 faces (the mesh's flow routing, COLOR.a, broken along their length), iron orange-brown on the undersides and near the
 soil, a pale ground-line band, one satin sheen over the crystals. Lichens and moss go with it (they need frequent wetting; lichen
-acids etch varnish). Not on pieces of the terrain's own wall (cliff blocks, pillars, ledges): the terrain material
-has no varnish, so it stays matched; varnish curtains on terrain cliffs belong to the terrain material. Bench:
+acids etch varnish). Pieces of the terrain's own wall (cliff blocks, pillars, ledges) take the wall's varnish instead:
+one shared rule, `WorldContracts::cliff_varnish_shader_code()` (wc_cliff_varnish: patina film, manganese curtains from
+lips 30 m apart, iron band over the foot from terrain_cliff_foot_map), which the terrain's cliffs draw by too, so a
+piece and the face round it carry the same film and curtains (26 Nov). The climate rule is
+WorldContracts::varnish_at (wc_varnish in GLSL). Bench:
 `--rock=granite,glacial --varnish=1` (one stone), `--world --rain-climate=150 --view=tor --dist=7` and
 `--no-varnish` for the world's before frame.
 
@@ -1643,4 +1646,16 @@ at least 8 m lower and 150 m on, on the valley wall 0.5 to 12 m above the bed (t
 base flow 0.02 to 0.08 m3/s; lag at 1.7 km a day (Worthington 1991). karst_changed on a new ground or a change of
 rock types, seed or river area. The river layer's stones follow the raw network, so a blind valley keeps its
 boulder bed. Bench: `--world --world-size=2048 --karst-report` (2 sinks, 2 springs lower, 2 rivers ending at a sink,
-1 spring-fed), `--no-karst`. Not yet: tufa at the springs, a sink's swallow hole in the bed.
+1 spring-fed), `--no-karst`. Not yet: a sink's swallow hole in the bed.
+
+### Tufa at the springs (26 Nov)
+Spring water loses its carbon dioxide as it leaves the rock and tumbles, so calcite comes out of it as tufa, laid
+round mosses and algae (Pentecost 2005, "Travertine"; Ford and Pedley 1996; Arenas et al. 2014 on barrage tufa). Each
+WorldCaves resurgence gets a mound of 7 to 11 lumps (0.45 to 0.95 m) round the back and sides of its mouth, set a fifth
+of their height in their own deposit, and 3 to 6 low crescent dams (barrages) across the outfall below, convex
+downstream, closer and smaller near the spring, wet. The lumps are their own family, RockGenerator::FAMILY_TUFA: a
+cluster of 7 to 11 rounded lobes joined by a smooth minimum (botryoidal), a knobbly skin and holed by vugs where the
+plants rotted out; cream-buff, porous, no beds or dark minerals, mossier than the rock round it. The cliff kit leaves
+its pillars out within 2.5 m of a spring mouth, so the water comes out of an open face. Bench:
+`--world --world-size=2048 --karst-report --spring-spot=2 --view=river` (per spring: stones by the mouth),
+`--rock=limestone,tufa` (one lump), `--no-karst`.

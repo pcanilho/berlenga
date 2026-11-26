@@ -358,6 +358,8 @@ uniform float tm_far_fade = 150.0;
 	c += "global uniform sampler2D terrain_cliff_map : hint_default_black, filter_linear;\nglobal uniform vec4 terrain_cliff_rect; // origin (x, z), size (m); size 0 = none\n";
 	c += "global uniform sampler2D terrain_cliff_foot_map : hint_default_black, filter_linear; // the foot's height under each wall texel (Landscape3D), over terrain_cliff_rect\n";
 	c += "uniform float tm_varnish = 1.0; // desert varnish on dry-climate faces (wc_varnish), 0 off\n";
+	// The shared cliff varnish (WorldContracts::cliff_varnish_shader_code: the kit's wall pieces read the same).
+	c += WorldContracts::cliff_varnish_shader_code();
 	if (sky_occlusion_enabled) {
 		// The ground's sky occlusion (TerrainGenerator3D.sky_occlusion; rect width 0 = none).
 		c += R"(
@@ -2433,31 +2435,12 @@ void fragment() {
 			// foot's height from terrain_cliff_foot_map). Shaded faces stay damper and grow lichen instead.
 			// A tint over the rock's own colour, not paint: the film is micrometres thick, so the stone's texture and
 			// cracks still show through it.
+			// The shared rule (WorldContracts::cliff_varnish_shader_code), which the cliff kit's wall pieces read too.
 			float vv = clamp(tm_varnish * wc_varnish(wp) * fw_face, 0.0, 1.0);
 			if (vv > 0.0) {
-				float v_sy = fw_p.y + 6.0 * tm_vn(vec3(fw_p.x / 25.0, 0.0, fw_p.z / 25.0) + 41.0);
-				float v_band = floor(v_sy / 30.0);
-				float v_below = 30.0 * (1.0 - fract(v_sy / 30.0)); // metres under the pour-off lip
-				float v_run = 12.0 + 33.0 * tm_vn_hash(vec3(v_band, 83.0, 0.0));
-				float curtain = tm_drip(fw_p, wn, v_below / v_run, tm_fp0, v_band * 2.3 + 97.0, 3.0, 0.3, 2.5);
-				curtain *= smoothstep(0.25, 0.45, tm_vn(vec3(fw_p.x / 9.0, v_band * 1.7, fw_p.z / 9.0) + 23.0));
-				curtain *= 1.0 - 0.35 * shade;
-				float film = 0.5 + 0.5 * mix(0.5, tm_vn(fw_p / 7.0 + 31.0), fw_k);
-				float above_foot = 1e3;
-				if (terrain_cliff_rect.z > 0.0) {
-					vec2 v_uv = (wp.xz - terrain_cliff_rect.xy) / terrain_cliff_rect.zw;
-					if (all(greaterThan(v_uv, vec2(0.02))) && all(lessThan(v_uv, vec2(0.98)))) {
-						above_foot = wp.y - textureLod(terrain_cliff_foot_map, v_uv, 0.0).r;
-					}
-				}
-				float iron = clamp((1.0 - smoothstep(1.5 + 2.5 * tm_vn(vec3(fw_p.x / 11.0, 0.0, fw_p.z / 11.0) + 7.0), 7.0, above_foot)) * smoothstep(-0.5, 0.5, above_foot), 0.0, 1.0);
-				float v_n = mix(0.5, tm_vn(fw_p * 0.7 + 13.0), fw_k);
-				// The film: a brown-grey patina over the whole old face; the curtains: manganese black; low on the face
-				// iron orange-brown.
-				albedo *= mix(vec3(1.0), vec3(0.62, 0.56, 0.5), vv * film * (1.0 - iron));
-				albedo *= mix(vec3(1.0), vec3(0.85, 0.52, 0.3) * (0.9 + 0.2 * v_n), vv * 0.75 * iron);
-				albedo *= mix(vec3(1.0), vec3(0.13, 0.11, 0.1) * (0.8 + 0.4 * v_n), vv * curtain * (1.0 - iron));
-				rough = mix(rough, rough * 0.85, vv * curtain * (1.0 - iron));
+				vec4 vf = wc_cliff_varnish(fw_p, wn, tm_fp0, fw_k, shade, vv, wc_cliff_above_foot(wp));
+				albedo *= vf.rgb;
+				rough = mix(rough, rough * 0.85, vf.a);
 			}
 			// Crustose lichen in colonies of rosettes: pale grey-white crusts (Lecanora, Aspicilia) on most faces, the
 			// yellow-green map lichen (Rhizocarpon) on the sunnier ones, each thallus edged by its black prothallus
