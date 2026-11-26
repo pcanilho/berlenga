@@ -8641,6 +8641,17 @@ func _slipface_camera() -> void:
 
 
 # The ground's gradient (dh/dx, dh/dz) at p, over a metre.
+# The steepest rise per metre across a square of side p_span round p (its four sides and two diagonals).
+func _span_grad(p: Vector3, p_span: float) -> float:
+	var r := p_span * 0.5
+	var g := 0.0
+	for d in [Vector3(r, 0, 0), Vector3(0, 0, r), Vector3(r, 0, r), Vector3(r, 0, -r)]:
+		g = maxf(g, absf(gen.get_height(p + d) - gen.get_height(p - d)) / (2.0 * d.length()))
+	for d in [Vector3(r, 0, 0), Vector3(-r, 0, 0), Vector3(0, 0, r), Vector3(0, 0, -r)]:
+		g = maxf(g, absf(gen.get_height(p + d) - gen.get_height(p)) / r)
+	return g
+
+
 func _slip_grad(p: Vector3) -> Vector2:
 	var hx := gen.get_height(p + Vector3(0.5, 0, 0)) - gen.get_height(p - Vector3(0.5, 0, 0))
 	var hz := gen.get_height(p + Vector3(0, 0, 0.5)) - gen.get_height(p - Vector3(0, 0, 0.5))
@@ -8763,7 +8774,7 @@ func _suncups() -> void:
 	# --suncups[=M]: a spring snowfield with suncups M (0.25) m deep (SnowCover3D.add_suncups, snow 89d02105), drawn by a
 	# SnowSurface3D round the camera. The camera stands 1.6 m over the deepest gentle (under --cups-max-deg, 15) snow
 	# at least --cups-min-snow (0.5) m deep, looking square to the sun so the low light rakes the cups.
-	var mm := float(args["suncups"]) if String(args["suncups"]) != "" else 0.25
+	var mm := _arg_num("suncups", 0.25)
 	var wr: Rect2 = gen.get_world_rect()
 	var stp := 40.0
 	var best := Vector3.INF
@@ -8802,6 +8813,13 @@ func _suncups() -> void:
 	surf.set("snow_cover", surf.get_path_to(snow))
 	surf.set("follow_target", surf.get_path_to(c3))
 	snow.call("add_suncups", mm)
+	if args.has("cups-profile"):
+		# --cups-profile: the ground and the snow on it along the view, every 0.5 m out to 30 m.
+		var row := PackedStringArray()
+		for k in 61:
+			var q := best + look_dir * (0.5 * k)
+			row.append("%.1f:%.2f+%.2f" % [0.5 * k, gen.get_height(q) - best.y, snow.get_depth_at(q)])
+		_log("suncups profile (m along: ground over the camera's + snow): %s" % " ".join(row))
 	for i in 10:
 		await get_tree().process_frame
 	if args.has("snow-tracks"):
@@ -8860,7 +8878,7 @@ func _slush_prints() -> void:
 	# frozen ground (GroundSurface3D frost, ground e7de58cc) the water the pack cannot hold stays as slush in its base
 	# and pools in the prints. The camera --slush-eye (1.7) m up at the line's start, looking down it; the line runs
 	# --slush-yaw (70) degrees off the sun so the low light rakes across the prints.
-	var mm := float(args["slush-prints"]) if String(args["slush-prints"]) != "" else 120.0
+	var mm := _arg_num("slush-prints", 120.0)
 	var lo := float(args.get("slush-min", "0.1"))
 	var hi := float(args.get("slush-max", "0.2"))
 	var wr: Rect2 = gen.get_world_rect()
@@ -8875,7 +8893,9 @@ func _slush_prints() -> void:
 		while zz < wr.end.y - 300.0:
 			var p := Vector3(xx, 0, zz)
 			var d: float = snow.get_depth_at(p)
-			var ang := rad_to_deg(atan(_slip_grad(p).length()))
+			# Gentle at the boot and over the cover's cells round it (--slush-span, 8 m): a ledge a metre wide on a bank
+			# reads flat at the boot, while its water drains down the bank.
+			var ang := rad_to_deg(atan(maxf(_slip_grad(p).length(), _span_grad(p, float(args.get("slush-span", "8"))))))
 			# The gentlest place in the band; failing that, the gentle place whose depth is nearest the band.
 			if d > 0.03:
 				n_snow += 1
@@ -8966,7 +8986,12 @@ func _slush_prints() -> void:
 	weather.cloud_cover = 1.0
 	weather.snap_to_settings()
 	weather.advance(1.0)
-	snow.advance(10.0 * 3600.0)
+	# The rain as the snow gets it, and the pack an hour in.
+	_log("slush prints: during the rain: rain at the spot %s, rainfall %s mm/h, air %.1f C" % [str(weather.call("get_rain_at", best)), str(weather.call("get_rainfall_at", best)), weather.get_air_temperature_at(best)])
+	snow.advance(3600.0)
+	_log("slush prints: near square %s, probe %s, frost now %s" % [str(snow.call("get_map_rect")), str(probe.round()), str(gw.frost_at(Vector3(probe.x, gen.get_height(probe), probe.z)) if gw else Vector3())])
+	_log("slush prints: after 1 h: swe %.0f mm, depth %.3f m, slush %.3f m, wetness %.2f, runoff %s" % [snow.get_swe_at(probe), snow.get_depth_at(probe), float(snow.call("get_slush_at", probe)), float(snow.call("get_wetness_at", probe)), str(snow.call("get_runoff_at", probe))])
+	snow.advance(9.0 * 3600.0)
 	weather.rain_rate = 0.0
 	weather.cloud_cover = cc
 	weather.snap_to_settings()

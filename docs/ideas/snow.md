@@ -2378,3 +2378,11 @@ Research notes for Paulo's pick; nothing below is built yet.
 3. Layers you can see: ruts, shovel cuts and avalanche crowns show the stack on their walls, new snow bright and
    fine, wind slab chalky, old snow coarse and grey, crusts as thin glazed lines (the crown face of a slab avalanche,
    SnowRunner's trench walls), from the layer stack per cell through the surface's displacement.
+
+### Slush on benches (26 Nov 2026)
+
+The slush scout's "flat" site was a ledge 1 m wide on a 57 degree bank: flat at the boot, but the cover's 4 m cell read the
+bank's slope by its central difference and drained the slush as if it hung there (8 mm of 120 mm rain kept). The drain
+now takes each cell's own slope by a minmod limiter (Roe 1986): the gentler one-sided difference, none in a hollow, so a
+bench at the foot or top of a bank ponds. The scout also asks for gentle ground over 8 m (`--slush-span`); its new
+site (3.9 degrees) ponds 0.15 m of slush in a 0.19 m pack.
