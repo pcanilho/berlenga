@@ -641,3 +641,10 @@ sites of each callee's size); the remedy is one call site per heavy function.
   Each chunk's build then keeps the grid normals it reads (`LandscapeNormalCache`, over the chunk and the face
   weights' reach, filled as read): the relief read the same grid normal tens of times. Again every mesh and the frame
   are the same, and the build time fell by another fifth (981 s summed over the view's chunks, then 648 s, now 511 s).
+- Cliff kit squares (RockField3D `_kit_square`, the 8 m squares of pillar boxes the cells lay and the recess contract
+  answers from): the recess queries themselves are cheap, but a square fits its candidates to the drawn face through
+  the landscape's relief (about two thirds of its time) and the cliff view's 1.6 km take some 160 s of CPU. Cells on
+  workers spread that over the pool; a caller off the pool (get_stones, build_area: tools and benches placing cells
+  one by one on the main thread) built every square on its own thread. `_kit_ensure` now hands the missing squares to
+  the pool when its caller is not a worker. The rocks bench's cliff stage went from 171 s to 51 s, same stones, same
+  frame byte for byte.

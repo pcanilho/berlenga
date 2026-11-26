@@ -10203,12 +10203,33 @@ void RockField3D::_kit_ensure(const TerrainGenerator3D *p_gen, const Rect2i &p_s
 			}
 		}
 	}
-	for (const Vector2i &sq : missing) {
-		LocalVector<KitBox> boxes;
-		_kit_square(p_gen, sq, boxes);
-		RWLockWrite kl(kit_lock);
-		if (kit_epoch == epoch && !kit_cache.has(sq)) {
-			kit_cache.insert(sq, boxes);
+	// Off the worker pool (a tool or bench placing cells one after another on the main thread, get_stones, build_area)
+	// the squares go to the workers: each is the same boxes whichever thread builds it. On a worker (the cells' and
+	// the landscape's own jobs, already spread over the pool) they are built here.
+	LocalVector<LocalVector<KitBox>> built;
+	built.resize(missing.size());
+	if (missing.size() > 1 && WorkerThreadPool::get_singleton()->get_thread_index() < 0) {
+		struct KitJob {
+			const RockField3D *field;
+			const TerrainGenerator3D *gen;
+			const LocalVector<Vector2i> *squares;
+			LocalVector<LocalVector<KitBox>> *boxes;
+			static void run(void *p_job, uint32_t p_index) {
+				const KitJob *job = static_cast<const KitJob *>(p_job);
+				job->field->_kit_square(job->gen, (*job->squares)[p_index], (*job->boxes)[p_index]);
+			}
+		} job{ this, p_gen, &missing, &built };
+		WorkerThreadPool *pool = WorkerThreadPool::get_singleton();
+		pool->wait_for_group_task_completion(pool->add_native_group_task(&KitJob::run, &job, int(missing.size()), -1, true, SNAME("RockField3D kit squares")));
+	} else {
+		for (uint32_t i = 0; i < missing.size(); i++) {
+			_kit_square(p_gen, missing[i], built[i]);
+		}
+	}
+	RWLockWrite kl(kit_lock);
+	for (uint32_t i = 0; i < missing.size(); i++) {
+		if (kit_epoch == epoch && !kit_cache.has(missing[i])) {
+			kit_cache.insert(missing[i], built[i]);
 		}
 	}
 }
