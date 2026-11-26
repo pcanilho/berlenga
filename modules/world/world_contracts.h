@@ -1083,6 +1083,13 @@ public:
 	// rangelands, Le Houerou 1984), so the bare share falls from 0.9 to 0 over 200 to 700 mm. One rule for every
 	// reader: the terrain material's soil colour (its shader mirrors it), the stones' rain splash pedestals.
 	static float bare_share_for_precipitation(float p_mm);
+	// Rock varnish (0..1) from the year's precipitation: thick dark manganese-iron varnish where rock dries out between
+	// rare wettings, patchy in semi-arid lands, washed off and outgrown by lichens where wetter (Dorn 2009, "Rock varnish
+	// and its use to study climatic change"): none over 400 mm, full under 180 mm. One rule for every reader: the
+	// stones (RockField3D) and the terrain's cliffs (its shader mirrors it, wc_varnish).
+	static float varnish_for_precipitation(float p_mm);
+	// The same at a point, from the climate (0 with none).
+	static float varnish_at(const Vector3 &p_position);
 	// The share of soil left bare by a cold summer (0..0.97), from the July mean air temperature: tundra's vascular cover
 	// follows summer warmth (the Circumpolar Arctic Vegetation Map's bioclimate subzones, Walker et al. 2005; their
 	// July means from the CAVM legend: cushion forbs 0 to 3 C, prostrate dwarf shrubs 3 to 5 C, hemiprostrate 5 to 7 C,

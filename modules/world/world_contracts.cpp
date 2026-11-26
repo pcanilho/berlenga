@@ -1335,6 +1335,18 @@ float WorldContracts::climate_precipitation_factor_at(const Vector3 &p_position)
 	return 1.0f;
 }
 
+float WorldContracts::varnish_for_precipitation(float p_mm) {
+	return Math::smoothstep(400.0f, 180.0f, p_mm);
+}
+
+float WorldContracts::varnish_at(const Vector3 &p_position) {
+	WeatherSeason::Climate cl;
+	if (!weather() || !weather()->season_climate(cl)) {
+		return 0.0f;
+	}
+	return varnish_for_precipitation(cl.precipitation * climate_precipitation_factor_at(p_position));
+}
+
 float WorldContracts::bare_share_for_precipitation(float p_mm) {
 	return 0.9f * (1.0f - Math::smoothstep(200.0f, 700.0f, p_mm));
 }
@@ -1596,6 +1608,11 @@ float wc_climate_bare(vec3 p) {
 	float dry = mm < 0.0 ? 0.0 : 0.9 * (1.0 - smoothstep(200.0, 700.0, mm));
 	float cold = 0.97 * (1.0 - smoothstep(2.0, 11.0, wc_climate_july(p)));
 	return 1.0 - (1.0 - dry) * (1.0 - cold);
+}
+// WorldContracts::varnish_for_precipitation at p (0 with no climate).
+float wc_varnish(vec3 p) {
+	float mm = wc_climate_mm(p);
+	return mm < 0.0 ? 0.0 : 1.0 - smoothstep(180.0, 400.0, mm); // (smoothstep with edge0 > edge1 is undefined in GLSL)
 }
 // WorldContracts::stature_for_july at p: the cover's height over its summer height (1 with no climate).
 float wc_climate_stature(vec3 p) {

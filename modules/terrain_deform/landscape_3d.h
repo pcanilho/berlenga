@@ -206,6 +206,7 @@ class Landscape3D : public Node3D, public WorldReliefProvider {
 	static constexpr int CLIFF_MAP_RES = 256;
 	static constexpr real_t CLIFF_MAP_SIZE = 512.0;
 	Ref<ImageTexture> cliff_map_texture;
+	Ref<ImageTexture> cliff_foot_texture; // terrain_cliff_foot_map: the foot's height under each cliff texel
 	bool cliff_map_published = false;
 	void _update_cliff_map(const Vector2 &p_center);
 	void _clear_cliff_map();

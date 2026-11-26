@@ -550,3 +550,26 @@ Bare soil inherits its parent material's colour (Munsell hues: red 2.5YR-5YR on 
 saprolite, grey 10YR on granite grus, pale 10YR 7/x on limestone rendzina, dark 10YR 2/x where humus builds).
 The generator's strata/geology gives rock type per cell; map it to a soil tint and mix by soil depth (thin soils
 show more parent colour).
+
+## Desert varnish on cliffs (26 Nov; Paulo picked "Yes, add varnish to cliffs")
+
+Rock varnish (Dorn and Oberlander 1981; Dorn 2009, "Rock varnish and its use to study climatic change"; Liu and
+Broecker 2000) is a manganese and iron oxide film micrometres thick, laid by dust and microbes over millennia on faces
+that dry out between rare wettings. On desert walls it hangs in dark curtains from where runoff pours over a ledge or
+the rim (the "tapestry" walls of the Colorado Plateau), over a thinner brown-grey patina on the whole old face; iron-rich
+orange-brown varnish sits low on the face, in the band the talus and soil keep moist.
+
+- **Amount:** `WorldContracts::varnish_for_precipitation(mm)` (none over 400 mm a year, full under 180 mm), the one
+  rule the stones (RockField3D) and the cliffs share; GLSL `wc_varnish(p)` from the climate map, else the weather's
+  season climate. Zero with no climate, so wet worlds are unchanged.
+- **Shader (face weathering block, `tm_varnish`, 1 on):** a tint over the rock's own colour, never paint, so the
+  texture and cracks show through (path tracing keeps the detail): patina x(0.62, 0.56, 0.5); curtains x(0.13, 0.11,
+  0.1) as crisp drip stripes (tm_drip) 0.3 to 2.5 m wide from lips 30 m apart, running 12 to 45 m; iron x(0.85, 0.52,
+  0.3) up to 1.5 to 4 m over the foot, fading out by 7 m. Lichen thins with it (it needs frequent wetting and its
+  acids etch varnish). Shaded faces carry a third less curtain.
+- **Foot:** Landscape3D publishes `terrain_cliff_foot_map` (R half float, over `terrain_cliff_rect`): for each wall
+  texel the lowest ground down the heightfield's fall line until it eases under 40 degrees, up to 64 m out.
+- **Gotcha:** `smoothstep(e0, e1, x)` with e0 > e1 is undefined in GLSL; lavapipe returned values outside 0..1 and the
+  faces went black with neon red and blue specks. Write `1.0 - smoothstep(e1, e0, x)`.
+- **Bench:** rocks bench `--world --world-size=1024 --view=cliff --cam=-16.4,97.5,8.4 --look=18,122,-14 --no-rocks
+  --rain-climate=150`, and `--mat-prop=tm_varnish:0` for the before frame.

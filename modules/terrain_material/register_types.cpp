@@ -96,6 +96,9 @@ void initialize_terrain_material_module(ModuleInitializationLevel p_level) {
 		// Landscape3D's cliff relief share round the camera (R), for no soil on shelves between walls.
 		{ "terrain_cliff_map", "sampler2D" },
 		{ "terrain_cliff_rect", "vec4" },
+		// The height of the cliff's foot under each of its texels (R, m; the ground's own height off the walls), for
+		// what grows or stains near the foot (desert varnish's iron band).
+		{ "terrain_cliff_foot_map", "sampler2D" },
 		// Landscape3D's bank relief for the same patch (x metres).
 		{ "terrain_bank_relief", "vec4" },
 		// The climate for bare soil: TerrainDataMap3D's climate map (G precipitation m a year), else the weather's

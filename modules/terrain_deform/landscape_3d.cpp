@@ -3048,16 +3048,44 @@ void Landscape3D::_update_cliff_map(const Vector2 &p_center) {
 	Vector<uint8_t> data;
 	data.resize(R * R);
 	uint8_t *w = data.ptrw();
+	// The foot under each wall texel: down the heightfield's fall line from it until the ground eases under 40 degrees
+	// (the talus or the floor), up to 64 m out; off the walls the ground's own height.
+	Vector<float> foot;
+	foot.resize(R * R);
+	float *fw = foot.ptrw();
+	auto h_at = [&](real_t p_x, real_t p_z) {
+		const int ix = int(Math::floor(p_x)), iz = int(Math::floor(p_z));
+		const real_t u = p_x - ix, v = p_z - iz;
+		return Math::lerp(Math::lerp(real_t(_h(ix, iz)), real_t(_h(ix + 1, iz)), u), Math::lerp(real_t(_h(ix, iz + 1)), real_t(_h(ix + 1, iz + 1)), u), v);
+	};
+	const real_t gentle = Math::cos(Math::deg_to_rad(real_t(40.0)));
+	const real_t walk = 0.75; // grid cells a step
 	bool any = false;
 	for (int z = 0; z < R; z++) {
 		for (int x = 0; x < R; x++) {
 			const real_t fx = (org.x + (x + 0.5) * texel - origin.x) / spacing, fz = (org.y + (z + 0.5) * texel - origin.y) / spacing;
 			float share = 0.0f;
+			float fh = 0.0f;
 			if (fx >= 0.0 && fz >= 0.0 && fx <= real_t(gw - 1) && fz <= real_t(gh - 1)) {
 				share = CLAMP(float(_relief_weights_at(fx, fz).x), 0.0f, 1.0f);
+				fh = float(h_at(fx, fz));
+				if (share > 0.0f) {
+					real_t qx = fx, qz = fz;
+					for (int s = 0; s < int(64.0 / (walk * spacing)); s++) {
+						const Vector3 n = _normal_at(qx, qz);
+						const real_t ml = Vector2(n.x, n.z).length();
+						if (n.y >= gentle || ml < 1e-4f) {
+							break;
+						}
+						qx = CLAMP(qx + n.x / ml * walk, real_t(0.0), real_t(gw - 1));
+						qz = CLAMP(qz + n.z / ml * walk, real_t(0.0), real_t(gh - 1));
+						fh = MIN(fh, float(h_at(qx, qz)));
+					}
+				}
 			}
 			any = any || share > 0.0f;
 			w[z * R + x] = uint8_t(Math::round(share * 255.0f));
+			fw[z * R + x] = fh;
 		}
 	}
 	if (!any) {
@@ -3072,6 +3100,17 @@ void Landscape3D::_update_cliff_map(const Vector2 &p_center) {
 	}
 	RenderingServer *rs = RenderingServer::get_singleton();
 	rs->global_shader_parameter_set("terrain_cliff_map", cliff_map_texture->get_rid());
+	Vector<uint8_t> fdata;
+	fdata.resize(R * R * sizeof(float));
+	memcpy(fdata.ptrw(), foot.ptr(), R * R * sizeof(float));
+	Ref<Image> fimg = Image::create_from_data(R, R, false, Image::FORMAT_RF, fdata);
+	fimg->convert(Image::FORMAT_RH); // half floats filter linearly everywhere (32-bit floats need an optional feature)
+	if (cliff_foot_texture.is_valid() && cliff_foot_texture->get_width() == R) {
+		cliff_foot_texture->update(fimg);
+	} else {
+		cliff_foot_texture = ImageTexture::create_from_image(fimg);
+	}
+	rs->global_shader_parameter_set("terrain_cliff_foot_map", cliff_foot_texture->get_rid());
 	rs->global_shader_parameter_set("terrain_cliff_rect", Vector4(org.x, org.y, CLIFF_MAP_SIZE, CLIFF_MAP_SIZE));
 	cliff_map_published = true;
 }
