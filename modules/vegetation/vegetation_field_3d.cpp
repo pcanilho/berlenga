@@ -2429,6 +2429,11 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 	HashMap<Vector2i, float> bare_cells;
 	// The July mean on the same cells (WorldContracts::climate_july_at at the cell's ground), for the cover's cold stature.
 	HashMap<Vector2i, float> july_cells;
+	// Frost-sorted ground's producer (RockField3D), when one is registered.
+	const WorldGround *frost_ground = nullptr;
+	if (const LocalVector<WorldFrostSortedProvider *> *fl = WorldContracts::frost_sorted_providers_list(); fl && !fl->is_empty()) {
+		frost_ground = WorldContracts::ground();
+	}
 	const int species_count = p_setup.species.size();
 	const float ts = p_setup.tile_size;
 	const Rect2 &rect = p_setup.rect;
@@ -2831,6 +2836,18 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 						const float bare_share = bp ? *bp : bare_cells.insert(bc, WorldContracts::climate_bare_share_at(Vector3(bc3.x, map ? map->get_height_at(bc3) : 0.0f, bc3.z)))->value;
 						if (bare_share > 0.0f && WorldContracts::bare_patch(p3, bare_share) > 0.5f) {
 							continue;
+						}
+					}
+					if (ps.bare_cover && climate_bare && suit > 0.0f && frost_ground) {
+						// Frost-sorted ground (WorldGround.frost_sorted_at: x the gate, y the stones' share): the churned fine
+						// centres stay almost bare, the plants keep to the margins against the stone borders (WorldContracts::
+						// sorted_keep, as GrassField3D's blades; docs/ideas/vegetation.md, "Cold summers and frost-sorted ground").
+						const Vector2 fs = frost_ground->frost_sorted_at(Vector3(xz.x, map ? map->get_height_at(p3) : 0.0f, xz.y));
+						if (fs.x > 0.0f) {
+							const float roll = float(hash_murmur3_one_float(xz.x, hash_murmur3_one_float(xz.y, uint32_t(p_setup.seed) ^ 0x66726f73u)) & 0xFFFFFF) / float(0x1000000);
+							if (roll >= Math::lerp(1.0f, WorldContracts::sorted_keep(float(fs.y)), float(fs.x))) {
+								continue;
+							}
 						}
 					}
 					bool hay_stalk = false;

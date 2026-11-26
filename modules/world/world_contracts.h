@@ -1036,6 +1036,10 @@ public:
 	// and cushion plants a few centimetres high, erect dwarf shrubs and herbs at 7 to 9 C, a full sward by about 11 C
 	// (Walker et al. 2005; Gould et al. 2003): 0.3 + 0.7 smoothstep(3, 11, July); 1 with no climate (99).
 	static float stature_for_july(float p_july_c);
+	// On frost-sorted ground (WorldGround.frost_sorted_at's y, the stones' share): the share of cover plants kept, about a
+	// fiftieth on the churned fine centres and on the stones, a fifth on the margins between (D'Amico et al. 2015:
+	// "almost bare centers and better vegetated margins"). GLSL wc_sorted_keep the same.
+	static float sorted_keep(float p_stones);
 	// At a point (p_position.y the ground's height: the cold share follows it): the dry share (the season climate's precipitation times the
 	// climate's factor there) and the cold share (bare_share_for_july) together, 1 - (1 - dry)(1 - cold); -1 with no
 	// weather climate.

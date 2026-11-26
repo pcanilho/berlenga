@@ -2349,8 +2349,8 @@ a closed, flowering meadow.
 - **Sorted circles.** The fine centres heave each winter and stay almost bare; plants keep to the margins against
   the stone borders (D'Amico et al. 2015, Catena, sorted circles in the Alps: "almost bare centers and better
   vegetated margins"). The sward reads RockField3D's `terrain_frost_map` (r gate, g stones' share) and keeps about
-  2% of the blades on centres and stones and 20% on the margins (`wc_sorted_keep`). Cover plants placed on the CPU
-  cannot read that map yet; they get only the cold share.
+  2% of the blades on centres and stones and 20% on the margins (`wc_sorted_keep`). VegetationField3D's cover plants
+  keep the same shares through RockField3D's contract, `WorldGround.frost_sorted_at` (`WorldContracts::sorted_keep`).
 - **July climate on the GPU.** WeatherMap3D publishes `weather_climate_july` (July mean at the reference height, July
   lapse K/km, reference height, 1). `wc_climate_july(p)` lapses it to p.y, as RockField3D's frost gate does for its
   mean year.

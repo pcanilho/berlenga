@@ -1354,6 +1354,10 @@ float WorldContracts::stature_for_july(float p_july_c) {
 	return 0.3f + 0.7f * Math::smoothstep(3.0f, 11.0f, p_july_c);
 }
 
+float WorldContracts::sorted_keep(float p_stones) {
+	return 0.02f + 0.18f * Math::smoothstep(0.15f, 0.4f, p_stones) * (1.0f - Math::smoothstep(0.6f, 0.85f, p_stones));
+}
+
 float WorldContracts::climate_july_at(const Vector3 &p_position) {
 	WeatherSeason::Climate cl;
 	const WorldWeather *w = weather();
