@@ -84,9 +84,12 @@ constexpr int RIPPLE_COLUMNS = 64; // wide, so mipmaps (halving both ways) only 
 // fading over the lower 40% toward the tip. The normal map stays smooth there. Near the outline, where the view
 // grazes the ice, even slope 0.02 scalloped the edge of what it refracts into teeth, so the normals carry a
 // third of the ripple's slope: faint bands across the face, smooth refraction edges.
-constexpr float RIPPLE_AMPLITUDE = 0.00003f;
-constexpr float RIPPLE_NORMAL_SHARE = 0.3f;
-constexpr float RIPPLE_JITTER = 0.15f;
+// Raised to 0.12 mm (26 Nov 2026): eave icicles from roof melt are tap water's kind, and Chen and Morris (2010) saw
+// ripples on 48 of 53 tap-water icicles against 2 of 23 distilled; at 0.03 mm hut icicles read as smooth chrome. The
+// screw look 0.25 mm gave came from evenly spaced, even waves: the spacing now wanders by up to 30%.
+constexpr float RIPPLE_AMPLITUDE = 0.00012f;
+constexpr float RIPPLE_NORMAL_SHARE = 0.5f;
+constexpr float RIPPLE_JITTER = 0.3f;
 constexpr float RIPPLE_FADE_SHARE = 0.4f;
 // The hazy core: pockets of impure water caught in layers as the icicle thickens (Ladan and Morris 2022) cloud
 // the ice inside the newest clear layer; the tip, the newest ice, stays clear. The cloudy part is a thin central
@@ -105,6 +108,18 @@ constexpr float CORE_MAX_RADIUS = 0.0015f;
 constexpr float PROFILE_POWER = 0.75f;
 constexpr float PROFILE_ROOT = 0.913f;
 constexpr float PROFILE_SCATTER = 0.08f; // each icicle's taper power within 3/4 +- this
+// Tap-water icicles "have a bulge near their upper end and narrower tips" and fit the ideal profile far worse than
+// distilled ones (reduced chi-square 50 against 14; Chen and Morris 2010): each icicle swells by BULGE_MIN to
+// BULGE_MAX of its radius about BULGE_AT of the way down (over BULGE_WIDTH of its length), and its radius wanders by
+// LUMP_SHARE over LUMP_WAVELENGTH (spells of more and less flow), and round it by FLUTE_SHARE (the film runs down
+// some sides more than others: icicles grow flattened and fluted, not round). Our picks.
+constexpr float BULGE_MIN = 0.08f;
+constexpr float BULGE_MAX = 0.35f;
+constexpr float BULGE_AT = 0.15f;
+constexpr float BULGE_WIDTH = 0.12f;
+constexpr float LUMP_SHARE = 0.08f;
+constexpr float LUMP_WAVELENGTH = 0.05f;
+constexpr float FLUTE_SHARE = 0.1f;
 // Drip points along an eave (see _place): mean spacing, the width each one wets (standard deviation along the
 // edge) and the thin film that reaches the sites between them, as a share of a drip point's mean flow.
 constexpr float DRIP_SPACING = 0.4f;
@@ -494,7 +509,8 @@ void SnowIcicles3D::_ensure_children() {
 		// ripples a normal map along the icicle.
 		default_material.instantiate();
 		default_material->set_albedo(Color(0.97f, 0.99f, 1.0f));
-		default_material->set_roughness(0.06f);
+		// Smooth ice, but a fine frost and the ripples' own scatter: 0.1, not a mirror.
+		default_material->set_roughness(0.1f);
 		default_material->set_specular(0.335f);
 		default_material->set_feature(BaseMaterial3D::FEATURE_TRANSMISSION, true);
 		default_material->set_transmission(1.0f);
@@ -592,6 +608,20 @@ void SnowIcicles3D::_build_mesh() {
 			// Its radius by the distance from the full icicle's tip (the core stops short, as before).
 			const float u = MIN(MAX(p_ic.length - z, 0.0f) / MAX(p_ic.length, 1e-4f), 1.0f);
 			float rad = MAX(root * Math::pow(u, p_ic.power), tip);
+			// The icicle's own irregularity (both the clear ice and its core, so the core stays inside).
+			const uint32_t own = hash_murmur3_one_float(p_ic.position.x, hash_murmur3_one_float(p_ic.position.z));
+			auto own_v = [&](int p_i) { return float(hash_murmur3_one_32(uint32_t(p_i), own) & 0xffff) / 65535.0f; };
+			if (r >= 0 && rad > tip) {
+				const float zl = z / MAX(p_ic.length, 1e-4f);
+				const float b = (zl - BULGE_AT) / BULGE_WIDTH;
+				float shape = 1.0f + Math::lerp(BULGE_MIN, BULGE_MAX, own_v(1)) * Math::exp(-b * b);
+				const float lx = z / LUMP_WAVELENGTH + 7.0f * own_v(2);
+				const int l0 = int(Math::floor(lx));
+				const float lt = lx - l0;
+				shape += LUMP_SHARE * (2.0f * Math::lerp(own_v(16 + l0), own_v(17 + l0), lt * lt * (3.0f - 2.0f * lt)) - 1.0f);
+				rad = MAX(rad * shape, tip);
+			}
+			const float flute_a = float(Math::TAU) * own_v(3), flute_b = float(Math::TAU) * own_v(4);
 			if (!p_ripples && p_scale < 1.0f) {
 				rad = MIN(rad, CORE_MAX_RADIUS); // the hazy core: a thin column
 			}
@@ -629,7 +659,8 @@ void SnowIcicles3D::_build_mesh() {
 			for (int s = 0; s <= SIDES; s++) {
 				const float a = float(Math::TAU) * s / SIDES;
 				const Vector3 out(Math::cos(a), 0.0f, Math::sin(a));
-				p_out.verts.push_back(centre + out * rad);
+				const float flute = r < 0 || r == rings ? 1.0f : 1.0f + FLUTE_SHARE * (0.7f * Math::cos(2.0f * a + flute_a) + 0.3f * Math::cos(3.0f * a + flute_b));
+				p_out.verts.push_back(centre + out * rad * flute);
 				p_out.normals.push_back((out + Vector3(0.0f, -(rad > tip || ripples ? slope : 0.0f), 0.0f)).normalized());
 				const Vector3 t(-Math::sin(a), 0.0f, Math::cos(a));
 				p_out.tangents.push_back(t.x);

@@ -2378,3 +2378,20 @@ Research notes for Paulo's pick; nothing below is built yet.
 3. Layers you can see: ruts, shovel cuts and avalanche crowns show the stack on their walls, new snow bright and
    fine, wind slab chalky, old snow coarse and grey, crusts as thin glazed lines (the crown face of a slab avalanche,
    SnowRunner's trench walls), from the layer stack per cell through the surface's displacement.
+
+### Slush on benches (26 Nov 2026)
+
+The slush scout's "flat" site was a ledge 1 m wide on a 57 degree bank: flat at the boot, but the cover's 4 m cell read the
+bank's slope by its central difference and drained the slush as if it hung there (8 mm of 120 mm rain kept). The drain
+now takes each cell's own slope by a minmod limiter (Roe 1986): the gentler one-sided difference, none in a hollow, so a
+bench at the foot or top of a bank ponds. The scout also asks for gentle ground over 8 m (`--slush-span`); its new
+site (3.9 degrees) ponds 0.15 m of slush in a 0.19 m pack.
+
+### Eave icicles from roof melt (26 Nov 2026)
+
+At the hut the icicles read as smooth chrome cones. Roof melt grows tap water's icicles, not distilled water's: Chen and
+Morris (2010) saw ripples on 48 of 53 tap-water icicles (2 of 23 distilled), a bulge near the upper end with a narrower
+tip, and fits to the ideal 3/4 power profile far worse (reduced chi-square 50 against 14). Each icicle now swells by 8 to
+35% of its radius 15% of the way down, its radius wanders by 8% over 5 cm (spells of flow), its section is fluted by
+10% (the film favours some sides), its ripples are 0.12 mm (from 0.03) with spacing wandering 30%, and the ice is
+roughness 0.1. Path traced, the ripples break each glint into dashes as photographs show.

@@ -701,6 +701,21 @@ void SnowCover3D::_prepare_inputs(double p_weather_dt, bool p_blocking) {
 	}
 }
 
+// The rise of a cell's own ground per cell from its two one-sided differences (NAN where there is no
+// neighbour): none in a hollow (it falls toward the cell from both sides), else the gentler side's, as a minmod limiter.
+static float cell_slope_limited(float p_from_low, float p_to_high) {
+	if (Math::is_nan(p_from_low)) {
+		return Math::is_nan(p_to_high) ? 0.0f : p_to_high;
+	}
+	if (Math::is_nan(p_to_high)) {
+		return p_from_low;
+	}
+	if (p_from_low < 0.0f && p_to_high > 0.0f) {
+		return 0.0f;
+	}
+	return Math::abs(p_from_low) < Math::abs(p_to_high) ? p_from_low : p_to_high;
+}
+
 void SnowCover3D::_update_row(uint32_t p_row, void *p_unused) {
 	const Inputs &in = inputs;
 	const int n = resolution;
@@ -994,10 +1009,13 @@ void SnowCover3D::_update_row(uint32_t p_row, void *p_unused) {
 				runoff += slush; // thawed ground (or none left above it): it soaks away
 				slush = 0.0f;
 			} else {
-				const int xl = MAX(x - 1, 0), xr = MIN(x + 1, n - 1);
-				const int zd = MAX(z - 1, 0), zu = MIN(z + 1, n - 1);
-				const float gx = (cell_ground[z * n + xr] - cell_ground[z * n + xl]) / ((xr - xl) * cs);
-				const float gz = (cell_ground[zu * n + x] - cell_ground[zd * n + x]) / ((zu - zd) * cs);
+				// The slope the slush lies on is its own cell's: the gentler of the two one-sided differences, and
+				// none in a hollow (a minmod limiter, as slope-limited schemes take a cell's gradient; Roe 1986). A
+				// central difference would give a flat bench at the foot or top of a bank the bank's slope, and drain
+				// it as if it hung on the bank.
+				const float hc = cell_ground[i];
+				const float gx = cell_slope_limited(x > 0 ? hc - cell_ground[i - 1] : NAN, x < n - 1 ? cell_ground[i + 1] - hc : NAN) / cs;
+				const float gz = cell_slope_limited(z > 0 ? hc - cell_ground[i - n] : NAN, z < n - 1 ? cell_ground[i + n] - hc : NAN) / cs;
 				const float g2 = gx * gx + gz * gz;
 				const float kept = slush * Math::exp(-slush_drain_rate(rho, Math::sqrt(g2 / (1.0f + g2)), MAX(cs, SLUSH_SLOPE_LENGTH)) * in.dt_h);
 				runoff += slush - kept;

@@ -1,0 +1,1 @@
+- Snow: slush ponds on a bench beside a bank (each cell drains by its own slope, not the bank next to it).
