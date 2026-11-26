@@ -199,7 +199,7 @@ class Landscape3D : public Node3D, public WorldReliefProvider {
 	void _clear_relief_map();
 	// p_steps: the terracettes' too. r_drawn: the drawn face point the relief pushes out to (landscape space) and its
 	// metres up per metre out (tan slope), for the recess; r_drawn_tan 0 where no relief reaches.
-	Vector2 _relief_at_local(const Vector3 &p_local, bool p_steps = true, Vector3 *r_drawn = nullptr, real_t *r_drawn_tan = nullptr) const;
+	Vector2 _relief_at_local(const Vector3 &p_local, bool p_steps = true, Vector3 *r_drawn = nullptr, real_t *r_drawn_tan = nullptr, Vector3 *r_drawn_dir = nullptr) const;
 	// The cliff relief's share (its face weight, 0..1) over a wider square for the terrain material (no soil on a
 	// shelf between walls): terrain_cliff_map (R8) over terrain_cliff_rect, CLIFF_MAP_SIZE round the camera at
 	// CLIFF_MAP_RES texels, rebuilt with the relief map.

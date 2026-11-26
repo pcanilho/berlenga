@@ -718,7 +718,7 @@ Vector3 Landscape3D::_recessed(const Vector3 &p_c, const Vector3 &p_n, real_t p_
 	if (r_share) {
 		*r_share = r.w;
 	}
-	return p_c + recess_xform.basis.xform_inv(Vector3(r.x, r.y, r.z)) * p_keep;
+	return p_c + recess_xform.basis.inverse().xform(Vector3(r.x, r.y, r.z)) * p_keep; // (the full inverse: the placement may scale)
 }
 
 Vector3 Landscape3D::_cliff_point_framed(const Vector3 &p, real_t p_weight_scale, ReliefFrame &r_frame) const {
@@ -2887,7 +2887,7 @@ void Landscape3D::_clear_stand_map() {
 // bank relief push a surface point out along the slope's horizontal normal m by d, so at a fixed xz the surface stands
 // d tan(slope) higher (outward is downhill). The full field: the stitch weight on sides next to coarser chunks and the
 // finest-chunk-only drawing are left out (both are under a pixel by design).
-Vector2 Landscape3D::_relief_at_local(const Vector3 &p, bool p_steps, Vector3 *r_drawn, real_t *r_drawn_tan) const {
+Vector2 Landscape3D::_relief_at_local(const Vector3 &p, bool p_steps, Vector3 *r_drawn, real_t *r_drawn_tan, Vector3 *r_drawn_dir) const {
 	if (r_drawn_tan) {
 		*r_drawn_tan = 0.0;
 	}
@@ -2935,25 +2935,30 @@ Vector2 Landscape3D::_relief_at_local(const Vector3 &p, bool p_steps, Vector3 *r
 	if (r_drawn && r_drawn_tan) {
 		*r_drawn = q + Vector3(n.x / ml, 0.0, n.z / ml) * d;
 		*r_drawn_tan = ml / n.y;
+		if (r_drawn_dir) {
+			*r_drawn_dir = Vector3(n.x / ml, 0.0, n.z / ml);
+		}
 	}
 	return Vector2(d * ml / n.y + tc, MIN(w.x + w.y, real_t(1.0)));
 }
 
 Vector2 Landscape3D::contract_relief_at(const Vector3 &p_position, bool p_steps, bool p_recess) const {
 	const Transform3D xf = is_inside_tree() ? get_global_transform() : Transform3D();
-	Vector3 drawn;
+	Vector3 drawn, dir;
 	real_t tn = 0.0;
 	Vector2 r;
 	{
 		RWLockRead hl(heights_lock);
-		r = _relief_at_local(xf.affine_inverse().xform(p_position), p_steps, &drawn, &tn);
+		r = _relief_at_local(xf.affine_inverse().xform(p_position), p_steps, &drawn, &tn, &dir);
 	}
 	// The cliff kit's recess, asked outside the lock (its producer fits its pillars to the unrecessed face through
-	// this same contract): the face steps back by depth x share, so at a fixed xz it stands that much times tan lower.
+	// this same contract): the drawn face steps back by the recess offset (along the pillar's normal, as the mesh
+	// does), so at a fixed xz it stands that offset's share along the face's own horizontal normal times tan lower.
 	if (p_recess && tn > 0.0 && Math::is_finite(r.x) && WorldContracts::ground()->has_recess()) {
-		const Vector2 rc = WorldContracts::ground()->recess_at(xf.xform(drawn));
-		if (rc.x > 0.0f && rc.y > 0.0f) {
-			r.x -= real_t(rc.x) * real_t(rc.y) * tn;
+		const Vector4 rv = WorldContracts::ground()->recess_vector_at(xf.xform(drawn));
+		if (rv.w > 0.0f) {
+			const Vector3 off = xf.basis.inverse().xform(Vector3(rv.x, rv.y, rv.z));
+			r.x -= MAX(-off.dot(dir), real_t(0.0)) * tn;
 		}
 	}
 	return r;
