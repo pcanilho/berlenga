@@ -2475,7 +2475,7 @@ void SnowSurface3D::GPUSink::stamp(const GroundDeformField::Columns &p_columns, 
 	const float crust = p_columns.column(p_position.x, p_position.z).crust;
 	const float crack = crust > 0.0f ? GroundDeformField::CRACK_LENGTH * Math::pow(crust / 0.02f, 0.75f) : 0.0f;
 	const float bow = CLAMP(p_velocity.length() / GroundDeformField::BOW_SPEED, 0.0f, 1.0f);
-	const float span = (p_box ? p_half.length() : p_radius) + MAX(ring * (1.0f + bow * GroundDeformField::BOW_REACH), 1.6f * crack);
+	const float span = (p_box ? p_half.length() : p_radius) + MAX(MAX(ring * (1.0f + bow * GroundDeformField::BOW_REACH), 1.6f * crack), 2.0f * f.texel()); // and the widest edge (GroundDeformField::edge_width)
 	int x0, x1, z0, z1;
 	if (!GroundDeformGPUHost::stamp_bounds(f, p_position, span, x0, x1, z0, z1)) {
 		return;

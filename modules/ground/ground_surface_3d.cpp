@@ -8264,7 +8264,7 @@ void GroundSurface3D::GPUSink::stamp(const GroundDeformField::Columns &p_columns
 	// The footprint's reach, as GroundDeformField::press works it out (no crusts in the ground).
 	const float ring = GroundDeformField::rim_ring(p_box, p_half, p_radius, f.rim_reach);
 	const float bow = CLAMP(p_velocity.length() / GroundDeformField::BOW_SPEED, 0.0f, 1.0f);
-	const float span = (p_box ? p_half.length() : p_radius) + ring * (1.0f + bow * GroundDeformField::BOW_REACH);
+	const float span = (p_box ? p_half.length() : p_radius) + MAX(ring * (1.0f + bow * GroundDeformField::BOW_REACH), 2.0f * f.texel()); // and the widest edge (GroundDeformField::edge_width)
 	int x0, x1, z0, z1;
 	if (!GroundDeformGPUHost::stamp_bounds(f, p_position, span, x0, x1, z0, z1)) {
 		return;
