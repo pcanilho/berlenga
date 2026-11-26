@@ -1129,6 +1129,8 @@ func _ready() -> void:
 				_log("frost sorted: stones laid round the camera (%d frames for the detail)" % fw)
 	if args.has("block-field"):
 		await _block_field_cam()
+	if args.has("karst-spring"):
+		await _karst_spring_cam()
 	if args.has("walker-snow"):
 		await _walker_snow()
 	if args.has("lodging"):
@@ -1354,6 +1356,20 @@ func _ready() -> void:
 			# properties changed (e.g. mud_scan:null for the mud scan's before frame): paused, --mat-pair-frames (12) more.
 			process_mode = Node.PROCESS_MODE_ALWAYS
 			get_tree().paused = true
+			# --mat-pair-rocks=name:value[;...]: RockField3D properties changed with it (desert_varnish:false, the
+			# cliff kit's half of the varnish), the rocks rebuilt before the frame.
+			var mpr := String(args.get("mat-pair-rocks", ""))
+			if not mpr.is_empty() and rocks != null:
+				rocks.process_mode = Node.PROCESS_MODE_ALWAYS
+				for kv in mpr.split(";", false):
+					var rv := kv.split(":")
+					rocks.set(rv[0], str_to_var(rv[1]))
+				for i in 90:
+					await get_tree().process_frame
+				var mpw := 0
+				while rocks.has_method("get_ground_detail_pending") and int(rocks.get_ground_detail_pending()) > 0 and mpw < 1200:
+					await get_tree().process_frame
+					mpw += 1
 			for kv in String(args.get("mat-pair-prop", "")).split(";", false):
 				var pv := kv.split(":")
 				if pv[0].begins_with("tm_"): # a shader uniform (tm_varnish:0 for the cliff varnish's before frame)
@@ -8001,6 +8017,40 @@ func _lobster_net(n: Node3D) -> void:
 func _climate_bare_arg(n: Node) -> void:
 	if args.get("climate-bare", "1") == "0" and "climate_bare" in n:
 		n.set("climate_bare", false)
+
+# --karst-spring[=k]: RockField3D.karst's spring k (1 = the first WorldCaves resurgence) on its valley wall, with the
+# tufa mound and dams down its outfall: the camera --ks-back (30) m down the outfall's fall line and --ks-up (6) m
+# up, turned --ks-side (12) m across it, looking at the ground --ks-ahead (4) m below the mouth.
+func _karst_spring_cam() -> void:
+	if not ClassDB.class_exists("WorldCaves") or WorldContracts.get_caves() == null:
+		_log("karst spring: no WorldCaves")
+		return
+	var wr: Rect2 = gen.get_world_rect()
+	var rss: Array = WorldContracts.get_caves().get_resurgences(wr)
+	if rss.is_empty():
+		_log("karst spring: no springs")
+		return
+	for r in rss:
+		_log("karst spring: %s" % str(r))
+	var sp: Dictionary = rss[clampi(int(args.get("karst-spring", "1")) - 1, 0, rss.size() - 1)]
+	var m: Vector3 = sp["position"]
+	var gr := _fs_grad(m)
+	var down := Vector3(-gr.x, 0, -gr.y).normalized() if gr.length() > 0.001 else Vector3(0, 0, 1)
+	var side := down.cross(Vector3.UP)
+	var cp := m + down * float(args.get("ks-back", "30")) + side * float(args.get("ks-side", "12"))
+	cp.y = height_at(cp.x, cp.z) + float(args.get("ks-up", "6"))
+	var la := m + down * float(args.get("ks-ahead", "4"))
+	var c3: Camera3D = get_viewport().get_camera_3d()
+	c3.fov = 55.0
+	c3.global_position = cp
+	c3.look_at(Vector3(la.x, height_at(la.x, la.z), la.z))
+	_log("karst spring: mouth %s, down (%.2f, %.2f), camera %s" % [str(m.round()), down.x, down.z, str(cp.round())])
+	if rocks != null:
+		rocks.build_area(Rect2(cp.x - 50.0, cp.z - 50.0, 100.0, 100.0))
+		var w := 0
+		while rocks.has_method("get_ground_detail_pending") and int(rocks.get_ground_detail_pending()) > 0 and w < 1200:
+			await get_tree().process_frame
+			w += 1
 
 func _block_field_cam() -> void:
 	if rocks == null or not rocks.has_method("get_block_field_at"):
