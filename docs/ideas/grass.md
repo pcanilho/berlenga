@@ -716,3 +716,27 @@ Findings (19 Nov):
 - Goudriaan, Crop micrometeorology: a simulation study, Pudoc 1977.
 - Sellers, Canopy reflectance, photosynthesis and transpiration, Int. J. Remote Sensing 6, 1985.
 - Pesce, Making a greener grass, part 2 (Call of Duty: Black Ops 4 vegetation), c0de517e.com, 2024.
+
+## Contact from the real collision shapes (26 Nov, Paulo: "Real PhysX contacts")
+
+The trample field (stage 2.2) pressed one disc per body: the radius of its first collision shape, round its
+origin. A car pressed a disc the size of its chassis box, a ragdoll one disc, and a wheel never pressed where its
+tyre met the ground.
+
+- **What games and papers do.** Crysis 3 (Sousa, GDC 2013, "Rendering Technologies of Crysis 3", slides 29-40)
+  samples physics each frame for colliders near the grass, converts their collision geometry into "a small sphere
+  set" and collides the blades against it. Jahrmann and Wimmer (I3D 2017) also represent colliders "as
+  collections of spheres" and keep a collision strength per blade for "a persistent crippling effect". NVIDIA Turf
+  Effects (2015) takes height fields and dynamic primitives, with recovery speed set by the developer. Ghost of
+  Tsushima's GDC 2021 talk, as far as the public summaries go, covers art direction and wind, not contact.
+- **What we do.** Every body in `grass_trample` or `world_contact` is read as a sphere set from its real collision
+  shapes at their real transforms (`WorldContracts::contact_spheres`): a sphere as itself, a capsule or cylinder as
+  a chain along its axis, a lying cylinder (a wheel) as a ring of tread-wide spheres round its rim, a box as a grid,
+  any other shape as its bounding box. Ragdoll bones (PhysicalBone3D while simulating) and VehicleWheel3D tyres
+  (radius, meta `deform_wheel_width`) join their body's set, and the contact points the physics server reports for
+  the body (a RigidBody3D with contact monitoring) add a small sphere each. Each sphere carries its own velocity,
+  the body's linear velocity plus its spin about the body's origin, so a spinning wheel throws the blades back.
+- **Pressing.** A sphere bends only the blades it reaches: its widest slice within the sward's height is the
+  footprint, and the strength is how far below the blade tops it reaches (1 at the ground, 0 at the tips). A
+  chassis riding over the grass touches nothing; its wheels and anything dragging press their own prints.
+- Next, if wanted: Jahrmann's persistent collision strength (heavy or long contact recovers more slowly).

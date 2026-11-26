@@ -51,6 +51,10 @@
 #include "scene/3d/physics/collision_shape_3d.h"
 #include "scene/3d/physics/character_body_3d.h"
 #include "scene/3d/physics/rigid_body_3d.h"
+#include "scene/3d/physics/physical_bone_3d.h"
+#include "scene/3d/physics/vehicle_body_3d.h"
+#include "scene/resources/3d/convex_polygon_shape_3d.h"
+#include "scene/resources/3d/concave_polygon_shape_3d.h"
 #include "scene/resources/3d/box_shape_3d.h"
 #include "scene/resources/3d/capsule_shape_3d.h"
 #include "scene/resources/3d/cylinder_shape_3d.h"
@@ -2672,6 +2676,179 @@ Vector2 WorldContracts::body_extent(const Node3D *p_node, float p_fallback) {
 		}
 	}
 	return Vector2(p_fallback, p_fallback);
+}
+
+namespace {
+constexpr int CONTACT_SPHERES_MAX = 512;
+
+struct ContactSphereSet {
+	LocalVector<Vector4> *spheres;
+	LocalVector<Vector3> *velocities;
+	Vector3 lin; // the body's linear velocity
+	Vector3 ang; // its spin, rad/s
+	Vector3 origin; // what it spins about
+	void add(const Vector3 &p_c, float p_r) {
+		if ((int)spheres->size() >= CONTACT_SPHERES_MAX || p_r <= 0.0f) {
+			return;
+		}
+		spheres->push_back(Vector4(p_c.x, p_c.y, p_c.z, p_r));
+		velocities->push_back(lin + ang.cross(p_c - origin));
+	}
+	// A chain of spheres of radius p_r from p_a to p_b, about p_r apart.
+	void chain(const Vector3 &p_a, const Vector3 &p_b, float p_r) {
+		const float len = p_a.distance_to(p_b);
+		const int n = MAX(1, int(Math::ceil(len / MAX(p_r, 0.01f)))) + 1;
+		for (int i = 0; i < n; i++) {
+			add(n > 1 ? p_a.lerp(p_b, float(i) / float(n - 1)) : p_a, p_r);
+		}
+	}
+	// A box of half extents p_h on p_xf: spheres of half its thinnest side over a grid of the other two.
+	void box(const Transform3D &p_xf, const Vector3 &p_hv) {
+		const float h[3] = { float(p_hv.x), float(p_hv.y), float(p_hv.z) };
+		const float r = MAX(MIN(h[0], MIN(h[1], h[2])), 0.02f);
+		int n[3];
+		for (int k = 0; k < 3; k++) {
+			n[k] = h[k] - r <= 1e-3f ? 1 : MIN(int(Math::ceil(2.0f * (h[k] - r) / r)) + 1, 12);
+		}
+		auto at = [&](int p_k, int p_i) { return n[p_k] > 1 ? Math::lerp(-(h[p_k] - r), h[p_k] - r, float(p_i) / float(n[p_k] - 1)) : 0.0f; };
+		for (int i = 0; i < n[0]; i++) {
+			for (int j = 0; j < n[1]; j++) {
+				for (int k = 0; k < n[2]; k++) {
+					add(p_xf.xform(Vector3(at(0, i), at(1, j), at(2, k))), r);
+				}
+			}
+		}
+	}
+	// A disc (a tyre) on its axis p_axis through p_c: a ring of tread-wide spheres round the rim.
+	void wheel(const Vector3 &p_c, const Vector3 &p_axis, float p_radius, float p_width) {
+		const float r = MAX(MIN(p_width * 0.5f, p_radius), 0.02f);
+		const Vector3 ax = p_axis.normalized();
+		Vector3 u = ax.cross(Vector3(0, 1, 0));
+		if (u.length_squared() < 1e-6f) {
+			u = ax.cross(Vector3(1, 0, 0));
+		}
+		u.normalize();
+		const Vector3 v = ax.cross(u);
+		const float ring = MAX(p_radius - r, 0.0f);
+		const int n = ring <= 1e-3f ? 1 : CLAMP(int(Math::ceil(Math::TAU * ring / r)), 6, 32);
+		for (int i = 0; i < n; i++) {
+			const float a = Math::TAU * float(i) / float(n);
+			add(p_c + (u * Math::cos(a) + v * Math::sin(a)) * ring, r);
+		}
+	}
+	void shape(const Transform3D &p_xf, const Ref<Shape3D> &p_shape) {
+		const Vector3 sc = p_xf.basis.get_scale();
+		const Vector3 up = p_xf.basis.get_column(1).normalized();
+		if (const SphereShape3D *sp = Object::cast_to<SphereShape3D>(p_shape.ptr())) {
+			add(p_xf.origin, sp->get_radius() * MAX(sc.x, MAX(sc.y, sc.z)));
+		} else if (const CapsuleShape3D *cp = Object::cast_to<CapsuleShape3D>(p_shape.ptr())) {
+			const float r = cp->get_radius() * MAX(sc.x, sc.z);
+			const float a = MAX(cp->get_height() * 0.5f * sc.y - r, 0.0f);
+			chain(p_xf.origin - up * a, p_xf.origin + up * a, r);
+		} else if (const CylinderShape3D *cy = Object::cast_to<CylinderShape3D>(p_shape.ptr())) {
+			const float r = cy->get_radius() * MAX(sc.x, sc.z);
+			const float h = cy->get_height() * 0.5f * sc.y;
+			if (h < r) {
+				wheel(p_xf.origin, up, r, 2.0f * h); // A disc: a wheel, lying or standing.
+			} else {
+				chain(p_xf.origin - up * (h - r), p_xf.origin + up * (h - r), r);
+			}
+		} else if (const BoxShape3D *bx = Object::cast_to<BoxShape3D>(p_shape.ptr())) {
+			box(Transform3D(p_xf.basis.orthonormalized(), p_xf.origin), bx->get_size() * 0.5f * sc);
+		} else {
+			AABB bb;
+			bool any = false;
+			if (const ConvexPolygonShape3D *cv = Object::cast_to<ConvexPolygonShape3D>(p_shape.ptr())) {
+				for (const Vector3 &q : cv->get_points()) {
+					bb = any ? bb.expand(q) : AABB(q, Vector3());
+					any = true;
+				}
+			} else if (const ConcavePolygonShape3D *cc = Object::cast_to<ConcavePolygonShape3D>(p_shape.ptr())) {
+				for (const Vector3 &q : cc->get_faces()) {
+					bb = any ? bb.expand(q) : AABB(q, Vector3());
+					any = true;
+				}
+			}
+			if (any) {
+				box(Transform3D(p_xf.basis.orthonormalized(), p_xf.xform(bb.get_center())), bb.size * 0.5f * sc);
+			}
+		}
+	}
+	void shapes_of(const Node *p_node) {
+		for (int i = 0; i < p_node->get_child_count(); i++) {
+			const CollisionShape3D *cs = Object::cast_to<CollisionShape3D>(p_node->get_child(i));
+			if (cs && !cs->is_disabled() && cs->get_shape().is_valid()) {
+				shape(cs->get_global_transform(), cs->get_shape());
+			}
+		}
+	}
+	// A ragdoll's bones: every PhysicalBone3D under the node that simulates (a few levels down: skeleton, simulator).
+	void bones_under(Node *p_node, int p_depth) {
+		for (int i = 0; i < p_node->get_child_count() && p_depth > 0; i++) {
+			Node *c = p_node->get_child(i);
+			if (PhysicalBone3D *pb = Object::cast_to<PhysicalBone3D>(c)) {
+				if (pb->is_simulating_physics()) {
+					const Vector3 l0 = lin, a0 = ang, o0 = origin;
+					lin = pb->get_linear_velocity();
+					ang = pb->get_angular_velocity();
+					origin = pb->get_global_position();
+					shapes_of(pb);
+					lin = l0;
+					ang = a0;
+					origin = o0;
+				}
+				continue;
+			}
+			bones_under(c, p_depth - 1);
+		}
+	}
+};
+} // namespace
+
+void WorldContracts::contact_spheres(const Node3D *p_node, LocalVector<Vector4> &r_spheres, LocalVector<Vector3> &r_velocities, const Vector3 &p_fallback_velocity) {
+	r_spheres.clear();
+	r_velocities.clear();
+	if (!p_node) {
+		return;
+	}
+	ContactSphereSet set{ &r_spheres, &r_velocities, p_fallback_velocity, Vector3(), p_node->get_global_position() };
+	if (p_node->has_meta(SNAME("trample_radius"))) {
+		set.add(p_node->get_global_position(), p_node->get_meta(SNAME("trample_radius")));
+		return;
+	}
+	if (const RigidBody3D *rb = Object::cast_to<RigidBody3D>(p_node)) {
+		set.lin = rb->get_linear_velocity();
+		set.ang = rb->get_angular_velocity();
+	} else if (const CharacterBody3D *cb = Object::cast_to<CharacterBody3D>(p_node)) {
+		set.lin = cb->get_velocity();
+	}
+	set.shapes_of(p_node);
+	Node *n = const_cast<Node3D *>(p_node);
+	for (int i = 0; i < n->get_child_count(); i++) {
+		if (const VehicleWheel3D *w = Object::cast_to<VehicleWheel3D>(n->get_child(i))) {
+			const float r = w->get_radius();
+			const float width = w->has_meta(SNAME("deform_wheel_width")) ? float(w->get_meta(SNAME("deform_wheel_width"))) : r * 0.6f;
+			set.wheel(w->get_global_position(), w->get_global_basis().get_column(0), r, width);
+		}
+	}
+	set.bones_under(n, 4);
+	// The contact points the physics server reports for the body (contact monitoring on): where it actually touches.
+	if (const CollisionObject3D *co = Object::cast_to<CollisionObject3D>(p_node)) {
+		PhysicsServer3D *ps = PhysicsServer3D::get_singleton();
+		if (ps && Object::cast_to<PhysicsBody3D>(p_node)) {
+			if (PhysicsDirectBodyState3D *st = ps->body_get_direct_state(co->get_rid())) {
+				const int nc = MIN(st->get_contact_count(), 32);
+				for (int i = 0; i < nc; i++) {
+					const Vector3 cp = st->get_contact_local_position(i);
+					set.add(cp + Vector3(0.0f, 0.08f, 0.0f), 0.08f);
+				}
+			}
+		}
+	}
+	if (r_spheres.is_empty()) {
+		const Vector2 e = body_extent(p_node, 0.4f);
+		set.add(p_node->get_global_position(), e.x);
+	}
 }
 
 Dictionary WorldContracts::describe_body_bind(Node *p_node) const {

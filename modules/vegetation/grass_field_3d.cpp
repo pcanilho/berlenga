@@ -7308,6 +7308,8 @@ void GrassField3D::add_trample(const Vector3 &p_position, float p_radius, const 
 		return;
 	}
 	const float texel = trample_size / res;
+	// A print narrower than a texel (a tyre's tread, a contact point) still bends the texel under it.
+	p_radius = MAX(p_radius, texel * 0.5f);
 	const float reach = p_radius * 1.25f;
 	const Vector2 c(p_position.x, p_position.z);
 	const Vector2 v(p_velocity.x, p_velocity.z);
@@ -7363,10 +7365,6 @@ void GrassField3D::clear_trample() {
 	trample_active = true; // Upload the cleared field once.
 }
 
-Vector2 GrassField3D::_mover_extent(Node3D *p_node) const {
-	return WorldContracts::body_extent(p_node, trample_radius);
-}
-
 void GrassField3D::_trample_step(double p_delta) {
 	TerrainDataMap3D *map = Object::cast_to<TerrainDataMap3D>(get_node_or_null(data_map));
 	if (map && !map->is_baked()) {
@@ -7408,12 +7406,29 @@ void GrassField3D::_trample_step(double p_delta) {
 				vel = Vector3(); // Teleported, not moving.
 			}
 			seen.insert(n3->get_instance_id(), pos);
-			const Vector2 ext = _mover_extent(n3);
-			const float ground = map ? map->get_height_at(pos) : ground_y;
-			if (pos.y - ext.y - ground > top) {
-				continue; // Above the grass.
+			// Its real collision geometry as spheres (WorldContracts::contact_spheres; docs/ideas/grass.md, "Contact
+			// from the real collision shapes"): each presses the blades it reaches, with its own velocity.
+			WorldContracts::contact_spheres(n3, contact_sp, contact_vel, vel);
+			for (uint32_t k = 0; k < contact_sp.size(); k++) {
+				const Vector4 &sp = contact_sp[k];
+				const Vector3 c(sp.x, sp.y, sp.z);
+				const float r = sp.w;
+				const float ground = map ? map->get_height_at(c) : ground_y;
+				const float low = c.y - r - ground; // Its underside over the ground.
+				if (low > top) {
+					continue; // Above the blade tips.
+				}
+				// Its widest slice within the sward (ground to the tips) is the footprint.
+				const float mid = CLAMP(float(c.y - ground), 0.0f, top);
+				const float off = float(c.y - ground) - mid;
+				const float slice = Math::sqrt(MAX(r * r - off * off, 0.0f));
+				if (slice < 0.01f) {
+					continue;
+				}
+				// The blades bend until their tips pass under it: flat at the ground, untouched at the tips.
+				const float strength = 1.0f - CLAMP(MAX(low, 0.0f) / MAX(top, 0.01f), 0.0f, 1.0f);
+				add_trample(Vector3(c.x, ground, c.z), slice, contact_vel[k], strength);
 			}
-			add_trample(pos, ext.x, vel);
 		}
 	}
 	trample_last = seen;

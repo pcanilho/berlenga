@@ -1151,6 +1151,16 @@ public:
 	// its trample_radius meta, else its first enabled collision shape (sphere, capsule, cylinder, box), else
 	// p_fallback for both.
 	static Vector2 body_extent(const Node3D *p_node, float p_fallback);
+	// The body's collision geometry as a sphere set, for what its shape bends and pushes aside (docs/ideas/grass.md,
+	// "Contact from the real collision shapes"; Crysis 3's collider sphere sets, Sousa 2013; Jahrmann and Wimmer 2017).
+	// Each enabled CollisionShape3D at its global transform: a sphere as itself, a capsule or upright cylinder as a
+	// chain along its axis, a lying cylinder (a wheel) as a ring of tread-wide spheres round its rim, a box as a grid,
+	// any other shape as its bounding box's grid. Also its PhysicalBone3D descendants while they simulate (a ragdoll),
+	// its VehicleWheel3D tyres (radius; width from meta deform_wheel_width, else 0.6 of the radius) and the contact
+	// points the physics server reports for it (0.08 m each). r_spheres: (centre, radius); r_velocities each one's
+	// velocity (the body's linear velocity plus its spin about its origin; p_fallback_velocity where the body has
+	// none). A meta trample_radius gives one sphere of that radius at the origin instead. At most 512 spheres.
+	static void contact_spheres(const Node3D *p_node, LocalVector<Vector4> &r_spheres, LocalVector<Vector3> &r_velocities, const Vector3 &p_fallback_velocity = Vector3());
 	Dictionary describe_body_bind(Node *p_node) const;
 
 	WorldContracts();

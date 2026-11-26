@@ -269,6 +269,8 @@ private:
 	Ref<Image> trample_image;
 	Ref<ImageTexture> trample_texture;
 	HashMap<ObjectID, Vector3> trample_last;
+	LocalVector<Vector4> contact_sp; // a mover's sphere set (WorldContracts::contact_spheres), reused each frame
+	LocalVector<Vector3> contact_vel;
 	WaterCurrentBend water_current; // the current in water over the sward
 
 	Crop crop = CROP_NONE;
@@ -646,7 +648,6 @@ private:
 	void _trample_recenter(const Vector3 &p_center);
 	void _trample_step(double p_delta);
 	void _trample_upload();
-	Vector2 _mover_extent(Node3D *p_node) const; // Radius and half height.
 
 protected:
 	void _notification(int p_what);

@@ -2884,6 +2884,8 @@ func _move(dt: float) -> void:
 	var s := t * 1.3
 	_place(walker, 6.0 - s, 12.5, 0.0)
 
+var cart: Node3D
+
 func _trample_checks(dt: float) -> bool:
 	# Ball parked on the ground at P: flat under it, bent away at its rim, untouched 3 m away.
 	var p := Vector3(2.0, 0.0, 12.0)
@@ -2907,6 +2909,38 @@ func _trample_checks(dt: float) -> bool:
 		var left := grass.get_trample_at(p).length()
 		# Also shows a ball held above the grass does not press it.
 		_check("springs back (half-life 0.5 s), none from the air", left < 0.12, left)
+		# A cart from its real collision shapes (WorldContracts::contact_spheres): a box chassis riding over the
+		# grass and two tyres (lying cylinders) on the ground 1.6 m apart. Only the tyres press, each its narrow tread.
+		cart = Node3D.new()
+		cart.name = "Cart"
+		cart.add_to_group("grass_trample")
+		var chassis := CollisionShape3D.new()
+		var cb := BoxShape3D.new()
+		cb.size = Vector3(1.8, 0.3, 2.4)
+		chassis.shape = cb
+		chassis.position = Vector3(0, 1.6, 0)
+		cart.add_child(chassis)
+		for sx in [-0.8, 0.8]:
+			var wh := CollisionShape3D.new()
+			var cy := CylinderShape3D.new()
+			cy.radius = 0.35
+			cy.height = 0.2
+			wh.shape = cy
+			wh.rotation = Vector3(0, 0, PI * 0.5)
+			wh.position = Vector3(sx, 0.35, 0)
+			cart.add_child(wh)
+		add_child(cart)
+		var q := p + Vector3(0, 0, 4) # (clear of the ball's spot, still springing back)
+		cart.global_position = Vector3(q.x, height(q.x, q.z), q.z)
+		phase = 3
+		phase_t = 0.0
+	elif phase == 3 and phase_t > 0.1:
+		var q := p + Vector3(0, 0, 4)
+		var tyre := grass.get_trample_at(q + Vector3(0.8, 0, 0)).length()
+		var between := grass.get_trample_at(q).length()
+		var beside := grass.get_trample_at(q + Vector3(1.4, 0, 0)).length()
+		_check("a cart presses under its tyres only, not under its chassis or beside the tread", tyre > 0.9 and between < 0.05 and beside < 0.2, [tyre, between, beside])
+		cart.queue_free()
 		return true
 	return false
 
