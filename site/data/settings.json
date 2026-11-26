@@ -1919,6 +1919,17 @@
    "topic": "Shapes"
   },
   {
+   "name": "Desert varnish",
+   "settings": [
+    "RockField3D.desert_varnish"
+   ],
+   "note": "",
+   "what": "in dry climates old stones darken with a black film on their tops and down the runoff paths of steep faces, and turn orange-brown underneath and near the soil; fresh breaks stay bright.",
+   "page": "rocks",
+   "title": "Rocks",
+   "topic": "Shapes"
+  },
+  {
    "name": "Moss cushions",
    "settings": [
     "moss_cushions"
