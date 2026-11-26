@@ -9108,10 +9108,40 @@ Array TerrainGenerator3D::_karst_rivers(const Array &p_raw) const {
 		int spring = -1;
 		LocalVector<int32_t> cells;
 		int joins = -1;
+		Vector3 outfall_to; // an outfall: straight from the spring to this point of the run it joins
+		bool outfall = false;
 	};
 	LocalVector<SpringRiver> spring_rivers;
 	for (uint32_t q = 0; q < springs.size(); q++) {
-		if (springs[q].cell < 0 || wet_cell_run.has(springs[q].cell) || springs[q].delivered[mi] <= QMIN) {
+		if (springs[q].cell < 0 || springs[q].delivered[mi] <= QMIN) {
+			continue;
+		}
+		if (const int *ri = wet_cell_run.getptr(springs[q].cell)) {
+			// A spring beside a river already running (a cave mouth on its valley wall): a short outfall from the
+			// pool to the nearest point of the river, when the mouth stands clear of the water.
+			const Run &run = runs[*ri];
+			const Dictionary d = p_raw[run.river];
+			const PackedVector3Array pts = d["points"];
+			const PackedFloat32Array ws = d["widths"];
+			int best = -1;
+			real_t bd = 1e30f;
+			for (int k = run.a; k <= run.b; k++) {
+				const real_t dd = Vector2(pts[k].x - rs[q].position.x, pts[k].z - rs[q].position.z).length();
+				if (dd < bd) {
+					bd = dd;
+					best = k;
+				}
+			}
+			if (best >= 0 && bd > MAX(real_t(2.0), real_t(0.5f * ws[best]) + real_t(1.0))) {
+				SpringRiver sr;
+				sr.spring = int(q);
+				sr.cells.push_back(springs[q].cell);
+				sr.cells.push_back(springs[q].cell);
+				sr.joins = *ri;
+				sr.outfall = true;
+				sr.outfall_to = pts[best];
+				spring_rivers.push_back(sr);
+			}
 			continue;
 		}
 		SpringRiver sr;
@@ -9136,7 +9166,7 @@ Array TerrainGenerator3D::_karst_rivers(const Array &p_raw) const {
 	}
 
 	// Out: the runs, then the spring rivers.
-	LocalVector<int> mouth_cell;
+	LocalVector<double> mouth_q; // m3/s at each river's mouth, in river_month
 	LocalVector<int> joins_of;
 	for (const Run &run : runs) {
 		const Dictionary d = p_raw[run.river];
@@ -9178,12 +9208,38 @@ Array TerrainGenerator3D::_karst_rivers(const Array &p_raw) const {
 		if (run.spring >= 0) {
 			o["spring_flow"] = springs[run.spring].delivered[mi]; // m3/s out of the resurgence
 		}
-		mouth_cell.push_back(mouth);
+		mouth_q.push_back(flow(mouth, mi));
 		joins_of.push_back(run.joins);
 		out.push_back(o);
 	}
 	for (const SpringRiver &sr : spring_rivers) {
 		const WorldResurgence &q = rs[sr.spring];
+		if (sr.outfall) {
+			const double *dl = springs[sr.spring].delivered;
+			Dictionary o;
+			o["points"] = PackedVector3Array({ q.position, sr.outfall_to });
+			const float w = float(river_width_coefficient * Math::sqrt(dl[mi]));
+			o["widths"] = PackedFloat32Array({ w, w });
+			o["areas"] = PackedFloat32Array({ river_area[sr.cells[0]], river_area[sr.cells[0]] });
+			o["discharge"] = dl[mi];
+			PackedFloat32Array monthly;
+			monthly.resize(12);
+			for (int m = 0; m < 12; m++) {
+				monthly.set(m, dl[m]);
+			}
+			o["monthly_discharge"] = monthly;
+			o["joins"] = sr.joins;
+			o["ends_in"] = "river";
+			o["lake"] = -1;
+			o["from_lake"] = -1;
+			o["swallet"] = -1;
+			o["resurgence"] = q.id;
+			o["spring_flow"] = dl[mi];
+			mouth_q.push_back(dl[mi]);
+			joins_of.push_back(sr.joins);
+			out.push_back(o);
+			continue;
+		}
 		const int m_cnt = int(sr.cells.size());
 		std::vector<Vector3> pts(m_cnt);
 		pts[0] = q.position;
@@ -9236,7 +9292,7 @@ Array TerrainGenerator3D::_karst_rivers(const Array &p_raw) const {
 		o["swallet"] = -1;
 		o["resurgence"] = q.id;
 		o["spring_flow"] = springs[sr.spring].delivered[mi];
-		mouth_cell.push_back(mouth);
+		mouth_q.push_back(flow(mouth, mi));
 		joins_of.push_back(sr.joins);
 		out.push_back(o);
 	}
@@ -9244,11 +9300,11 @@ Array TerrainGenerator3D::_karst_rivers(const Array &p_raw) const {
 	LocalVector<double> own;
 	own.resize(out.size());
 	for (uint32_t i = 0; i < out.size(); i++) {
-		own[i] = flow(mouth_cell[i], mi);
+		own[i] = mouth_q[i];
 	}
 	for (uint32_t i = 0; i < out.size(); i++) {
 		if (joins_of[i] >= 0) {
-			own[joins_of[i]] -= flow(mouth_cell[i], mi);
+			own[joins_of[i]] -= mouth_q[i];
 		}
 	}
 	for (uint32_t i = 0; i < out.size(); i++) {
