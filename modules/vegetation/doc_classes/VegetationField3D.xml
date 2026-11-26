@@ -216,6 +216,12 @@
 				It also gives [code]vegetation_far(world_pos, albedo, camera_pos)[/code]: call it after [code]grass_ground()[/code] with [code]CAMERA_POSITION_WORLD[/code]. Where plants with a [member PlantSpecies.far_color] grew, it blends their colour into the ground as the plant shader thins them away with distance, with the same curve: none up to 35% of the species' range, all of it at the range. It reads the [code]vegetation_far_map[/code], [code]vegetation_far_rect[/code] and [code]vegetation_far_range[/code] global shader parameters, published after each [method populate] that places such plants.
 			</description>
 		</method>
+		<method name="get_stream_pending" qualifiers="const">
+			<return type="int" />
+			<description>
+				While [member streaming]: the tiles still being placed or waiting to be swapped in, plus one for each change (a burn scar placed, moved or aged, holes, the stand) not yet sent to its tiles. [code]0[/code] once the field shows the world as it is now. A still shot taken right after a change (a [WorldBurnScar3D] added after the plants were built) waits for [code]0[/code] first, as for the path tracer's pending surfaces. Always [code]0[/code] when not streaming.
+			</description>
+		</method>
 		<method name="load_floor_scans" qualifiers="static">
 			<return type="int" />
 			<param index="0" name="dir" type="String" />

@@ -2488,7 +2488,51 @@ func _checks() -> void:
 		_check("plants carry rank and range for thinning", ranged > 1000 and bad == 0, "%d ranged, %d bad" % [ranged, bad])
 	_path_checks()
 	_burn_checks()
+	await _burn_plants_check()
 	_radius_zero_check()
+
+
+# A burn arriving after the plants were placed (a scar dropped in at run time, as the landscape bench does before its
+# pedestal shot, or a fire's front): the field follows WorldFire.burn_changed by itself, within a few frames, and the
+# plants on the scar thin and come back small (PlantSpecies.burn_recovery: a tenth of their size on a fresh burn).
+func _burn_plants_check() -> void:
+	if cover == null or cover.streaming:
+		return
+	var c := cam.global_position
+	var fwd := -cam.global_transform.basis.z
+	fwd.y = 0.0
+	var centre := c + fwd.normalized() * 8.0
+	var before := _cover_tally(centre, 5.0)
+	var scar := WorldBurnScar3D.new()
+	add_child(scar)
+	scar.size = Vector2(12, 12)
+	scar.age_years = 0.4
+	scar.global_position = Vector3(centre.x, 0.0, centre.z)
+	var waited := 0
+	while waited < 120:
+		await get_tree().process_frame
+		waited += 1
+		if waited >= 3 and cover.get_stream_pending() == 0 and _cover_tally(centre, 5.0)[0] != before[0]:
+			break
+	var after := _cover_tally(centre, 5.0)
+	scar.queue_free()
+	_check("plants follow a burn placed after they were built: fewer and smaller on the scar within a few frames", before[0] > 20 and after[0] < before[0] and after[1] < before[1] * 0.6 and waited < 60, [before, after, waited])
+
+# Plants of the cover field within r of a point: [count, mean height scale].
+func _cover_tally(centre: Vector3, r: float) -> Array:
+	var n := 0
+	var hs := 0.0
+	for ch in cover.find_children("*", "MultiMeshInstance3D", true, false):
+		var mm: MultiMesh = (ch as MultiMeshInstance3D).multimesh
+		if mm == null:
+			continue
+		var x := (ch as Node3D).global_transform
+		for i in mm.visible_instance_count if mm.visible_instance_count >= 0 else mm.instance_count:
+			var t := x * mm.get_instance_transform(i)
+			if Vector2(t.origin.x - centre.x, t.origin.z - centre.z).length() < r:
+				n += 1
+				hs += t.basis.get_scale().y
+	return [n, hs / maxf(n, 1)]
 
 # Burnt ground (GrassField3D.burn_recovery, WorldFire.burn_age_at): two 8 m scars 6 m in front of the
 # camera, a fortnight and a year old, against the same ground unburnt. The sward is gone on the fresh

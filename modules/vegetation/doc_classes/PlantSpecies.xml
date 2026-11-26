@@ -134,7 +134,7 @@
 			Years since the ground burnt where the species grows (see [constant RULE_BURN_AGE]); -1 is ground that never burnt. Narrowing it from the default makes the species a burn plant, placed only on burns of those ages.
 		</member>
 		<member name="burn_recovery" type="float" setter="set_burn_recovery" getter="get_burn_recovery" default="0.0">
-			Years this species takes to full cover after a fire: on burnt ground ([method WorldFire.burn_age_at]) its suitability is multiplied by [method burn_cover]. 0: fire does not thin it. [method PlantGenerator.tag_species] sets it from [method PlantGenerator.get_burn_recovery]. Ignored by a species using [member burn_age_range].
+			Years this species takes to full cover after a fire: on burnt ground ([method WorldFire.burn_age_at]) its suitability is multiplied by [method burn_cover]. 0: [VegetationField3D] uses the preset's [method PlantGenerator.get_burn_recovery] (from the species or mesh meta [code]plant_preset[/code]), or 1.5 years for other plant-shader meshes without a canopy; trees keep 0 (crowns burn through the stand system). [method PlantGenerator.tag_species] sets it from [method PlantGenerator.get_burn_recovery]. Ignored by a species using [member burn_age_range].
 		</member>
 		<member name="canopy_conifer" type="bool" setter="set_canopy_conifer" getter="is_canopy_conifer" default="false">
 			If [code]true[/code], this species' crown is needle-leaved (pine, spruce, fir, larch). [VegetationField3D] counts each crown's share of the cover overhead, so the floor under it can follow the stand type through [member conifer_range].

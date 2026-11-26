@@ -674,7 +674,6 @@ private:
 	// again once no tile is being placed, a populated field populates again.
 	mutable uint64_t burn_seen = 0; // WorldFire.get_burn_generation() the setup's burn grid holds
 	mutable bool burn_follow = false; // A species reads burn ages.
-	double burn_check = 0.0;
 	Rect2 burn_dirty;
 	void _follow_burns(double p_delta);
 	// Flood marks (WorldWater.high_water_at): a flood that peaks or ages moves the wrack. Checked every 2 s where a
@@ -704,6 +703,7 @@ private:
 	void _setup_species(PlaceSetup &r_setup, int s, const Ref<PlantSpecies> &p_sp, real_t pixel);
 	bool variants_waiting = false;
 	double variants_check = 0.0;
+	static float _burn_recovery_of(const PlantSpecies *p_sp);
 	static int _deferred_kinds(const Ref<PlantSpecies> &p_sp) { return p_sp.is_valid() ? int(p_sp->get_meta(SNAME("tree_variants_deferred"), 0)) : 0; }
 	void _read_browse(PlaceSetup &r_setup) const;
 	double stand_check = 0.0;
@@ -918,6 +918,7 @@ public:
 	void queue_populate();
 	void clear();
 	int get_plant_count() const { return plant_count; }
+	int get_stream_pending() const;
 	double get_populate_time_msec() const { return populate_msec; }
 	PackedVector3Array get_placements(int p_species) const;
 	// The placed trees' trunks near a point (for close-up bark detail): their lowest few metres from each mesh's

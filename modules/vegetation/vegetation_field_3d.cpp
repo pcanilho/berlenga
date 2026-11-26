@@ -846,6 +846,32 @@ float VegetationField3D::PlaceSetup::sea_depth_at(const Vector2 &p_xz) const {
 	return Math::lerp(Math::lerp(r0[0], r0[1], fx), Math::lerp(r1[0], r1[1], fx), fz);
 }
 
+// Years a species takes to grow back over burnt ground: its own PlantSpecies.burn_recovery when set; else its preset's
+// (PlantGenerator.get_burn_recovery, from the species' plant_preset meta or its first mesh's preset meta, as hand-built
+// species carry it); else, for any other mesh of the plant shader without a canopy, the herbs' 1.5 years. Fire reaches
+// every plant: a species is blind to it only when its preset says so (water plants, the burn presets themselves).
+float VegetationField3D::_burn_recovery_of(const PlantSpecies *p_sp) {
+	if (!p_sp) {
+		return 0.0f;
+	}
+	if (p_sp->get_burn_recovery() > 0.0f || p_sp->get_canopy_radius() > 0.0f) {
+		return p_sp->get_burn_recovery(); // Trees: their fire variants (TreeGenerator.fire_years), not this.
+	}
+	int preset = int(p_sp->get_meta(SNAME("plant_preset"), -1));
+	const TypedArray<Mesh> ms = p_sp->get_meshes();
+	const Ref<Mesh> m0 = ms.is_empty() ? Ref<Mesh>() : Ref<Mesh>(ms[0]);
+	if (preset < 0 && m0.is_valid()) {
+		preset = int(m0->get_meta(SNAME("plant_preset"), m0->get_meta(SNAME("preset"), -1)));
+	}
+	if (preset >= 0 && preset < PlantGenerator::PRESET_MAX) {
+		return PlantGenerator::get_burn_recovery(PlantGenerator::Preset(preset));
+	}
+	if (PlantGenerator::is_plant_mesh(m0)) {
+		return 1.5f;
+	}
+	return 0.0f;
+}
+
 // Burnt ground (docs/ideas/vegetation.md, "Burnt ground and regrowth"): the fire contract's years since the ground last
 // burnt, sampled once per setup on a grid of 2 m or more over the map (at most 512 a side). Regrowth takes seasons, so
 // a fire burning now shows once the field places again.
@@ -862,7 +888,7 @@ void VegetationField3D::_read_burn_age(PlaceSetup &r_setup) const {
 		const TypedArray<PlantSpecies> list = biome->get_species();
 		for (int i = 0; i < list.size() && !wanted; i++) {
 			const Ref<PlantSpecies> sp = list[i];
-			wanted = sp.is_valid() && (sp->uses_burn_age() || sp->get_burn_recovery() > 0.0f || (_deferred_kinds(sp) & 1));
+			wanted = sp.is_valid() && (sp->uses_burn_age() || _burn_recovery_of(sp.ptr()) > 0.0f || (_deferred_kinds(sp) & 1));
 			const TypedArray<Mesh> ms = sp.is_valid() ? sp->get_meshes() : TypedArray<Mesh>();
 			for (int m = 0; m < ms.size() && !wanted; m++) {
 				const Ref<Mesh> mesh = ms[m];
@@ -2496,7 +2522,8 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 		if (stand_rule) {
 			sp->get_stand_rules(stand_age_r, stand_age_f, stand_kind_r, stand_kind_f);
 		}
-		const bool burn_recovery = !burn_rule && sp->get_burn_recovery() > 0.0f && !p_setup.burn.is_empty();
+		const float burn_years = burn_rule ? 0.0f : _burn_recovery_of(sp.ptr());
+		const bool burn_recovery = burn_years > 0.0f && !p_setup.burn.is_empty();
 		const bool spring_rule = sp->uses_spring();
 		const bool pool_rule = sp->uses_pool();
 		// Nebkha shrubs grow on the sand they gathered; a pool's reeds on its wet sand.
@@ -2714,7 +2741,8 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 						suit *= sp->rule_weight(PlantSpecies::RULE_BURN_AGE, p_setup.burn_at(xz));
 					} else if (burn_recovery && suit > 0.0f) {
 						// Everything else thins on a fresh burn and closes in again over its own years.
-						suit *= sp->burn_cover(p_setup.burn_at(xz));
+						const float age = p_setup.burn_at(xz);
+						suit *= age < 0.0f ? 1.0f : Math::smoothstep(0.0f, burn_years, age);
 					}
 					if (edge_rule && suit > 0.0f) {
 						// Forest edges: metres from the canopy's edge, positive inside (the shrub mantle, edge trees).
@@ -3106,7 +3134,7 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 						// growing to full over its recovery years as the stand closes in.
 						const float age = p_setup.burn_at(xz);
 						if (age >= 0.0f) {
-							scale *= Math::lerp(0.1f, 1.0f, Math::smoothstep(0.0f, sp->get_burn_recovery(), age));
+							scale *= Math::lerp(0.1f, 1.0f, Math::smoothstep(0.0f, burn_years, age));
 						}
 					}
 					if (canopy_r > 0.0f) {
@@ -5451,7 +5479,8 @@ Error VegetationField3D::populate() {
 	_maps_wants(maps);
 	_compute_maps(maps, crown_lists, far_lists);
 	_apply_maps(maps);
-	set_process_internal(!impostor_cells.is_empty() || !lazy_near.is_empty() || has_near_swap || _far_view_active());
+	// burn_follow: a burn reported after this (a scar placed, a fire) must still reach the plants (_follow_burns).
+	set_process_internal(!impostor_cells.is_empty() || !lazy_near.is_empty() || has_near_swap || _far_view_active() || burn_follow);
 	_report_stand_disturbances(false);
 	// The field's own reports are not a change to follow (else it would populate again for ever).
 	if (const WorldStand *own = WorldContracts::stand()) {
@@ -7192,14 +7221,33 @@ void VegetationField3D::_follow_holes(TerrainDataMap3D *p_map) {
 	gen->connect(SNAME("holes_changed"), on_holes);
 }
 
+// Streamed tiles still to be placed or swapped in (a burn, the holes, the stand or a flood changed under them, or the
+// camera moved on), plus one for each change waiting to mark its tiles; 0 once the field shows its current state.
+int VegetationField3D::get_stream_pending() const {
+	if (!streaming) {
+		return 0;
+	}
+	int n = int(stream_jobs.size());
+	for (const KeyValue<Vector2i, StreamTile *> &kv : stream_tiles) {
+		n += kv.value->stale ? 1 : 0;
+	}
+	n += burn_dirty.has_area() ? 1 : 0;
+	n += holes_dirty.has_area() ? 1 : 0;
+	n += stand_dirty.has_area() ? 1 : 0;
+	n += removal_dirty.has_area() ? 1 : 0;
+	const WorldFire *fire = WorldContracts::fire();
+	n += (burn_follow && fire && fire->get_burn_generation() != burn_seen) ? 1 : 0;
+	return n;
+}
+
 // Burn ages changed (WorldFire.burn_changed, a live fire or a scar placed, moved or aged): the streamed tiles over
 // the area are placed again (_stream_update, once no tile is being placed); a populated field populates again.
 void VegetationField3D::_follow_burns(double p_delta) {
-	burn_check -= p_delta;
-	if (!burn_follow || burn_check > 0.0) {
+	// Every frame: the generation is one integer to compare, and a scar placed just before a shot (or a fire's front)
+	// must not wait on a timer that counts game time, which a slow or fixed-step frame barely advances.
+	if (!burn_follow) {
 		return;
 	}
-	burn_check = 0.5;
 	const WorldFire *fire = WorldContracts::fire();
 	if (!fire || fire->get_burn_generation() == burn_seen) {
 		return;
@@ -7657,6 +7705,7 @@ void VegetationField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("queue_populate"), &VegetationField3D::queue_populate);
 	ClassDB::bind_method(D_METHOD("clear"), &VegetationField3D::clear);
 	ClassDB::bind_method(D_METHOD("get_plant_count"), &VegetationField3D::get_plant_count);
+	ClassDB::bind_method(D_METHOD("get_stream_pending"), &VegetationField3D::get_stream_pending);
 	ClassDB::bind_method(D_METHOD("get_populate_time_msec"), &VegetationField3D::get_populate_time_msec);
 	ClassDB::bind_method(D_METHOD("get_placements", "species"), &VegetationField3D::get_placements);
 	ClassDB::bind_method(D_METHOD("get_flood_replaced_tiles"), &VegetationField3D::get_flood_replaced_tiles);
