@@ -2445,7 +2445,7 @@ void fragment() {
 				curtain = max(curtain, 0.7 * tm_drip(fw_p, wn, v_below / (0.6 * v_run), tm_fp0, v_band * 3.1 + 151.0, 2.5, 0.15, 1.2));
 				curtain *= smoothstep(0.2, 0.4, tm_vn(vec3(fw_p.x / 18.0, v_band * 1.7, fw_p.z / 18.0) + 23.0));
 				curtain = smoothstep(0.03, 0.35, curtain); // a curtain is dark through its width, not a faded wash
-				curtain *= 1.0 - 0.35 * shade;
+				curtain *= (1.0 - 0.35 * shade) * (1.0 - smoothstep(0.45, 0.7, tm_macro_n.y)); // walls, not the talus under them
 				float film = 0.5 + 0.5 * mix(0.5, tm_vn(fw_p / 7.0 + 31.0), fw_k);
 				float above_foot = 1e3;
 				if (terrain_cliff_rect.z > 0.0) {
