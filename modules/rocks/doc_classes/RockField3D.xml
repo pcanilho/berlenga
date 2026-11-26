@@ -227,6 +227,12 @@
 				How many stones are rigid bodies now (see [member stones_react]).
 			</description>
 		</method>
+		<method name="get_kit_stats" qualifiers="const">
+			<return type="Dictionary" />
+			<description>
+				The cliff kit's squares (8 m in plan): [code]squares_built[/code] and [code]build_ms[/code] (built from the face), [code]squares_loaded[/code] (read from the world cache: zones of 4 by 4 squares keyed by the generator's result, the drawn relief, [member cliff_block_max_slope] and [member cliff_recess]), [code]squares[/code] and [code]boxes[/code] held now. See [member cliff_kit].
+			</description>
+		</method>
 		<method name="get_rt_stats" qualifiers="const">
 			<return type="Dictionary" />
 			<description>

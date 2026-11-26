@@ -1595,3 +1595,14 @@ Agreed with terrain on 25 Nov.
     Along the drawn face's normal the flanks of a flute moved sideways and the ridges stayed in front of the pillars.
     Landscape3D uses it.
 
+
+## Cliff kit in the world cache (26 Nov)
+The kit's boxes are fixed by the world (hashes of positions, the unrecessed face), so they go in the world cache
+(world_cache.h) like the obstacle cells: zones of 4 by 4 squares (32 m), keyed by the generator's result, every
+relief provider's state (the drawn relief the kit fits to), `cliff_block_max_slope`, `cliff_recess` and the kit's
+rules version. A zone not in the cache is built whole and stored. The relief and generator part of the key is worked
+out on the main thread after each change (relief_changed, the generator's `changing`, a reset); a square asked for
+while it is stale is built and not stored. `get_kit_stats()`: squares built and loaded, build time, a hash of every
+box. Check (rocks bench cliff view): warm 17,456 squares loaded, none built, the same box hash; the cliff stage
+13.1 s cold to 3.7 s warm (10.9 s of kit building gone); a warm raster still byte-identical to one with the kit
+rebuilt.

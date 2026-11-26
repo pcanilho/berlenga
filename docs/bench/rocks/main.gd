@@ -2561,6 +2561,9 @@ func _densest(layer: int) -> Vector3:
 			best_n = cells[k]
 			best = k
 	print("%s: %d stones in the middle 1.6 km, densest 40 m square %d (%d ms)" % [LAYERS[layer], stones.size(), best_n, Time.get_ticks_msec() - t0])
+	if layer == RockField3D.LAYER_CLIFF:
+		# The cliff kit's squares: built or loaded from the world cache, and a hash of every box (cold and warm agree).
+		print("cliff kit: ", rocks.get_kit_stats())
 	if best_n <= 0:
 		return Vector3.ZERO
 	# The middle of the stones in it, not of the square: a shore or river band can run along one edge.

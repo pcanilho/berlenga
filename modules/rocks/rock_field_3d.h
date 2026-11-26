@@ -247,6 +247,23 @@ private:
 	void _kit_square(const TerrainGenerator3D *p_gen, const Vector2i &p_square, LocalVector<KitBox> &r_boxes) const;
 	void _kit_ensure(const TerrainGenerator3D *p_gen, const Rect2i &p_squares) const;
 	void _kit_reset(bool p_notify);
+	// The kit's squares in the world cache (world_cache.h): zones of 4 x 4 squares (32 m) under a key of what the kit
+	// reads (the generator's result, the drawn relief, cliff_block_max_slope, cliff_recess). The relief and the
+	// generator part is worked out on the main thread after each change (relief_changed, the generator's changing,
+	// a reset); a square asked for while it is stale is built and not stored.
+	mutable Mutex kit_base_mutex;
+	String kit_base; // empty: not cacheable (a script relief, the cache off)
+	uint32_t kit_base_for = 0; // the serial kit_base was worked out at
+	mutable SafeNumeric<uint32_t> kit_base_serial; // counts changes to what the kit reads
+	bool kit_base_queued = false;
+	ObjectID kit_base_gen; // the generator whose changing signal marks the base stale
+	mutable HashSet<Vector2i> kit_zones_tried; // under kit_lock: zones looked up in the world cache this epoch
+	mutable SafeNumeric<uint64_t> kit_stats[3]; // squares built, squares loaded from the world cache, usec building
+	void _kit_base_stale();
+	void _kit_base_update();
+	bool _kit_base_get(String &r_base) const;
+	String _kit_zone_name(const String &p_base, const Vector2i &p_zone) const;
+	void _on_kit_generator_changing();
 	real_t cliff_block_max_slope = 88.0; // the wall's block courses up to this face angle (76: the courses before 25 Nov)
 	mutable Ref<ShaderMaterial> auto_ground; // the landscape's TerrainMaterial3D when ground_material is unset
 	mutable bool auto_ground_found = false;
@@ -938,6 +955,8 @@ public:
 	void set_rt_instanced_cells(bool p_enabled);
 	bool is_rt_instanced_cells() const { return rt_instanced_cells; }
 	Dictionary get_rt_stats() const;
+	// The cliff kit's squares: built, loaded from the world cache, the build time, and those held with their boxes.
+	Dictionary get_kit_stats() const;
 	void set_far_widen(bool p_enabled) { far_widen = p_enabled; }
 	Ref<Texture2D> get_far_cover_texture() const { return far_cover_texture; }
 	bool is_far_widen() const { return far_widen; }

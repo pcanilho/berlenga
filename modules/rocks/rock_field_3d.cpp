@@ -358,6 +358,7 @@ static real_t rf_height(const TerrainGenerator3D *p_gen, const Vector3 &p) {
 // The cliff kit's boxes (docs/ideas/rocks.md, "Cliff kit recess contract"): fixed by the world (hashes of world
 // positions, no cell's random state), so the pillars a cell lays and the recess a mesh worker reads agree.
 static const float RF_KIT_SQUARE = 8.0f;
+static const uint32_t RF_KIT_VERSION = 1; // the kit's rules: bump with any change to _kit_square (the recess contract and the world cache key)
 static float box_recess_probe(float p_tmean, float p_width) {
 	return p_tmean + 0.15f - CLAMP(0.35f * p_width, 0.5f, 1.1f); // the step back's plane (its least front)
 }
@@ -4149,6 +4150,7 @@ void RockField3D::_on_stand_changed(const Rect2 &p_rect) {
 // The drawn relief over an area changed (WorldGround.relief_changed: Landscape3D's full heights streamed in, its relief
 // settings): the detail cells there are laid again on it, gathered with the stand's changes.
 void RockField3D::_on_relief_changed(const Rect2 &p_rect) {
+	_kit_base_stale(); // the kit reads the drawn relief
 	if (building > 0 || !ground_detail) {
 		return;
 	}
@@ -10235,9 +10237,95 @@ void RockField3D::_kit_ensure(const TerrainGenerator3D *p_gen, const Rect2i &p_s
 			}
 		}
 	}
+	if (missing.is_empty()) {
+		return;
+	}
+	// The world cache: each missing square's zone, loaded whole when it was stored from the same inputs; a zone not
+	// there is built whole (its other squares too) and stored.
+	const uint32_t serial = kit_base_serial.get();
+	String base;
+	HashMap<Vector2i, LocalVector<KitBox>> loaded;
+	LocalVector<Vector2i> zones_built; // zones built whole here, to store
+	if (_kit_base_get(base)) {
+		HashSet<Vector2i> zones;
+		for (const Vector2i &sq : missing) {
+			zones.insert(Vector2i(sq.x >> 2, sq.y >> 2));
+		}
+		{
+			RWLockWrite kl(kit_lock);
+			if (kit_epoch != epoch) {
+				return; // reset meanwhile: the caller finds nothing and asks again
+			}
+			for (HashSet<Vector2i>::Iterator it = zones.begin(); it != zones.end();) {
+				const Vector2i z = *it;
+				++it;
+				if (kit_zones_tried.has(z)) {
+					zones.erase(z); // another thread has it: these squares are built here as before
+				} else {
+					kit_zones_tried.insert(z);
+				}
+			}
+		}
+		for (const Vector2i &z : zones) {
+			const String name = _kit_zone_name(base, z);
+			Vector<uint8_t> data;
+			bool ok = WorldCache::load_any("rocks_kit", name, data);
+			HashMap<Vector2i, LocalVector<KitBox>> got;
+			if (ok) {
+				const uint8_t *r = data.ptr();
+				size_t left = size_t(data.size());
+				for (int k = 0; k < 16 && ok; k++) {
+					uint32_t n = 0;
+					ok = left >= sizeof(n);
+					if (ok) {
+						memcpy(&n, r, sizeof(n));
+						r += sizeof(n);
+						left -= sizeof(n);
+						ok = left >= size_t(n) * sizeof(KitBox);
+					}
+					if (ok) {
+						LocalVector<KitBox> &list = got[Vector2i(z.x * 4 + (k & 3), z.y * 4 + (k >> 2))];
+						list.resize(n);
+						if (n > 0) {
+							memcpy(list.ptr(), r, size_t(n) * sizeof(KitBox));
+						}
+						r += size_t(n) * sizeof(KitBox);
+						left -= size_t(n) * sizeof(KitBox);
+					}
+				}
+				ok = ok && left == 0;
+			}
+			if (ok) {
+				for (KeyValue<Vector2i, LocalVector<KitBox>> &kv : got) {
+					loaded.insert(kv.key, kv.value);
+				}
+				kit_stats[1].add(16);
+			} else {
+				zones_built.push_back(z);
+			}
+		}
+		// The squares to build: every square of the zones not loaded (the rest of a zone too), and the missing
+		// squares of zones another thread looks up.
+		HashSet<Vector2i> want;
+		for (const Vector2i &sq : missing) {
+			if (!loaded.has(sq)) {
+				want.insert(sq);
+			}
+		}
+		for (const Vector2i &z : zones_built) {
+			for (int k = 0; k < 16; k++) {
+				want.insert(Vector2i(z.x * 4 + (k & 3), z.y * 4 + (k >> 2)));
+			}
+		}
+		missing.clear();
+		for (const Vector2i &sq : want) {
+			missing.push_back(sq);
+		}
+	}
 	// Off the worker pool (a tool or bench placing cells one after another on the main thread, get_stones, build_area)
 	// the squares go to the workers: each is the same boxes whichever thread builds it. On a worker (the cells' and
 	// the landscape's own jobs, already spread over the pool) they are built here.
+	const uint64_t t0 = OS::get_singleton()->get_ticks_usec();
 	LocalVector<LocalVector<KitBox>> built;
 	built.resize(missing.size());
 	if (missing.size() > 1 && WorkerThreadPool::get_singleton()->get_thread_index() < 0) {
@@ -10258,12 +10346,169 @@ void RockField3D::_kit_ensure(const TerrainGenerator3D *p_gen, const Rect2i &p_s
 			_kit_square(p_gen, missing[i], built[i]);
 		}
 	}
+	kit_stats[0].add(missing.size());
+	kit_stats[2].add(OS::get_singleton()->get_ticks_usec() - t0);
+	// Stored only when nothing the kit reads changed while it built (the base still the one keyed).
+	if (!zones_built.is_empty() && kit_base_serial.get() == serial) {
+		HashMap<Vector2i, uint32_t> at;
+		for (uint32_t i = 0; i < missing.size(); i++) {
+			at.insert(missing[i], i);
+		}
+		for (const Vector2i &z : zones_built) {
+			LocalVector<uint8_t> data;
+			for (int k = 0; k < 16; k++) {
+				const LocalVector<KitBox> &list = built[at[Vector2i(z.x * 4 + (k & 3), z.y * 4 + (k >> 2))]];
+				const uint32_t n = list.size();
+				const uint32_t o = data.size();
+				data.resize(o + sizeof(n) + size_t(n) * sizeof(KitBox));
+				memcpy(data.ptr() + o, &n, sizeof(n));
+				if (n > 0) {
+					memcpy(data.ptr() + o + sizeof(n), list.ptr(), size_t(n) * sizeof(KitBox));
+				}
+			}
+			WorldCache::store("rocks_kit", _kit_zone_name(base, z), data.ptr(), data.size());
+		}
+	}
 	RWLockWrite kl(kit_lock);
+	if (kit_epoch != epoch) {
+		return;
+	}
 	for (uint32_t i = 0; i < missing.size(); i++) {
-		if (kit_epoch == epoch && !kit_cache.has(missing[i])) {
+		if (!kit_cache.has(missing[i])) {
 			kit_cache.insert(missing[i], built[i]);
 		}
 	}
+	for (const KeyValue<Vector2i, LocalVector<KitBox>> &kv : loaded) {
+		if (!kit_cache.has(kv.key)) {
+			kit_cache.insert(kv.key, kv.value);
+		}
+	}
+}
+
+// The zone's name in the world cache: the base (the generator's result and the drawn relief, worked out on the main
+// thread) and the kit's own settings, read here.
+String RockField3D::_kit_zone_name(const String &p_base, const Vector2i &p_zone) const {
+	WorldCacheKey key("rocks_kit");
+	const CharString b = p_base.utf8();
+	key.bytes(b.get_data(), b.length());
+	key.value(RF_KIT_VERSION);
+	key.value(uint32_t(sizeof(KitBox)));
+	key.value(float(cliff_block_max_slope));
+	key.value(uint8_t(cliff_recess));
+	key.value(RF_KIT_SQUARE);
+	key.value(p_zone);
+	return key.finish();
+}
+
+bool RockField3D::_kit_base_get(String &r_base) const {
+	if (!WorldCache::is_enabled()) {
+		return false;
+	}
+	if (Thread::is_main_thread()) {
+		bool stale = false;
+		{
+			MutexLock lock(kit_base_mutex);
+			stale = kit_base_for != kit_base_serial.get();
+		}
+		if (stale) {
+			const_cast<RockField3D *>(this)->_kit_base_update();
+		}
+	}
+	MutexLock lock(kit_base_mutex);
+	if (kit_base_for != kit_base_serial.get() || kit_base.is_empty()) {
+		return false;
+	}
+	r_base = kit_base;
+	return true;
+}
+
+// Something the kit reads changed (the drawn relief, the generator's result, a reset): the base is worked out again
+// on the main thread at the next idle time; until then squares are built and not stored.
+void RockField3D::_kit_base_stale() {
+	kit_base_serial.increment();
+	if (!kit_base_queued && is_inside_tree()) {
+		kit_base_queued = true;
+		callable_mp(this, &RockField3D::_kit_base_update).call_deferred();
+	}
+}
+
+// Main thread: the generator's result and every relief provider's state, hashed.
+void RockField3D::_kit_base_update() {
+	kit_base_queued = false;
+	const uint32_t serial = kit_base_serial.get();
+	String base;
+	const TerrainGenerator3D *gen = Object::cast_to<TerrainGenerator3D>(ObjectDB::get_instance(kit_generator));
+	const WorldGround *wg = WorldContracts::ground();
+	if (gen && WorldCache::is_enabled() && cliff_kit && !(wg && wg->get_script_instance())) {
+		WorldCacheKey key("rocks_kit_base");
+		gen->hash_result([&](const void *p_data, size_t p_size) { key.bytes(p_data, p_size); });
+		bool ok = true;
+		if (const LocalVector<WorldReliefProvider *> *rel = WorldContracts::relief_providers_list()) {
+			key.value(uint64_t(rel->size()));
+			for (const WorldReliefProvider *rp : *rel) {
+				const Object *o = rp->contract_relief_object();
+				if (!o || !key.object(o)) {
+					ok = false;
+					break;
+				}
+				rp->contract_relief_state(&rf_key_add, &key);
+			}
+		}
+		const String b = key.finish();
+		if (ok) {
+			base = b;
+		}
+	}
+	MutexLock lock(kit_base_mutex);
+	kit_base = base;
+	kit_base_for = serial;
+}
+
+void RockField3D::_on_kit_generator_changing() {
+	_kit_base_stale();
+}
+
+struct Vector2iLess {
+	_FORCE_INLINE_ bool operator()(const Vector2i &p_a, const Vector2i &p_b) const {
+		return p_a.y != p_b.y ? p_a.y < p_b.y : p_a.x < p_b.x;
+	}
+};
+
+Dictionary RockField3D::get_kit_stats() const {
+	Dictionary d;
+	d["squares_built"] = int64_t(kit_stats[0].get());
+	d["squares_loaded"] = int64_t(kit_stats[1].get());
+	d["build_ms"] = double(kit_stats[2].get()) / 1000.0;
+	RWLockRead kl(kit_lock);
+	int64_t boxes = 0;
+	for (const KeyValue<Vector2i, LocalVector<KitBox>> &kv : kit_cache) {
+		boxes += kv.value.size();
+	}
+	d["squares"] = int64_t(kit_cache.size());
+	d["boxes"] = boxes;
+	// Every held box, by square (a check that loaded and built squares are the same boxes).
+	LocalVector<Vector2i> keys;
+	for (const KeyValue<Vector2i, LocalVector<KitBox>> &kv : kit_cache) {
+		if (!kv.value.is_empty()) {
+			keys.push_back(kv.key);
+		}
+	}
+	keys.sort_custom<Vector2iLess>();
+	uint32_t hh = 0x5eed;
+	for (const Vector2i &k : keys) {
+		hh = hash_murmur3_one_32(uint32_t(k.x), hash_murmur3_one_32(uint32_t(k.y), hh));
+		for (const KitBox &b : kit_cache[k]) {
+			const float f[] = { float(b.surface.x), float(b.surface.y), float(b.surface.z), float(b.up.x), float(b.up.y), float(b.up.z), float(b.along.x), float(b.along.y), float(b.along.z), float(b.out.x), float(b.out.y), float(b.out.z), b.half_up, b.half_along, b.front, b.recess, b.lean };
+			for (float v : f) {
+				hh = hash_murmur3_one_float(v, hh);
+			}
+			hh = hash_murmur3_one_64(uint64_t(b.column), hh);
+			hh = hash_murmur3_one_64(uint64_t(b.segment), hh);
+			hh = hash_murmur3_one_32(b.cid, hh);
+		}
+	}
+	d["boxes_hash"] = int64_t(hh);
+	return d;
 }
 
 // Drops the kit's boxes (its settings or the generator changed); p_notify tells the landscape to draw the recess
@@ -10274,10 +10519,22 @@ void RockField3D::_kit_reset(bool p_notify) {
 		RWLockWrite kl(kit_lock);
 		had = !kit_cache.is_empty();
 		kit_cache.clear();
+		kit_zones_tried.clear();
 		kit_epoch++;
 	}
-	const TerrainGenerator3D *gen = is_inside_tree() ? _get_generator() : nullptr;
+	TerrainGenerator3D *gen = is_inside_tree() ? _get_generator() : nullptr;
 	kit_generator = gen ? gen->get_instance_id() : ObjectID();
+	if (kit_base_gen != kit_generator) {
+		const Callable cb = callable_mp(this, &RockField3D::_on_kit_generator_changing);
+		if (Object *old = ObjectDB::get_instance(kit_base_gen); old && old->is_connected(SNAME("changing"), cb)) {
+			old->disconnect(SNAME("changing"), cb);
+		}
+		if (gen && !gen->is_connected(SNAME("changing"), cb)) {
+			gen->connect(SNAME("changing"), cb);
+		}
+		kit_base_gen = kit_generator;
+	}
+	_kit_base_stale();
 	if (p_notify && (had || gen) && is_inside_tree()) {
 		if (WorldGround *wg = WorldContracts::ground()) {
 			const Rect2 w = gen ? gen->get_result_rect() : Rect2(-1e6, -1e6, 2e6, 2e6);
@@ -10389,8 +10646,7 @@ void RockField3D::contract_recess_state(void (*p_add)(void *p_user, const void *
 	p_add(p_user, flags, sizeof(flags));
 	const float slope = float(cliff_block_max_slope);
 	p_add(p_user, &slope, sizeof(slope));
-	const uint32_t version = 1; // the kit's rules: bump with any change to _kit_square
-	p_add(p_user, &version, sizeof(version));
+	p_add(p_user, &RF_KIT_VERSION, sizeof(RF_KIT_VERSION));
 }
 
 Vector3 RockField3D::contract_cover_at(const Vector3 &p_position) const {
@@ -10850,6 +11106,7 @@ void RockField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_rt_instanced_cells", "enabled"), &RockField3D::set_rt_instanced_cells);
 	ClassDB::bind_method(D_METHOD("is_rt_instanced_cells"), &RockField3D::is_rt_instanced_cells);
 	ClassDB::bind_method(D_METHOD("get_rt_stats"), &RockField3D::get_rt_stats);
+	ClassDB::bind_method(D_METHOD("get_kit_stats"), &RockField3D::get_kit_stats);
 	ClassDB::bind_method(D_METHOD("set_far_widen", "enabled"), &RockField3D::set_far_widen);
 	ClassDB::bind_method(D_METHOD("is_far_widen"), &RockField3D::is_far_widen);
 	ClassDB::bind_method(D_METHOD("get_far_cover_texture"), &RockField3D::get_far_cover_texture);
