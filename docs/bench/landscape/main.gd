@@ -7666,23 +7666,35 @@ func _snow_strata() -> void:
 	weather.wind_speed = 1.0
 	weather.snap_to_settings()
 	weather.advance(60.0)
-	snow.call("add_depth_hoar", 0.6)
+	# The week in the order a pit keeps it apart (a gale after the crust and the hoar made them and both storms one
+	# wind slab, and the season's own pack is one layer): a mid-winter storm long settled over the faceted base, then
+	# a storm the gale packs into a slab, its top melted and refrozen, a clear night's hoar, the next storm over it
+	# and a last fresh fall.
+	snow.call("add_depth_hoar", 0.45) # the faceted base: the lower share of the pack
+	snow.advance(3600.0)
+	snow.call("add_snow", 60.0, 250.0) # a mid-winter storm, settled (old rounded snow)
 	snow.advance(3600.0)
 	snow.call("add_snow", 20.0, 120.0) # a storm's snow
-	snow.call("add_crust", 0.02, 3.0) # its top melts and refreezes
-	snow.advance(3600.0)
-	snow.call("add_hoar", 8.0) # a clear night's surface hoar
-	snow.call("add_snow", 16.0, 110.0) # buried by the next storm
-	weather.wind_speed = 14.0 # a gale packs the top
+	weather.wind_speed = 14.0 # a gale packs it
 	weather.snap_to_settings()
 	weather.advance(60.0)
 	snow.advance(3.0 * 3600.0)
 	weather.wind_speed = 1.0
 	weather.snap_to_settings()
 	weather.advance(60.0)
+	snow.call("add_crust", 0.02, 3.0) # its top melts and refreezes
+	snow.advance(3600.0)
+	snow.call("add_hoar", 8.0) # a clear night's surface hoar
+	snow.call("add_snow", 16.0, 110.0) # buried by the next storm
+	snow.advance(3600.0)
 	snow.call("add_snow", 10.0, 80.0) # a last fresh fall
 	var to_sun := sun.global_basis.z
 	var sf := Vector3(to_sun.x, 0, to_sun.z).normalized()
+	if args.get("strata-snap", "1") != "0":
+		# The trench along the nearer of the deformation field's axes to the sun's bearing: a wall turned off the
+		# field's texel grid by a few degrees is a staircase of texels (ribs down a 2 m face, square steps at its
+		# edge); --strata-snap=0 keeps the sun's own bearing.
+		sf = Vector3(signf(sf.x), 0, 0) if absf(sf.x) >= absf(sf.z) else Vector3(0, 0, signf(sf.z))
 	var nrm := Vector3(sf.z, 0, -sf.x)
 	var c3: Camera3D = get_viewport().get_camera_3d()
 	var surf: Node3D = ClassDB.instantiate("SnowSurface3D")
@@ -7700,7 +7712,10 @@ func _snow_strata() -> void:
 	# the collapsing wall is drawn as jagged spikes for now, see docs/ideas/snow.md).
 	surf.set("wall_collapse", args.get("strata-collapse", "0") == "1")
 	surf.set("compacted_density", 900.0)
-	surf.call("press_box", Vector3(best.x, g, best.z), Vector2(w, 8.0), atan2(sf.x, sf.z), g + 0.01)
+	# The trench cut as deep as the pack lets a press go everywhere along it (its compaction limit, about three
+	# quarters of the depth): a floor held at the pit's own ground level cut nothing where the slope fell away and
+	# left a ramp down half the trench.
+	surf.call("press_box", Vector3(best.x, g, best.z), Vector2(w, 8.0), atan2(sf.x, sf.z), g - 4.0)
 	for i in 30:
 		await get_tree().physics_frame
 	if args.has("strata-profile"):
@@ -7724,6 +7739,7 @@ func _snow_strata() -> void:
 	var av: Node = snow.find_child("*SnowAvalanche3D*", true, false)
 	if av != null:
 		_log("snow strata: avalanches released %d, deposited %.0f m3, run-out %s" % [av.call("get_release_count"), av.call("get_deposited_volume"), str(av.call("get_run_out"))])
+	_log("snow strata layers at the pit (bottom up): %s" % str(snow.call("get_layers_at", best)))
 	var rows := PackedStringArray()
 	for j in 9:
 		var row := PackedStringArray()

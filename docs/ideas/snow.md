@@ -2175,6 +2175,20 @@ sampling, but the thin-pack discard (24 Nov), which read the field at the pixel 
 the wall's triangles away. It now spares a deep pack's triangles standing over 10 cm above the ground, which keeps
 the 2 cm scree fix. Still open: collapse should cut its blocks along the face's own normal, not the nearest axis.
 
+Pit walls, round 2 (26 Nov, scene on build 174): ribs down the far wall, square steps along the near edge, the bands
+barely there. The ribs and steps were the print field's texels: the trench ran on the sun's bearing, about 11 degrees
+off the field's grid, and a press antialiases its edge over only half a 6.25 cm texel, so every 33 cm the wall
+stepped by a texel (the deform field is ground's; asked there for a full-texel edge). The scout now runs the trench
+along the field axis nearest the sun (--strata-snap=0 keeps the bearing). Its floor was held at the pit centre's
+ground level, which on the slope cut nothing at one end and left a ramp down half the trench; it is now pressed to
+the pack's compaction limit everywhere. The bands were few: the week's gale came last and packed the storm, crust and
+hoar into one slab, and the season's pack was one layer, so the wall had three bands, two of them in the top 25 cm.
+The week now runs storm, gale, crust, hoar, storm, fresh fall over a settled mid-winter storm and a faceted base.
+Research: on a brushed pit wall the layers read mostly by relief (SWAG; Fierz et al. 2009): brushing scours soft
+layers back and leaves hard ones standing, by hand hardness (F, 4F, 1F, P, K). The wall shader now sets each band
+back by its hardness (fist new snow and hoar furthest, a crust standing proud), draws the step at each boundary as
+a lit lip or an overhang's shadow line (which reads in shade too), and keeps only faint tool marks.
+
 ## Next round (proposed 19 Nov 2026, round 3): powder cloud, triggers, sharper flow
 
 **Triggers from people and vehicles.**
