@@ -723,6 +723,17 @@ public:
 	virtual ~WorldRecessProvider() {}
 };
 
+// Frost-sorted patterned ground (docs/ideas/ground-detail.md, "Frost-sorted patterned ground"): where freeze-thaw
+// sorts stones from fines into circles and stripes. Produced by RockField3D (frost_sorting); read by CPU placers
+// (cover plants keep off the stone borders and the churned centres' edges as grass does from terrain_frost_map).
+class WorldFrostSortedProvider {
+public:
+	// At the point's xz: x the sorting's strength (0..1: the gate of cold, wet, gentle, deep soil), y the stone share
+	// of the pattern there (0 a fine centre .. 1 a stone border). (0, 0) where the producer does not sort. Thread-safe.
+	virtual Vector2 contract_frost_sorted_at(const Vector3 &p_position) const = 0;
+	virtual ~WorldFrostSortedProvider() {}
+};
+
 class WorldGround : public RefCounted {
 	GDCLASS(WorldGround, RefCounted);
 
@@ -756,6 +767,7 @@ protected:
 	GDVIRTUAL1RC(Color, _albedo_at, Vector3)
 	GDVIRTUAL1RC(Vector2, _relief_at, Vector3)
 	GDVIRTUAL1RC(Vector2, _recess_at, Vector3)
+	GDVIRTUAL1RC(Vector2, _frost_sorted_at, Vector3)
 	GDVIRTUAL1RC(Vector4, _recess_vector_at, Vector3)
 
 public:
@@ -812,6 +824,10 @@ public:
 	// The cliff kit's recess at a point of the drawn, unrecessed face (WorldRecessProvider): x depth m back along the
 	// face's horizontal outward normal, y share (0..1). (0, 0) with no producer. Thread-safe for the built-in producers.
 	Vector2 recess_at(const Vector3 &p_position) const;
+	// Frost-sorted ground at the point's xz (WorldFrostSortedProvider): x the sorting's strength (0..1), y the stone
+	// share (0 a fine centre .. 1 a stone border). (0, 0) with no producer; the strongest answers. Thread-safe for the
+	// built-in producers. GPU readers: terrain_frost_map (r the gate, g the stone share).
+	Vector2 frost_sorted_at(const Vector3 &p_position) const;
 	// The step back as a world offset (xyz: horizontal, along the pillar's outward normal, depth times share; w the
 	// share): what the drawn face adds to the point. Use this rather than moving along the face's own normal.
 	Vector4 recess_vector_at(const Vector3 &p_position) const;
@@ -951,6 +967,7 @@ class WorldContracts : public Object {
 	LocalVector<WorldGroundColorProvider *> ground_color_providers;
 	LocalVector<WorldReliefProvider *> relief_providers;
 	LocalVector<WorldRecessProvider *> recess_providers;
+	LocalVector<WorldFrostSortedProvider *> frost_sorted_providers;
 	LocalVector<WorldClimateProvider *> climate_providers;
 	LocalVector<WorldPlantColorProvider *> plant_color_providers;
 	Ref<WorldWater> builtin_water;
@@ -1090,6 +1107,9 @@ public:
 	static void register_recess(WorldRecessProvider *p_provider); // any number: the deepest answers
 	static void unregister_recess(WorldRecessProvider *p_provider);
 	static const LocalVector<WorldRecessProvider *> *recess_providers_list() { return singleton ? &singleton->recess_providers : nullptr; }
+	static void register_frost_sorted(WorldFrostSortedProvider *p_provider); // any number: the strongest answers
+	static void unregister_frost_sorted(WorldFrostSortedProvider *p_provider);
+	static const LocalVector<WorldFrostSortedProvider *> *frost_sorted_providers_list() { return singleton ? &singleton->frost_sorted_providers : nullptr; }
 	static const LocalVector<WorldGroundColorProvider *> *ground_color_providers_list() { return singleton ? &singleton->ground_color_providers : nullptr; }
 	static void register_plant_color(WorldPlantColorProvider *p_provider); // any number: each lays its cover over the ground in turn
 	static void unregister_plant_color(WorldPlantColorProvider *p_provider);

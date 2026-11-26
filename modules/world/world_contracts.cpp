@@ -1166,6 +1166,8 @@ void WorldGround::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("recess_at", "position"), &WorldGround::recess_at);
 	ClassDB::bind_method(D_METHOD("has_recess"), &WorldGround::has_recess);
 	GDVIRTUAL_BIND(_recess_at, "position");
+	ClassDB::bind_method(D_METHOD("frost_sorted_at", "position"), &WorldGround::frost_sorted_at);
+	GDVIRTUAL_BIND(_frost_sorted_at, "position");
 	ClassDB::bind_method(D_METHOD("recess_vector_at", "position"), &WorldGround::recess_vector_at);
 	GDVIRTUAL_BIND(_recess_vector_at, "position");
 	ClassDB::bind_method(D_METHOD("notify_recess_changed", "box"), &WorldGround::notify_recess_changed);
@@ -1658,6 +1660,36 @@ void WorldContracts::unregister_recess(WorldRecessProvider *p_provider) {
 	if (singleton) {
 		singleton->recess_providers.erase(p_provider);
 	}
+}
+
+void WorldContracts::register_frost_sorted(WorldFrostSortedProvider *p_provider) {
+	if (singleton && p_provider && singleton->frost_sorted_providers.find(p_provider) < 0) {
+		singleton->frost_sorted_providers.push_back(p_provider);
+	}
+}
+
+void WorldContracts::unregister_frost_sorted(WorldFrostSortedProvider *p_provider) {
+	if (singleton) {
+		singleton->frost_sorted_providers.erase(p_provider);
+	}
+}
+
+Vector2 WorldGround::frost_sorted_at(const Vector3 &p_position) const {
+	Vector2 r;
+	if (GDVIRTUAL_CALL(_frost_sorted_at, p_position, r)) {
+		return Vector2(CLAMP(r.x, 0.0f, 1.0f), CLAMP(r.y, 0.0f, 1.0f));
+	}
+	Vector2 best;
+	const LocalVector<WorldFrostSortedProvider *> *list = WorldContracts::frost_sorted_providers_list();
+	if (list) {
+		for (const WorldFrostSortedProvider *p : *list) {
+			const Vector2 v = p->contract_frost_sorted_at(p_position);
+			if (Math::is_finite(v.x) && Math::is_finite(v.y) && v.x > best.x) {
+				best = Vector2(CLAMP(v.x, 0.0f, 1.0f), CLAMP(v.y, 0.0f, 1.0f));
+			}
+		}
+	}
+	return best;
 }
 
 void WorldGround::notify_recess_changed(const AABB &p_box) {
