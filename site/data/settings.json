@@ -1983,6 +1983,17 @@
    "topic": "Placement"
   },
   {
+   "name": "Block fields",
+   "settings": [
+    "RockField3D.block_fields"
+   ],
+   "note": "",
+   "what": "frost-shattered angular blocks cover cold, gentle, thin-soiled ground above the tree line, open between them, and gather into block streams down slopes.",
+   "page": "rocks",
+   "title": "Rocks",
+   "topic": "Placement"
+  },
+  {
    "name": "Frost-sorted ground",
    "settings": [
     "RockField3D.frost_sorting"
