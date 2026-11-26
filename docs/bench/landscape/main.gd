@@ -3994,6 +3994,7 @@ func _build_vegetation() -> void:
 	if generated_trees:
 		biome = _generated_forest(args.get("layout", "range") == "valley" and not args.has("montado"))
 	veg = VegetationField3D.new()
+	_climate_bare_arg(veg)
 	veg.name = "Forest"
 	veg.biome = biome
 	veg.tile_size = 128.0
@@ -4051,6 +4052,7 @@ func _build_vegetation() -> void:
 	meadow.set_rule_range(PlantSpecies.RULE_ARIDITY, Vector2(0.8, 1000.0))
 	meadow.set_rule_fade(PlantSpecies.RULE_ARIDITY, 0.1)
 	grass = GrassField3D.new()
+	_climate_bare_arg(grass)
 	grass.name = "Grass"
 	grass.rules = meadow
 	grass.radius = float(args.get("grass-radius", "40"))
@@ -4095,6 +4097,7 @@ func _build_vegetation() -> void:
 		meadow.patch_seed = 5
 		grass.ground_tint_enabled = false
 		var under := GrassField3D.new()
+		_climate_bare_arg(under)
 		under.name = "Undercoat"
 		under.rules = meadow.duplicate()
 		(under.rules as PlantSpecies).patch_cover = 1.0
@@ -4117,6 +4120,7 @@ func _build_vegetation() -> void:
 		add_child(under)
 		under.data_map = under.get_path_to(data_map)
 		var turf := GrassField3D.new()
+		_climate_bare_arg(turf)
 		turf.name = "Turf"
 		turf.rules = under.rules
 		turf.blade_segments = 1
@@ -5759,6 +5763,7 @@ func _build_cover() -> void:
 		b.species = b.species + stone_sp
 		_log("cover: %d stone-crevice species" % stone_sp.size())
 	cover = VegetationField3D.new()
+	_climate_bare_arg(cover)
 	if "still_shot" in cover:
 		cover.set("still_shot", args.get("still-shot", "1") != "0")
 	cover.name = "Cover"
@@ -7985,6 +7990,12 @@ func _lobster_net(n: Node3D) -> void:
 # 8 m, away from sand and the sea, block streams (the gate's stripe share) counting extra. The camera stands
 # --bf-back (14) m downslope, --bf-up (6) m above the ground, looking up the slope at the spot so the streams run
 # away from it; the rocks are laid again round it and its detail waited for.
+# --climate-bare=0: the vegetation and grass fields without the climate's bare share (climate_bare off), for the
+# cold-summer cover's before frame.
+func _climate_bare_arg(n: Node) -> void:
+	if args.get("climate-bare", "1") == "0" and "climate_bare" in n:
+		n.set("climate_bare", false)
+
 func _block_field_cam() -> void:
 	if rocks == null or not rocks.has_method("get_block_field_at"):
 		_log("block field: no RockField3D block fields")
