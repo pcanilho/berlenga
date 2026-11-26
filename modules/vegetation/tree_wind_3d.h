@@ -342,6 +342,8 @@ private:
 	int skipped_instances = 0;
 	HashMap<ObjectID, Vector3> contact_last;
 	LocalVector<Contact> contacts;
+	LocalVector<Vector4> contact_sp; // a body's sphere set (WorldContracts::contact_spheres), reused each frame
+	LocalVector<Vector3> contact_vel;
 	LocalVector<ObjectID> pieces;
 	HashMap<uint64_t, Ref<ArrayMesh>> piece_meshes;
 

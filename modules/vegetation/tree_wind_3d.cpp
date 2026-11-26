@@ -1004,13 +1004,36 @@ void TreeWind3D::_gather_contacts(double p_delta) {
 		if (!n3 || !n3->is_inside_tree() || seen.has(n3->get_instance_id())) {
 			continue;
 		}
-		Contact c;
-		c.position = n3->get_global_position();
+		const Vector3 pos = n3->get_global_position();
 		const Vector3 *last = contact_last.getptr(n3->get_instance_id());
-		c.velocity = last && p_delta > 1e-5 ? (c.position - *last) / float(p_delta) : Vector3();
-		c.radius = n3->has_meta(SNAME("touch_radius")) ? float(n3->get_meta(SNAME("touch_radius"))) : touch_radius;
-		contacts.push_back(c);
-		seen[n3->get_instance_id()] = c.position;
+		Vector3 vel = last && p_delta > 1e-5 ? (pos - *last) / float(p_delta) : Vector3();
+		if (vel.length_squared() > 30.0f * 30.0f) {
+			vel = Vector3(); // Teleported, not moving.
+		}
+		seen[n3->get_instance_id()] = pos;
+		// A touch_radius meta: one sphere of that radius at the origin, as before (an override).
+		if (n3->has_meta(SNAME("touch_radius"))) {
+			Contact c;
+			c.position = pos;
+			c.velocity = vel;
+			c.radius = n3->get_meta(SNAME("touch_radius"));
+			contacts.push_back(c);
+			continue;
+		}
+		// Else its real collision geometry as spheres, each with its own velocity (WorldContracts::contact_spheres, the
+		// grass's contact; docs/ideas/trees.md 7a): a ragdoll's bones, a vehicle's body and tyres, reported contact
+		// points. A node with no shape at all keeps touch_radius at its origin.
+		WorldContracts::contact_spheres(n3, contact_sp, contact_vel, vel);
+		if (contact_sp.size() == 1 && WorldContracts::body_extent(n3, -1.0f).x < 0.0f) {
+			contact_sp[0].w = touch_radius;
+		}
+		for (uint32_t k = 0; k < contact_sp.size(); k++) {
+			Contact c;
+			c.position = Vector3(contact_sp[k].x, contact_sp[k].y, contact_sp[k].z);
+			c.velocity = contact_vel[k];
+			c.radius = contact_sp[k].w;
+			contacts.push_back(c);
+		}
 	}
 	contact_last = seen;
 }

@@ -213,6 +213,30 @@ func _test_touch() -> void:
 	var trunk := wind.get_touch_bends(1, 0)
 	_check(trunk.is_empty() or (trunk[1] as Vector3).length() < 0.002, "oak trunk does not yield to a body")
 	body.queue_free()
+	# A body touches with its real collision shapes (WorldContracts.contact_spheres), not a sphere at its origin: one
+	# whose only shape sits 6 m off its origin (a trailer, a ragdoll's limb, a long arm) bends the hazel its shape reaches
+	# while its origin stays 6 m from the stem, clear of the crown.
+	for k in 300:
+		wind.update(1.0 / 60.0)
+	var shaped := Node3D.new()
+	shaped.add_to_group("tree_touch")
+	var cs := CollisionShape3D.new()
+	var sph := SphereShape3D.new()
+	sph.radius = 0.5
+	cs.shape = sph
+	cs.position = Vector3(6, 0, 0)
+	shaped.add_child(cs)
+	add_child(shaped)
+	shaped.position = Vector3(-9, 1.4, 0)
+	wind.update(1.0 / 60.0)
+	for k in 150:
+		shaped.position = Vector3(-9 + 3.0 * minf(k / 120.0, 1.0), 1.4, 0)
+		wind.update(1.0 / 60.0)
+	var by_shape := 0.0
+	for a in wind.get_touch_bends(0, 0):
+		by_shape = maxf(by_shape, (a as Vector3).length())
+	_check(by_shape > 0.05, "hazel bends where a body's collision shape reaches it, 6 m off its origin: %.2f rad" % by_shape)
+	shaped.queue_free()
 	holder.queue_free()
 
 func _bounds(m: Mesh) -> AABB:

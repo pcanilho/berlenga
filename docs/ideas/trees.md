@@ -2892,6 +2892,15 @@ in free sway (leaves rub). A body faster than `break_speed` that bends a branch 
 cut from the tree's mesh, becomes a RigidBody3D thrown with half the body's speed. Grass under
 the tree still reads the trample field as before.
 
+- Contact from the real collision shapes (26 Nov; Paulo: "the same was implemented for branches?"): a touching body
+  pushes branches with its collision geometry as spheres, each with its own velocity (WorldContracts::contact_spheres,
+  the grass's contact: Crysis 3's collider sphere sets, Sousa 2013): a ragdoll's simulating bones, a vehicle's body
+  and VehicleWheel3D tyres, the contact points the physics server reports. A rider's leg or a trailer bends the twigs
+  it reaches, not a ball round the body's origin; a snap takes that sphere's velocity. The touch_radius meta still
+  overrides with one sphere at the origin; a node with no shape keeps TreeWind3D.touch_radius. Raster and the path
+  tracer skin the same instance bone buffer, so they agree. Bench: wind --test, "hazel bends where a body's
+  collision shape reaches it, 6 m off its origin".
+
 ## 8. Stages
 
 1. Growth model and species table (oak, beech, birch, Scots pine, Norway spruce, hazel,

@@ -302,10 +302,10 @@
 			Lets nodes in [member touch_group] push branches.
 		</member>
 		<member name="touch_group" type="StringName" setter="set_touch_group" getter="get_touch_group" default="&amp;&quot;tree_touch&quot;">
-			Group of Node3Ds that touch trees: characters, vehicles, animals. A node's [code]touch_radius[/code] meta sets its size.
+			Group of Node3Ds that touch trees: characters, vehicles, animals (nodes in [code]world_contact[/code] touch too). Each touches with its real collision geometry as spheres, each with its own velocity ([method WorldContracts.describe_body]; a ragdoll's bones, a vehicle's body and tyres, reported contact points). A node's [code]touch_radius[/code] meta overrides that with one sphere of that radius at its origin.
 		</member>
 		<member name="touch_radius" type="float" setter="set_touch_radius" getter="get_touch_radius" default="0.4">
-			Radius of a touching node without its own [code]touch_radius[/code] meta (m).
+			Radius of a touching node with no collision shape and no [code]touch_radius[/code] meta (m).
 		</member>
 		<member name="touch_stiffness" type="float" setter="set_touch_stiffness" getter="get_touch_stiffness" default="4000.0">
 			How hard a body pushes: bones stiffer than this (N m per radian) yield proportionally less, so twigs give way and trunks do not.

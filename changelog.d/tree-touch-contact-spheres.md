@@ -1,0 +1,1 @@
+- Trees: bodies bend and snap branches with their real collision shapes (ragdoll bones, vehicle body and tyres), as the grass does.
