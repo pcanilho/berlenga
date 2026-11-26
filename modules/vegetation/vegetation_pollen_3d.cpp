@@ -307,9 +307,17 @@ void VegetationPollen3D::_step(float p_delta) {
 			wind = wm->wind_at(m.last, 1.0f);
 			wind.y = 0.0f;
 		}
-		const float radius = WorldContracts::body_extent(b, 0.4f).x;
-		const Vector2i k0 = pollen_key(m.last - Vector3(radius + 0.6f, 0, radius + 0.6f));
-		const Vector2i k1 = pollen_key(m.last + Vector3(radius + 0.6f, 0, radius + 0.6f));
+		// Its real collision shapes as spheres (WorldContracts::contact_spheres; docs/ideas/grass.md, "Contact from the
+		// real collision shapes"): a plant is brushed when one of them reaches it.
+		WorldContracts::contact_spheres(b, brush_sp, brush_vel, vel);
+		AABB box(Vector3(brush_sp[0].x, brush_sp[0].y, brush_sp[0].z), Vector3());
+		float radius = 0.0f;
+		for (const Vector4 &sp : brush_sp) {
+			box = box.expand(Vector3(sp.x - sp.w, sp.y - sp.w, sp.z - sp.w)).expand(Vector3(sp.x + sp.w, sp.y + sp.w, sp.z + sp.w));
+			radius = MAX(radius, float(sp.w));
+		}
+		const Vector2i k0 = pollen_key(box.position - Vector3(0.6f, 0, 0.6f));
+		const Vector2i k1 = pollen_key(box.get_end() + Vector3(0.6f, 0, 0.6f));
 		// Every plant the body brushes this step sheds into one puff in front of it: the pool stays
 		// small however dense the sward.
 		Vector3 sum_at;
@@ -322,13 +330,16 @@ void VegetationPollen3D::_step(float p_delta) {
 				}
 				for (uint32_t idx : *cell) {
 					Plant &p = plants[idx];
-					const Vector2 d(p.position.x - m.last.x, p.position.z - m.last.z);
-					if (d.length() > radius + p.reach) {
-						continue;
+					// A sphere below the heads (a rolling ball low down) still shakes the stems; one far above them
+					// (a bird, a chassis riding over) does not.
+					bool brushed = false;
+					for (const Vector4 &sp : brush_sp) {
+						if (sp.y - sp.w <= p.position.y + p.top + 0.2f && Vector2(p.position.x - sp.x, p.position.z - sp.z).length() <= sp.w + p.reach) {
+							brushed = true;
+							break;
+						}
 					}
-					// A body below the heads (a rolling ball low down) still shakes the stems; one far
-					// above them (a bird) does not.
-					if (m.last.y - radius > p.position.y + p.top + 0.2f) {
+					if (!brushed) {
 						continue;
 					}
 					const float share = p.preset >= 0 && release.has(p.preset) ? release[p.preset] : 0.0f;

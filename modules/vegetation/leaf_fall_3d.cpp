@@ -624,22 +624,38 @@ void LeafFall3D::_kick_step(float p_delta, const Vector3 &p_cam) {
 		}
 		uint8_t body_on = SURFACE_GROUND;
 		const float ground = _surface_at(b.center, body_on);
-		if (b.center.y - b.half_height - ground > 0.3f) {
-			continue; // above the litter
+		// Its real collision shapes as spheres (WorldContracts::contact_spheres; docs/ideas/grass.md, "Contact from the
+		// real collision shapes"): each that reaches the litter throws what lies under it at its own speed.
+		WorldContracts::contact_spheres(n3, kick_sp, kick_vel, vel);
+		bool touches = false;
+		for (uint32_t k = 0; k < kick_sp.size(); k++) {
+			const Vector4 &sp = kick_sp[k];
+			const float low = sp.y - sp.w - ground;
+			if (low > 0.3f) {
+				continue; // above the litter
+			}
+			touches = true;
+			Vector3 sv = kick_vel[k];
+			sv.y = 0.0f;
+			const float sspeed = Vector2(sv.x, sv.z).length();
+			const float off = MAX(float(sp.y) - ground, 0.0f);
+			const float reach = Math::sqrt(MAX(sp.w * sp.w - off * off, 0.0f)) + 0.15f;
+			const Vector2 c(sp.x, sp.z);
+			for (Leaf &l : leaves) {
+				if (!l.alive || l.lying < 0.0f || l.buried || l.on == SURFACE_WATER || Vector2(l.p.x, l.p.z).distance_squared_to(c) > reach * reach) {
+					continue; // buried in snow, or floating (the body pushes through it)
+				}
+				l.lying = -1.0f;
+				l.v = sv * Math::lerp(0.4f, 0.9f, rng.randf()) + Vector3(0, (0.3f + 0.15f * MIN(sspeed, 10.0f)) * Math::lerp(0.5f, 1.0f, rng.randf()), 0);
+				l.w = Vector3(rng.randf() - 0.5f, rng.randf() - 0.5f, rng.randf() - 0.5f) * 12.0f;
+				l.p.y = MAX(l.p.y, ground + 0.02f);
+				kicked_count++;
+			}
+		}
+		if (!touches) {
+			continue;
 		}
 		vel.y = 0.0f;
-		const float reach = b.radius + 0.15f;
-		const Vector2 c(b.center.x, b.center.z);
-		for (Leaf &l : leaves) {
-			if (!l.alive || l.lying < 0.0f || l.buried || l.on == SURFACE_WATER || Vector2(l.p.x, l.p.z).distance_squared_to(c) > reach * reach) {
-				continue; // buried in snow, or floating (the body pushes through it)
-			}
-			l.lying = -1.0f;
-			l.v = vel * Math::lerp(0.4f, 0.9f, rng.randf()) + Vector3(0, (0.3f + 0.15f * MIN(speed, 10.0f)) * Math::lerp(0.5f, 1.0f, rng.randf()), 0);
-			l.w = Vector3(rng.randf() - 0.5f, rng.randf() - 0.5f, rng.randf() - 0.5f) * 12.0f;
-			l.p.y = MAX(l.p.y, ground + 0.02f);
-			kicked_count++;
-		}
 		// The loose litter swept: a share of the leaves in the swath 2r wide.
 		if (litter_density > 0.0f && !kinds.is_empty()) {
 			float &acc = body_kick_accum[id];

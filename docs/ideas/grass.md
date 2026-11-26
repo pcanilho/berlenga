@@ -739,4 +739,6 @@ tyre met the ground.
 - **Pressing.** A sphere bends only the blades it reaches: its widest slice within the sward's height is the
   footprint, and the strength is how far below the blade tops it reaches (1 at the ground, 0 at the tips). A
   chassis riding over the grass touches nothing; its wheels and anything dragging press their own prints.
+- The same sphere sets drive the leaf litter a body kicks up (LeafFall3D) and the stems it shakes pollen from
+  (VegetationPollen3D); meadow plants bend through the grass's own map. Branches (TreeWind3D) are the trees owner's.
 - Next, if wanted: Jahrmann's persistent collision strength (heavy or long contact recovers more slowly).

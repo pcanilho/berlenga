@@ -73,6 +73,8 @@ class VegetationPollen3D : public Node3D {
 		bool seen = false;
 	};
 	LocalVector<Mover> movers;
+	LocalVector<Vector4> brush_sp; // a body's sphere set (WorldContracts::contact_spheres), reused
+	LocalVector<Vector3> brush_vel;
 
 	struct Puff {
 		Node3D *emitter = nullptr;

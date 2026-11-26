@@ -135,6 +135,8 @@ private:
 	float leeway = 0.03f; // share of the 10 m wind a floating leaf drifts at, over the water's current
 	HashMap<ObjectID, Vector3> body_last; // world_contact bodies' positions last step
 	HashMap<ObjectID, float> body_kick_accum;
+	LocalVector<Vector4> kick_sp; // a body's sphere set (WorldContracts::contact_spheres), reused
+	LocalVector<Vector3> kick_vel;
 	void _kick_step(float p_delta, const Vector3 &p_cam);
 	float step_ms = 0.0f;
 
