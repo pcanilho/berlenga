@@ -1,0 +1,1 @@
+- Snow: pit and trench walls show their layers as brushed relief by hardness, with fainter tool marks; strata bench trench squared to the print field, even depth, layered week.

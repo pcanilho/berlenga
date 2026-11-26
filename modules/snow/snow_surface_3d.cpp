@@ -137,6 +137,14 @@ vec4 snow_pack(vec2 p) {
 	}
 	return v;
 }
+// A brushed pit wall (SWAG; Fierz et al. 2009): brushing takes soft snow out and leaves hard layers standing, so the
+// bands read by their relief more than by colour. The band's face offset (m, + standing out) from its hand hardness
+// (F 1, 4F 2, 1F 3, P 4, K 5): new snow and buried hoar F, depth hoar F-4F, old rounded 4F-1F, wind slab 1F-P, a
+// melt-freeze crust K; 4 mm a hardness step about 1F.
+float snow_brush_relief(float p_kind) {
+	float hh = p_kind == 0.0 ? 1.0 : (p_kind == 1.0 ? 3.5 : (p_kind == 2.0 ? 2.5 : (p_kind == 3.0 ? 5.5 : (p_kind == 4.0 ? 1.0 : 1.5))));
+	return 0.004 * (hh - 3.0);
+}
 vec2 snow_deform(vec2 p) {
 	if (deform_rect.z <= 0.0) {
 		return vec2(0.0);
@@ -660,8 +668,19 @@ void fragment() {
 				vec3 tq = vec3(w_pos.x * 7.0, w_pos.y * 0.6, w_pos.z * 7.0);
 				float tm0 = snow_vnoise(tq);
 				vec3 tg = vec3(snow_vnoise(tq + vec3(0.2, 0.0, 0.0)) - tm0, 0.0, snow_vnoise(tq + vec3(0.0, 0.0, 0.2)) - tm0) / 0.2;
-				vec3 pert = gn * bump * grain_seen + tg * 0.12;
+				vec3 pert = gn * bump * grain_seen + tg * 0.03; // a brushed wall keeps only faint marks of the cut
 				vec3 nb = normalize(nf - (pert - nf * dot(pert, nf)) * strata_wall);
+				// The brushed relief: where a band stands out of the one above, the step between them is a ledge facing up
+				// (lit), where it is set back an overhang facing down (shaded), over the centimetre under the boundary; a
+				// recessed band sees less of the sky.
+				float br_this = snow_brush_relief(kind);
+				float br_step = above_kind < 0.0 ? 0.0 : br_this - snow_brush_relief(above_kind);
+				float br_w = 1.0 - smoothstep(0.0, 0.01, d - band_top);
+				nb = normalize(nb + vec3(0.0, 1.0, 0.0) * clamp(br_step / 0.01, -1.5, 1.5) * br_w * strata_wall);
+				shade *= 1.0 - 0.15 * clamp(-br_this / 0.008, 0.0, 1.0);
+				// The step's own light, which reads without the sun too: a set-back band's top sits in the shadow line of
+				// the overhang over it, a standing band's top edge is a lit lip.
+				shade *= 1.0 + mix(0.12, -0.4, step(br_step, 0.0)) * clamp(abs(br_step) / 0.006, 0.0, 1.0) * br_w;
 				nf = nb;
 				tn = vec3(dot(nf, normalize(w_t)), dot(nf, normalize(w_b)), dot(nf, normalize(w_n)));
 				// Grains also break the colour up: each grain cell its own brightness (crystal faces turned to the
@@ -2456,7 +2475,7 @@ void SnowSurface3D::GPUSink::stamp(const GroundDeformField::Columns &p_columns, 
 	const float crust = p_columns.column(p_position.x, p_position.z).crust;
 	const float crack = crust > 0.0f ? GroundDeformField::CRACK_LENGTH * Math::pow(crust / 0.02f, 0.75f) : 0.0f;
 	const float bow = CLAMP(p_velocity.length() / GroundDeformField::BOW_SPEED, 0.0f, 1.0f);
-	const float span = (p_box ? p_half.length() : p_radius) + MAX(ring * (1.0f + bow * GroundDeformField::BOW_REACH), 1.6f * crack);
+	const float span = (p_box ? p_half.length() : p_radius) + MAX(MAX(ring * (1.0f + bow * GroundDeformField::BOW_REACH), 1.6f * crack), 2.0f * f.texel()); // and the widest edge (GroundDeformField::edge_width)
 	int x0, x1, z0, z1;
 	if (!GroundDeformGPUHost::stamp_bounds(f, p_position, span, x0, x1, z0, z1)) {
 		return;

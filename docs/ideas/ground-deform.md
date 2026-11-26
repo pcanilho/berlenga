@@ -178,3 +178,22 @@ slope does not move; bare rock does not print; a body in `ground_deform` prints 
 pass unchanged on the shared field. `--view=trail --ground=dry_sand|damp_sand|soil|mud|litter` renders
 the trail; raster and path traced match at 100% crop. Physics step 2 ms while dry sand settles under a
 walker on the CPU here, under 0.1 ms otherwise.
+
+## Print edges off the grid (26 Nov 2026)
+
+A print is stamped into the field texel by texel, each texel pressed by the share of it the footprint covers: a
+linear ramp of the signed distance to the footprint's edge, the box-filtered edge of signed-distance rendering
+(Green 2007, "Improved Alpha-Tested Magnification for Vector Textures and Special Effects"). The ramp was half a
+texel wide, sharper than the surface can carry: the field is drawn back through bilinear (or B-spline)
+reconstruction, whose support is two texels, so a wall several texels deep and off the grid's axes came out as a
+staircase (ribs down the wall, square steps along the lip; a snow trench 11 degrees off the grid at 6.25 cm texels).
+
+Measured on an ideal 0.5 m wall at 6.25 cm texels, 11 degrees off the grid, the bilinear surface against the ramp it
+should show: half a texel 50 mm rms (30 mm wobble of the wall's mid-depth line), one texel 29 mm (10 mm), two
+texels 15 mm (none). A wider ramp than two texels softens the wall for little more.
+
+So the edge width follows the print's depth at its centre (GroundDeformField::edge_width, the same in the GPU
+stamp): half a texel up to two texels deep, so boots and shallow prints stay crisp; rising to two texels by six
+texels deep; never past twice the footprint's inner half-width, so a narrow print still reaches full depth in its
+middle. Shallow prints are as before; deep trenches, ruts and furrows get straight walls at any angle.
+Snow bench: `--view=strata --trench-yaw=11 --strata-texel=0.0625`.

@@ -648,6 +648,15 @@ void run_stamp(Stamp s) {
 	float speed = length(vel);
 	float bow = clamp(speed / params.bow.x, 0.0, 1.0);
 	vec2 heading = speed > 1e-4 ? vel / speed : vec2(0.0);
+	// The antialiased edge's width from the print's depth at its centre (GroundDeformField::edge_width).
+	float edge;
+	{
+		Column c0 = column_at(pos.xz, flags);
+		float depth = min(max(c0.surface - bottom, sink), c0.max_dent);
+		float ex = clamp((depth - 2.0 * tx) / (4.0 * tx), 0.0, 1.0);
+		float inner = box ? (sole ? 0.6 : 1.0) * min(half_.x, half_.y) : radius;
+		edge = tx * max(min(0.5 + 1.5 * ex * ex * (3.0 - 2.0 * ex), 2.0 * inner / tx), 0.5);
+	}
 
 	// Contact.
 	if (t == 0u) {
@@ -671,7 +680,7 @@ void run_stamp(Stamp s) {
 		} else {
 			sd = sqrt(d2) - radius;
 		}
-		float cover = clamp(0.5 - 2.0 * sd / tx, 0.0, 1.0);
+		float cover = clamp(0.5 - sd / edge, 0.0, 1.0);
 		if (cover <= 0.0) {
 			continue;
 		}
@@ -716,7 +725,7 @@ void run_stamp(Stamp s) {
 		} else {
 			sd = sqrt(d2) - radius;
 		}
-		float cover = clamp(0.5 - 2.0 * sd / tx, 0.0, 1.0);
+		float cover = clamp(0.5 - sd / edge, 0.0, 1.0);
 		if (cover <= 0.0) {
 			continue;
 		}

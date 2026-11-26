@@ -606,7 +606,10 @@ float GroundDeformField::press(const Columns &p_columns, Vector3 p_position, flo
 	const float speed = p_velocity.length();
 	const float bow = CLAMP(speed / BOW_SPEED, 0.0f, 1.0f);
 	const Vector2 heading = speed > 1e-4f ? p_velocity / speed : Vector2();
-	const float span = (p_box ? p_half.length() : p_radius) + MAX(ring * (1.0f + bow * BOW_REACH), 1.6f * crack);
+	// The edge's width from the print's depth at its centre (the deepest a flat or round underside reaches).
+	const Column c0 = p_columns.column(p_position.x, p_position.z);
+	const float edge = edge_width(t, MIN(MAX(c0.surface - p_bottom, p_sink), c0.max_dent), edge_inner(p_box, sole, p_half, p_radius));
+	const float span = (p_box ? p_half.length() : p_radius) + MAX(MAX(ring * (1.0f + bow * BOW_REACH), 1.6f * crack), 0.5f * edge + t);
 	const int x0 = MAX(int(Math::floor((p_position.x - span) / t)) - origin.x, 0);
 	const int x1 = MIN(int(Math::ceil((p_position.x + span) / t)) - origin.x, n - 1);
 	const int z0 = MAX(int(Math::floor((p_position.z - span) / t)) - origin.y, 0);
@@ -635,10 +638,9 @@ float GroundDeformField::press(const Columns &p_columns, Vector3 p_position, flo
 		}
 		return MAX(Math::sqrt(r_d2) - p_radius, 0.0f);
 	};
-	// Coverage of the texel by the footprint, from the signed distance to its edge (negative inside) over
-	// half a texel: the edge is drawn antialiased, so a turned box or a circle leaves a smoother wall on the
-	// texel grid instead of a staircase. Half a texel, not one: a boot only two texels wide still sinks
-	// to its full depth in the middle.
+	// Coverage of the texel by the footprint, from the signed distance to its edge (negative inside) over the
+	// edge's width (edge_width: half a texel for a shallow print, up to two for a deep cut): the edge is drawn
+	// antialiased, so a turned box or a circle leaves a smooth wall on the texel grid instead of a staircase.
 	auto coverage = [&](float wx, float wz, float &r_d2) {
 		const float dx = wx - p_position.x;
 		const float dz = wz - p_position.z;
@@ -648,7 +650,7 @@ float GroundDeformField::press(const Columns &p_columns, Vector3 p_position, flo
 			const float lx = cy * dx - sy * dz;
 			const float lz = sy * dx + cy * dz;
 			if (sole) {
-				return CLAMP(0.5f - 2.0f * sole_sd(lx, lz, p_half) / t, 0.0f, 1.0f);
+				return CLAMP(0.5f - sole_sd(lx, lz, p_half) / edge, 0.0f, 1.0f);
 			}
 			const float qx = Math::abs(lx) - p_half.x;
 			const float qz = Math::abs(lz) - p_half.y;
@@ -656,7 +658,7 @@ float GroundDeformField::press(const Columns &p_columns, Vector3 p_position, flo
 		} else {
 			sd = Math::sqrt(r_d2) - p_radius;
 		}
-		return CLAMP(0.5f - 2.0f * sd / t, 0.0f, 1.0f);
+		return CLAMP(0.5f - sd / edge, 0.0f, 1.0f);
 	};
 	auto profile = [&](float d2) {
 		return p_round ? p_bottom + p_radius - Math::sqrt(MAX(r2 - d2, 0.0f)) : p_bottom;
