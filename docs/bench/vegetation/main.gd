@@ -2007,22 +2007,29 @@ func _grazing_check() -> void:
 	f.populate_on_ready = false
 	f.bark_detail = false
 	f.biome = Biome.new()
-	f.biome.species.assign(deer)
+	f.biome.species.assign(deer + cattle)
 	add_child(f)
 	f.data_map = f.get_path_to(dm)
 	f.populate()
 	var on := 0
 	var off := 0
-	for s in deer.size():
+	var c_on := 0
+	var c_off := 0
+	for s in deer.size() + cattle.size():
 		for q in f.get_placements(s):
 			var d := Vector2(q.x, q.z).distance_to(c)
 			if d < 8.0:
-				on += 1
+				if s < deer.size(): on += 1
+				else: c_on += 1
 			elif d > 14.0:
-				off += 1
+				if s < deer.size(): off += 1
+				else: c_off += 1
 	f.free()
 	st.clear_browse()
 	_check("grazing: deer pellet groups on the browsed lawn only", on > 3 and off == 0, [on, off])
+	# The pasture is one grazing disc (WorldStand.add_browse): it crops the sward to a lawn and holds the cattle's
+	# pats and roughs; none off it.
+	_check("grazing: cattle pats and roughs on the grazed pasture only", c_on > 2 and c_off == 0, [c_on, c_off])
 
 # Meadow fairy rings (docs/ideas/vegetation.md, "Meadow fairy rings"): the champignons come up on the rings the grass
 # shows (GrassField3D.get_fairy_ring_at), nowhere else.

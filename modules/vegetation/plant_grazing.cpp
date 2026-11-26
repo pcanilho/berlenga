@@ -325,9 +325,12 @@ TypedArray<Resource> PlantGenerator::make_grazing(GrazeSet p_set, int p_variants
 		sp->set_rule_fade(PlantSpecies::RULE_SLOPE, 5.0f);
 		sp->set_rule_range(PlantSpecies::RULE_WATER_DISTANCE, Vector2(2.0f, 1000000.0f));
 		sp->set_rule_fade(PlantSpecies::RULE_WATER_DISTANCE, 1.0f);
+		// Only where the animals graze: the grazing pressure (WorldStand.add_browse, RULE_BROWSE) that also crops the
+		// sward to its lawn (GrassField3D.graze_height), so one pasture disc gives the lawn, the pats and the roughs
+		// together; with no pressure the sward stays ungrazed and so do these.
+		sp->set_rule_range(PlantSpecies::RULE_BROWSE, Vector2(0.3f, 1.0f));
+		sp->set_rule_fade(PlantSpecies::RULE_BROWSE, 0.15f);
 		if (p_set == GRAZE_DEER) {
-			sp->set_rule_range(PlantSpecies::RULE_BROWSE, Vector2(0.3f, 1.0f));
-			sp->set_rule_fade(PlantSpecies::RULE_BROWSE, 0.15f);
 			sp->set_rule_range(PlantSpecies::RULE_SHADE, Vector2(0.0f, 0.9f)); // Deer dung in the wood too.
 		}
 		sp->set_visibility_range(f.visibility);
