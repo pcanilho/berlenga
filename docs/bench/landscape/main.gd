@@ -1085,6 +1085,8 @@ func _ready() -> void:
 					await get_tree().process_frame
 					fw += 1
 				_log("frost sorted: stones laid round the camera (%d frames for the detail)" % fw)
+	if args.has("block-field"):
+		await _block_field_cam()
 	if args.has("walker-snow"):
 		await _walker_snow()
 	if args.has("lodging"):
@@ -7853,6 +7855,66 @@ func _lobster_net(n: Node3D) -> void:
 		mi.material_override = mat
 		n.add_child(mi)
 
+
+# --block-field: frost-shattered block fields (RockField3D.block_fields, rocks a3fdfc1a; cold, gentle, thin-soiled
+# ground, so a cold climate: --climate-shift=-10). On a 16 m grid, the point whose block-field gate is strong
+# (over --bf-min, 0.8) all round it (eight points 20 m out), on a --bf-min-deg..--bf-max-deg (4..20) slope over
+# 8 m, away from sand and the sea, block streams (the gate's stripe share) counting extra. The camera stands
+# --bf-back (14) m downslope, --bf-up (6) m above the ground, looking up the slope at the spot so the streams run
+# away from it; the rocks are laid again round it and its detail waited for.
+func _block_field_cam() -> void:
+	if rocks == null or not rocks.has_method("get_block_field_at"):
+		_log("block field: no RockField3D block fields")
+		return
+	var wr: Rect2 = gen.get_world_rect()
+	var bmin := float(args.get("bf-min", "0.8"))
+	var dmin := float(args.get("bf-min-deg", "4"))
+	var dmax := float(args.get("bf-max-deg", "20"))
+	var best := -INF
+	var bp := Vector3.INF
+	var gmax := 0.0
+	var xx := wr.position.x + 100.0
+	while xx < wr.end.x - 100.0:
+		var zz := wr.position.y + 100.0
+		while zz < wr.end.y - 100.0:
+			var p := Vector3(xx, 0, zz)
+			var g: Vector2 = rocks.call("get_block_field_at", p)
+			gmax = maxf(gmax, g.x)
+			if g.x >= bmin and gen.get_height(p) > gen.sea_level + 30.0 and gen.get_sand_depth_at(Vector3(xx, gen.get_height(p), zz)) <= 0.0:
+				var deg := rad_to_deg(atan(_fs_grad(p).length()))
+				if deg >= dmin and deg <= dmax:
+					var lo := 1.0
+					var stripe := g.y
+					for k in 8:
+						var q := p + Vector3(cos(TAU * k / 8.0), 0, sin(TAU * k / 8.0)) * 20.0
+						var gq: Vector2 = rocks.call("get_block_field_at", q)
+						lo = minf(lo, gq.x)
+						stripe += gq.y
+					if lo >= bmin * 0.75:
+						var score := lo + 0.05 * stripe
+						if score > best:
+							best = score
+							bp = Vector3(xx, gen.get_height(p), zz)
+			zz += 16.0
+		xx += 16.0
+	if bp == Vector3.INF:
+		_log("block field: none found (strongest gate %.2f, needs %.2f on %.0f..%.0f deg)" % [gmax, bmin, dmin, dmax])
+		return
+	var gr := _fs_grad(bp)
+	var down := Vector3(-gr.x, 0, -gr.y).normalized()
+	var cp := bp + down * float(args.get("bf-back", "14"))
+	cp.y = height_at(cp.x, cp.z) + float(args.get("bf-up", "6"))
+	var c3: Camera3D = get_viewport().get_camera_3d()
+	c3.fov = 55.0
+	c3.global_position = cp
+	c3.look_at(bp + Vector3.UP * float(args.get("bf-look-up", "0")))
+	_log("block field: spot %s (score %.2f, %.1f deg), camera %s" % [str(bp.round()), best, rad_to_deg(atan(gr.length())), str(cp.round())])
+	rocks.build_area(Rect2(cp.x - 40.0, cp.z - 40.0, 80.0, 80.0))
+	var w := 0
+	while rocks.has_method("get_ground_detail_pending") and int(rocks.get_ground_detail_pending()) > 0 and w < 1200:
+		await get_tree().process_frame
+		w += 1
+	_log("block field: rocks laid round the camera (%d frames for the detail)" % w)
 
 func _frost_sorted_cam() -> void:
 	# --frost-sorted: frost-sorted patterned ground (RockField3D frost_sorting, 94c5a825/1a8aff72). On a 16 m grid, the
