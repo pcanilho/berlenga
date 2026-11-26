@@ -68,6 +68,7 @@ extends Node3D
 #   --prim-report         with --out: the rock MultiMeshes ranked by the triangles they draw at their LODs (perf hunts)
 #   --rain=mm/h           with --rock: rain on the stone for --rain-hours=h (0.5), then --dry-hours=h of drying;
 #                         --no-rivulets for a before frame; --film=f the water film of a stream bed's stones
+#   --varnish=k           with --rock: the rock varnish of a dry climate (0..1, RockField3D.desert_varnish)
 #   --salt=k              with --rock: a stand-in sea salt index (0..1) for the salt bloom; --no-salt-bloom: off
 #   --moss=k              the field's moss_cover (0..1)
 #   --cave-mouths         the retired cave-mouth portal blocks (and their terrain holes) in --world frames
@@ -86,8 +87,12 @@ extends Node3D
 #   --only-layer          with --world: only the view's layer is placed
 #   --no-far-thinning     with --world: RockField3D.far_thinning off (each layer whole to its radius, then a cut)
 #   --save-far-cover=p    with --world: save the far cover map (32 m texels to 4 km) and count its stony texels
+#   --karst-report        with --world: RockField3D.karst's stream sinks and springs (WorldCaves) and the rivers laid
+#                         with them; --no-karst off (the before frame)
 #   --frost[=C]           with --world: a cold, wet climate (mean annual air C, -4) so the ground sorts into stone
 #                         circles and stripes (RockField3D.frost_sorting); --no-frost for the before frame;
+#                         --block-spot[=stream] the nearest block field (flat) or block stream (8 to 18 degrees);
+#                         --no-block-fields for its before frame;
 #                         --frost-contract checks WorldGround.frost_sorted_at against get_frost_at (main + worker);
 #                         --frost-spot (flat soil: circles) or --frost-spot=stripes (4 to 9 degrees); --no-frost-ground
 #                         keeps the stones but not the material's silt centres and gravel lag (a before frame)
@@ -114,7 +119,8 @@ extends Node3D
 #   --bank-relief=x       with --world: Landscape3D.bank_relief (0.8 m; 0 for a before frame); --bank-spot puts the
 #                         spot on a 42 to 52 degree soil bank; --spot=x,z puts the spot at a world point
 #   --rain-climate[=P]    with --world: a mild climate of P mm a year (350) for RockField3D.rain_pedestals (stones on rain
-#                         splash pedestals on bare soil); --pedestal-spot the tallest near the centre; --no-rain-pedestals off
+#                         splash pedestals on bare soil) and desert_varnish (under 400 mm; --no-varnish for its before
+#                         frame); --pedestal-spot the tallest near the centre; --no-rain-pedestals off
 #   --snow[=CM]           with --world: an even settled pack of CM cm (8) round the spot with its deep snow surface, for
 #                         RockField3D.snow_burial (stones under the pack left out); --no-snow-burial off;
 #                         --no-snow-surface leaves the deep snow surface out (the ground material's snow only)
@@ -465,6 +471,9 @@ func _one_rock() -> void:
 	print("rock: %d triangles, axes %s" % [m.surface_get_array_index_len(0) / 3, m.get_meta("rock_axes")])
 	if args.has("no-rivulets") and m.surface_get_material(0) is ShaderMaterial:
 		(m.surface_get_material(0) as ShaderMaterial).set_shader_parameter("rain_rivulets", false)
+	if args.has("varnish") and m.surface_get_material(0) is ShaderMaterial:
+		# --varnish=k: the rock varnish a dry climate gives (RockField3D.desert_varnish: 0 humid .. 1 arid).
+		(m.surface_get_material(0) as ShaderMaterial).set_shader_parameter("varnish", float(args["varnish"]))
 	if args.has("no-salt-bloom") and m.surface_get_material(0) is ShaderMaterial:
 		(m.surface_get_material(0) as ShaderMaterial).set_shader_parameter("salt_bloom", false)
 	if args.has("film") and m.surface_get_material(0) is ShaderMaterial:
@@ -840,8 +849,83 @@ func _world() -> void:
 				if dd < best_f:
 					best_f = dd
 					found_f = p
-		spot = found_f
-		print("frost spot ", spot, " (", tried, " points fully sorting)")
+		if best_f == INF:
+			print("frost spot: none open and even enough (", tried, " points fully sorting); the view's spot kept")
+		else:
+			spot = found_f
+			print("frost spot ", spot, " (", tried, " points fully sorting)")
+	if args.has("block-spot"):
+		# --block-spot[=stream] (with --frost): the nearest block field (RockField3D.block_fields) open 6 m round, gentle
+		# (under 8 degrees) or a block stream on 8 to 18 degrees.
+		var stream: bool = args["block-spot"] == "stream"
+		var best_b := INF
+		var found_b := spot
+		var tried_b := 0
+		for zz in range(-800, 801, 8):
+			for xx in range(-800, 801, 8):
+				var p := Vector3(xx, 0, zz)
+				if rocks.get_block_field_at(p).x < 0.9:
+					continue
+				tried_b += 1
+				var sl := rad_to_deg(atan(Vector2(gen.get_height(p + Vector3(4, 0, 0)) - gen.get_height(p - Vector3(4, 0, 0)), gen.get_height(p + Vector3(0, 0, 4)) - gen.get_height(p - Vector3(0, 0, 4))).length() / 8.0))
+				if (sl < 8.0 or sl > 18.0) if stream else sl > 8.0:
+					continue
+				var open := true
+				for k in 8:
+					if rocks.get_block_field_at(p + Vector3(cos(k * PI / 4.0), 0, sin(k * PI / 4.0)) * 6.0).x < 0.5:
+						open = false
+						break
+				if open and Vector2(xx, zz).length() < best_b:
+					best_b = Vector2(xx, zz).length()
+					found_b = p
+		# Why so few or many: of every 8 m point, the share of gentle ground (under 20 degrees), of thin soil (under 0.3 m)
+		# and of exposed rock (over 0.5), and the mean soil depth.
+		var n_all := 0
+		var n_gentle := 0
+		var n_thin := 0
+		var n_bare := 0
+		var soil_sum := 0.0
+		for zz in range(-512, 513, 16):
+			for xx in range(-512, 513, 16):
+				var ff: Dictionary = rocks.get_frost_factors(Vector3(xx, 0, zz))
+				if ff.is_empty() or ff.get("sea", false):
+					continue
+				n_all += 1
+				n_gentle += 1 if float(ff["slope"]) < 20.0 else 0
+				n_thin += 1 if float(ff["soil_depth"]) < 0.3 else 0
+				n_bare += 1 if float(ff["rock_exposure"]) > 0.5 else 0
+				soil_sum += float(ff["soil_depth"])
+		print("block field ground: %d land points, gentle %.2f, thin soil %.2f, exposed %.2f, mean soil %.2f m" % [n_all, n_gentle / maxf(n_all, 1.0), n_thin / maxf(n_all, 1.0), n_bare / maxf(n_all, 1.0), soil_sum / maxf(n_all, 1.0)])
+		if best_b == INF:
+			print("block spot: none (", tried_b, " points of full block field); the view's spot kept")
+		else:
+			spot = found_b
+			print("block spot ", spot, " (", tried_b, " points of full block field)")
+	if args.has("karst-report"):
+		# --karst-report (with --world): RockField3D's sinks and springs through WorldCaves, each sink's spring lower
+		# down, and the rivers the generator lays with them (ends at a sink, spring-fed heads).
+		var wc: WorldCaves = WorldContracts.get_caves()
+		var all := Rect2(-2000, -2000, 4000, 4000)
+		var sws: Array = wc.get_swallets(all)
+		var rss: Array = wc.get_resurgences(all)
+		var by_id := {}
+		for r in rss:
+			by_id[int(r["id"])] = r
+		var lower := 0
+		for w in sws:
+			var r = by_id.get(int(w["resurgence"]), null)
+			var drop := float(w["position"].y - r["position"].y) if r != null else NAN
+			if r != null and drop > 0.0:
+				lower += 1
+			print("  sink %s capacity %.2f m3/s -> spring %s, %.0f m lower, lag %.1f days" % [w["position"], float(w["capacity"]), r["position"] if r != null else "none", drop, float(w["lag_days"])])
+		var ends := 0
+		var fed := 0
+		for rv in gen.get_rivers(rocks.river_min_area):
+			if str(rv.get("ends_in", "")) == "swallet":
+				ends += 1
+			if int(rv.get("resurgence", -1)) >= 0:
+				fed += 1
+		print("karst: %d sinks, %d springs, %d springs lower than their sink; rivers: %d end at a sink, %d spring-fed" % [sws.size(), rss.size(), lower, ends, fed])
 	if args.has("frost-contract"):
 		# --frost-contract (with --frost): WorldGround.frost_sorted_at against RockField3D.get_frost_at over the world
 		# every 8 m and a 16 m square every 0.5 m round the first sorting point, on the main thread and from a
@@ -1305,6 +1389,11 @@ func _world() -> void:
 		# --trail[=passes]: a game trail (0.8 m, 400 passes a year) across the spot along x, 1.5 m before it;
 		# --rooting[=years]: a boar rooting 1.5 m across, 2 m behind the spot, that age (0: fresh). WorldStand.
 		rocks.frost_sorting = not args.has("no-frost")
+		rocks.desert_varnish = not args.has("no-varnish") # --no-varnish: dry-climate stones without their varnish (a before frame)
+		if args.has("rain-climate"):
+			print("varnish: %.2f (precipitation factor at the field %.2f)" % [rocks.get_varnish_amount(), WorldContracts.climate_precipitation_factor_at(rocks.global_position)])
+		rocks.karst = not args.has("no-karst") # --no-karst: limestone streams keep running over the karst (the before frame)
+		rocks.block_fields = not args.has("no-block-fields") # --no-block-fields: the cold plateaus without their blocks (a before frame)
 		rocks.runoff_gravel = not args.has("no-runoff-gravel") # --no-runoff-gravel: the rills and gullies without their lag (a before frame)
 		rocks.rain_pedestals = not args.has("no-rain-pedestals") # --no-rain-pedestals: bare soil without its stones and pedestals (a before frame)
 		rocks.snow_burial = not args.has("no-snow-burial") # --no-snow-burial: every stone drawn, under the snow too (a before frame)
@@ -2684,6 +2773,9 @@ func _test() -> void:
 		var t0 := Time.get_ticks_msec()
 		var st: Array = rocks.get_stones(l, wr if l != RockField3D.LAYER_SCREE else Rect2(scree_at.x - 100, scree_at.z - 100, 200, 200))
 		var floating := 0
+		var pillars := 0
+		var pillar_out := 0
+		var pillar_worst := -INF
 		var buried := 0
 		for s in st:
 			var p: Vector3 = s["position"]
@@ -2702,8 +2794,29 @@ func _test() -> void:
 				if back.y > gen.get_height(back) + 0.1:
 					floating += 1
 					print("  ledge slab floating at %s: its back %.2f over the bench (basis %s, ground at the centre %.2f)" % [p, back.y - gen.get_height(back), lb, gen.get_height(p)])
+			elif l == RockField3D.LAYER_CLIFF and int(s["family"]) == RockGenerator.FAMILY_CLIFF_PILLAR:
+				# A kit pillar stands proud of the drawn face with its back set into the rock (z into the wall): the
+				# back's centre lies under the drawn face there (the landscape's relief over the heightfield, recessed).
+				var pb: Basis = s["basis"]
+				var back := p + pb.z * 0.5
+				var bh := gen.get_height(back)
+				var wgp: WorldGround = WorldContracts.get_ground()
+				var rl: Vector2 = wgp.relief_at(Vector3(back.x, bh, back.z), true, false) if wgp else Vector2()
+				var face := bh + (rl.x if rl.y > 0.0 else 0.0)
+				pillars += 1
+				pillar_worst = maxf(pillar_worst, back.y - face)
+				if back.y > face + 0.3 and maxf(absf(p.x), absf(p.z)) < 0.98 * wr.size.x * 0.5:
+					pillar_out += 1 # (inside the world: its last 2% is clamped heightfield)
+					if pillar_out <= 4:
+						print("  pillar back proud at %s: %.2f m (back %s, basis %s)" % [p, back.y - face, back, pb])
+				if back.y > face + 0.1:
+					floating += 1
+					if floating <= 3:
+						print("  pillar floating at %s: its back %.2f over the drawn face" % [p, back.y - face])
 			elif l == RockField3D.LAYER_CLIFF and p.y > gen.get_height(p) + 0.1:
 				floating += 1
+				if floating <= 3:
+					print("  cliff block floating at %s (family %d): %.2f over the heightfield" % [p, int(s["family"]), p.y - gen.get_height(p)])
 		var want_some := true
 		check(not want_some or st.size() > 0, "%s: %d stones over the world in %d ms" % [LAYERS[l], st.size(), Time.get_ticks_msec() - t0])
 		if l == RockField3D.LAYER_CLIFF:
@@ -2737,6 +2850,8 @@ func _test() -> void:
 				hist[mini(int(r), 4) - 1] += 1
 			print("  ledge runs: %d slabs in %d runs (1/2/3/4+ slabs: %s), longest %d slabs" % [ls.size(), runs.size(), hist, longest])
 			check(ls.size() == ledges and longest >= 2, "get_ledge_slabs: %d slabs (get_stones %d) in %d runs, longest %d, in %d ms" % [ls.size(), ledges, runs.size(), longest, Time.get_ticks_msec() - t1])
+		if l == RockField3D.LAYER_CLIFF:
+			print("  kit pillars: %d, backs over 0.3 m proud %d away from the world's edge, worst %.2f m" % [pillars, pillar_out, pillar_worst])
 		check(floating == 0 and buried == 0, "%s: none floating (%d) or buried (%d)" % [LAYERS[l], floating, buried])
 	# Ground contact: the damp ring and banked fines round the stones, drawn into the map the terrain reads.
 	rocks.ground_contact = true

@@ -65,6 +65,9 @@ extends Node3D
 #   --touch=x,z,w,d,mode,y[,depth,falloff,bowl];...  TerrainBrush3D touch-ups under the generator (lower, raise,
 #                         flatten, add), the lakes and rivers re-solved after them
 #   --preview-test[=scale] move the first guide and time the generator's coarse guide preview
+#   --karst-stub=sx,sz,cap,rx,rz[,lag_days,base]|auto  a WorldCaves stub: one stream sink (on the river nearest sx,sz;
+#                         cap m3/s) feeding one spring at rx,rz; auto picks a sink a third down river 1 taking all
+#                         its water, and a spring 250 m off river 2. --map prints the karst rivers and the balance
 #   --map=path.png        save a top-down map of the generated land (hillshade, water, rivers, falls) and quit
 #                         (--map-clean: without the red fall markers, for docs pairs)
 #   --mesh=landscape|grid ground: Landscape3D, 1 m with LODs (default), or the 4 m grid mesh; --lod-error=px (2)
@@ -91,6 +94,20 @@ class SurgeSwell extends WorldWater:
 		if gen.get_height(p) > sea:
 			return -INF
 		return sea + 2.0 * sin(TAU * t / 12.0)
+
+
+# One stream sink and one karst spring for --karst-stub (WorldCaves, as CaveNetwork3D answers it): the generator's
+# rivers end at the sink and rise again at the spring.
+class KarstStub extends WorldCaves:
+	var sink := Vector3()
+	var capacity := 0.0
+	var spring := Vector3()
+	var lag := 0.0
+	var base := 0.0
+	func _get_swallets(r: Rect2) -> Array:
+		return [{"position": sink, "capacity": capacity, "resurgence": 0, "lag_days": lag, "id": 0}] if r.has_point(Vector2(sink.x, sink.z)) else []
+	func _get_resurgences(r: Rect2) -> Array:
+		return [{"id": 0, "position": spring, "direction": Vector3(), "base_flow": base}] if r.has_point(Vector2(spring.x, spring.z)) else []
 
 
 var no_till_tex: ImageTexture
@@ -246,6 +263,8 @@ func _ready() -> void:
 	t_start = Time.get_ticks_msec()
 	_generate()
 	_lake_and_fall()
+	if args.has("karst-stub"):
+		_karst_stub(str(args["karst-stub"]))
 	if args.has("no-till"):
 		# The ground material without the moraine till (its negative talus cleared): a till-only before shot.
 		var gi: Image = gen.get_geology_image()
@@ -574,9 +593,29 @@ func _ready() -> void:
 			# --storm-wind-turn=DEG: the wind turned DEG from toward the camera (90: across the view, a side-on tower
 			# with its anvil and cirrus shield spreading sideways).
 			weather.wind_direction = (-sf2).rotated(deg_to_rad(float(args["storm-wind-turn"])))
-		weather.add_storm(sp, float(args.get("storm-radius", "2500")), float(args.get("storm-rain", "40")), float(args.get("storm-outflow", "15")), 0.0)
-		weather.advance(float(args.get("storm-grow", "900")))
-		_log("storm approach: cell at %s, %.1f km ahead, wind toward the camera %s" % [str(sp.round()), skm, str(-sf2)])
+		# The cell rides the steering wind while it grows (WeatherMap3D.get_cloud_steering, some 10 to 25 m/s): added
+		# there, it stood behind the camera after 900 s. So it starts that far upwind and grows into place, the wind
+		# snapped to the settings first so the drift is the one measured.
+		weather.snap_to_settings()
+		var grow := float(args.get("storm-grow", "900"))
+		var steer: Vector2 = weather.get_cloud_steering()
+		var start := sp - steer * grow
+		weather.add_storm(start, float(args.get("storm-radius", "2500")), float(args.get("storm-rain", "40")), float(args.get("storm-outflow", "15")), 0.0)
+		weather.advance(grow)
+		_log("storm approach: cell at %s, %.1f km ahead, wind toward the camera %s; started %.1f km upwind (steering %.1f m/s)" % [str(sp.round()), skm, str(-sf2), start.distance_to(sp) / 1000.0, steer.length()])
+		# Where the grown cell stands now: the cloud base along the view (WeatherMap3D.get_cloud_base_at), every 2 km
+		# ahead; the storm's base sags under it (lowered toward the rain), so the dip marks the cell.
+		var c2 := Vector2(sc.global_position.x, sc.global_position.z)
+		var line := "storm approach: cloud base along the view (km ahead: m):"
+		for k in range(0, 31, 2):
+			var q := c2 + sf2 * k * 1000.0
+			line += " %d: %.0f," % [k, weather.get_cloud_base_at(Vector3(q.x, 0.0, q.y))]
+		_log(line + " %d storm(s)" % int(weather.get_storm_count()))
+		# Whether the frame holds it: the view's pitch and how far above the horizon its top edge and the cell's base are.
+		var pitch := rad_to_deg(asin(clampf(sf.y, -1.0, 1.0)))
+		var half_v := 0.5 * sc.fov
+		var base_el := rad_to_deg(atan2(weather.get_cloud_base_at(Vector3(sp.x, 0.0, sp.y)) - sc.global_position.y, skm * 1000.0))
+		_log("storm approach: view pitch %.1f deg, frame top %.1f deg above the horizon, the cell's base %.1f deg%s" % [pitch, pitch + half_v, base_el, "" if pitch + half_v > base_el + 3.0 else " (above the frame: raise --pitch)"])
 	if args.has("deer-lawn"):
 		# --deer-lawn[=P]: deer browse a disc --lawn-dist (25) m ahead of the camera, --lawn-radius (22) m, pressure P
 		# (0.9) through WorldStand.add_browse (cef8dbd7): grass grazes to a lawn there, bramble bitten at its edge,
@@ -589,6 +628,16 @@ func _ready() -> void:
 		var lpress := _arg_num("deer-lawn", 0.9)
 		WorldContracts.get_stand().add_browse(lp, float(args.get("lawn-radius", "22")), lpress)
 		_log("deer lawn at %s, browse %.2f there" % [str(lp.round()), WorldContracts.get_stand().browse_at(lp)])
+	if args.has("grazing") and not args.has("deer-lawn"):
+		# --grazing: the stock graze a disc round the camera (vegetation 7be13a0a: every grazing set keys off the
+		# WorldStand browse disc): --graze-radius (50) m centred --graze-dist (10) m ahead, pressure --graze-press (0.9).
+		var gcam: Camera3D = get_viewport().get_camera_3d()
+		var gf := -gcam.global_basis.z
+		gf.y = 0.0
+		var gp := gcam.global_position + gf.normalized() * float(args.get("graze-dist", "10"))
+		gp.y = height_at(gp.x, gp.z)
+		WorldContracts.get_stand().add_browse(gp, float(args.get("graze-radius", "50")), float(args.get("graze-press", "0.9")), 1.5)
+		_log("grazing disc at %s, browse %.2f there" % [str(gp.round()), WorldContracts.get_stand().browse_at(gp)])
 	if args.has("sand-vista") and "sand_sea_rect" in gen:
 		# --sand-vista: from the sand sea's edge (--vista-at, 0.12 of its width in) --vista-h (8) m up, looking across
 		# its middle to the far dunes, so the near ripples and the dune-scale tone far off share the frame.
@@ -946,7 +995,7 @@ func _ready() -> void:
 		await get_tree().process_frame
 		bw += 1
 		if bw % 10 == 0:
-			_log("far bake wait: %d frames, %d s" % [bw, (Time.get_ticks_msec() - tw) / 1000])
+			_log("far bake wait: %d frames, %d s, cover %s" % [bw, (Time.get_ticks_msec() - tw) / 1000, str(cover.get_stream_stats()) if cover != null else "none"])
 	get_viewport().disable_3d = false
 	_log("grass far colours baked and cover idle after %d frames" % bw)
 	_mem_log("after first frames")
@@ -1075,6 +1124,8 @@ func _ready() -> void:
 					await get_tree().process_frame
 					fw += 1
 				_log("frost sorted: stones laid round the camera (%d frames for the detail)" % fw)
+	if args.has("block-field"):
+		await _block_field_cam()
 	if args.has("walker-snow"):
 		await _walker_snow()
 	if args.has("lodging"):
@@ -2688,6 +2739,87 @@ func _save_dune_map(spec: String) -> void:
 	_log("dune map saved %s (%s, %.1f m a pixel, %d x %d)" % [spec.split(",")[0], r, step, sz.x, sz.y])
 
 
+func _karst_stub(spec: String) -> void:
+	var stub := KarstStub.new()
+	var min_area := float(args.get("min-area", "1500000"))
+	if spec == "auto" or spec == "1":
+		var raw: Array = gen.get_rivers(min_area, false)
+		if raw.size() < 3:
+			_log("karst stub: too few rivers")
+			return
+		var r1: Dictionary = raw[1]
+		var p1: PackedVector3Array = r1["points"]
+		stub.sink = p1[p1.size() / 3]
+		stub.capacity = 4.0 * float(Array(r1["monthly_discharge"]).max()) + 1.0
+		var r2: Dictionary = raw[2]
+		var p2: PackedVector3Array = r2["points"]
+		var k := p2.size() / 2
+		var t := (p2[mini(k + 1, p2.size() - 1)] - p2[maxi(k - 1, 0)])
+		var side := Vector3(-t.z, 0, t.x).normalized()
+		stub.spring = p2[k] + side * 250.0
+	else:
+		var v := spec.split(",")
+		stub.sink = Vector3(float(v[0]), 0, float(v[1]))
+		stub.capacity = float(v[2])
+		stub.spring = Vector3(float(v[3]), 0, float(v[4]))
+		stub.lag = float(v[5]) if v.size() > 5 else 0.0
+		stub.base = float(v[6]) if v.size() > 6 else 0.0
+	stub.sink.y = gen.get_height(stub.sink)
+	stub.spring.y = gen.get_height(stub.spring)
+	WorldContracts.set_caves(stub)
+	_log("karst stub: sink %s taking up to %.2f m3/s, spring %s (lag %.0f d, base %.2f m3/s)" % [str(stub.sink.round()), stub.capacity, str(stub.spring.round()), stub.lag, stub.base])
+
+
+func _exit_tree() -> void:
+	if args.has("karst-stub"):
+		WorldContracts.set_caves(null) # a script stub must not outlive the script language
+
+
+func _karst_report(path: String, img: Image, w: int, h: int) -> void:
+	var min_area := float(args.get("min-area", "1500000"))
+	var raw: Array = gen.get_rivers(min_area, false)
+	var kr: Array = gen.get_rivers(min_area)
+	var taken := 0.0
+	var given := 0.0
+	var base := 0.0
+	var stub = WorldContracts.get_caves()
+	if stub is KarstStub:
+		base = stub.base
+	for r in kr:
+		if r["ends_in"] == "swallet":
+			taken += float(r["sink_taken"])
+			_log("karst: river ends in swallet %d at %s, %.3f m3/s sinks" % [r["swallet"], str(r["points"][r["points"].size() - 1].round()), r["sink_taken"]])
+		if int(r["resurgence"]) >= 0:
+			given = maxf(given, float(r["spring_flow"]))
+			_log("karst: river rises at resurgence %d at %s, %.3f m3/s, %d pts, ends %s joins %d" % [r["resurgence"], str(r["points"][0].round()), r["spring_flow"], r["points"].size(), r["ends_in"], r["joins"]])
+		if r["ends_in"] == "dry":
+			_log("karst: a reach dries out at %s" % str(r["points"][r["points"].size() - 1].round()))
+	var lag: float = stub.lag if stub is KarstStub else 0.0
+	var ok := lag > 0.0 or absf(taken + base - given) <= 1e-3 * maxf(given, 1.0)
+	_log("karst: %d rivers raw, %d with karst; sunk %.3f + base %.3f = %.3f, spring gives %.3f m3/s: %s" % [raw.size(), kr.size(), taken, base, taken + base, given, "balance PASS" if ok else ("FAIL" if lag <= 0.0 else "lagged")])
+	# The dry reaches (raw rivers not in the karst set) dark, the sink red, the spring white.
+	for r in raw:
+		for q in r["points"]:
+			var pi := Vector2i(int((q.x - X0) / 16.0), int((q.z - Z0) / 16.0))
+			if pi.x >= 0 and pi.y >= 0 and pi.x < w and pi.y < h:
+				img.set_pixelv(pi, Color(0.12, 0.2, 0.28))
+	for r in kr:
+		for q in r["points"]:
+			var pi := Vector2i(int((q.x - X0) / 16.0), int((q.z - Z0) / 16.0))
+			if pi.x >= 0 and pi.y >= 0 and pi.x < w and pi.y < h:
+				img.set_pixelv(pi, Color(0.3, 0.9, 1.0))
+	if stub is KarstStub:
+		for pair in [[stub.sink, Color(1, 0.15, 0.1)], [stub.spring, Color(1, 1, 1)]]:
+			var c: Vector3 = pair[0]
+			var pi := Vector2i(int((c.x - X0) / 16.0), int((c.z - Z0) / 16.0))
+			for dy in range(-3, 4):
+				for dx in range(-3, 4):
+					var pp := pi + Vector2i(dx, dy)
+					if pp.x >= 0 and pp.y >= 0 and pp.x < w and pp.y < h and abs(dx) + abs(dy) <= 4:
+						img.set_pixelv(pp, pair[1])
+	img.save_png(path)
+
+
 func _save_map(path: String) -> void:
 	if args.has("profile"):
 		# Heights along rows (--profile=z1,z2,...): every 100 m across the map.
@@ -2731,6 +2863,8 @@ func _save_map(path: String) -> void:
 				if pp.x >= 0 and pp.y >= 0 and pp.x < w and pp.y < h:
 					img.set_pixelv(pp, Color(1, 0.1, 0.1))
 	img.save_png(path)
+	if args.has("karst-stub"):
+		_karst_report(path, img, w, h)
 	_log("map saved " + path)
 	# Discharge along the rivers, to place the high lake where the fall below it carries a real curtain.
 	var ri := 0
@@ -7843,6 +7977,85 @@ func _lobster_net(n: Node3D) -> void:
 		mi.material_override = mat
 		n.add_child(mi)
 
+
+# --block-field: frost-shattered block fields (RockField3D.block_fields, rocks a3fdfc1a; cold, gentle, thin-soiled
+# ground, so a cold climate: --climate-shift=-10). On a 16 m grid, the point whose block-field gate is strong
+# (over --bf-min, 0.8) with --bf-ring (0.5) of that all round it (eight points --bf-ring-m, 10, m out; failing that the
+# strongest ring), on a --bf-min-deg..--bf-max-deg (4..20) slope over
+# 8 m, away from sand and the sea, block streams (the gate's stripe share) counting extra. The camera stands
+# --bf-back (14) m downslope, --bf-up (6) m above the ground, looking up the slope at the spot so the streams run
+# away from it; the rocks are laid again round it and its detail waited for.
+func _block_field_cam() -> void:
+	if rocks == null or not rocks.has_method("get_block_field_at"):
+		_log("block field: no RockField3D block fields")
+		return
+	var wr: Rect2 = gen.get_world_rect()
+	var bmin := float(args.get("bf-min", "0.8"))
+	var dmin := float(args.get("bf-min-deg", "4"))
+	var dmax := float(args.get("bf-max-deg", "20"))
+	var best := -INF
+	var bp := Vector3.INF
+	var gmax := 0.0
+	var n_gate := 0
+	var n_dry := 0
+	var n_slope := 0
+	var n_rough := 0
+	var xx := wr.position.x + 100.0
+	while xx < wr.end.x - 100.0:
+		var zz := wr.position.y + 100.0
+		while zz < wr.end.y - 100.0:
+			var p := Vector3(xx, 0, zz)
+			var g: Vector2 = rocks.call("get_block_field_at", p)
+			gmax = maxf(gmax, g.x)
+			if g.x >= bmin:
+				n_gate += 1
+			if g.x >= bmin and gen.get_height(p) > gen.sea_level + 30.0 and gen.get_sand_depth_at(Vector3(xx, gen.get_height(p), zz)) <= 0.05:
+				n_dry += 1
+				var deg := rad_to_deg(atan(_fs_grad(p).length()))
+				if deg >= dmin and deg <= dmax:
+					n_slope += 1
+					var lo := 1.0
+					var stripe := g.y
+					# --bf-rough (3) m: the ring's most off a plane through the point (ledges and gully walls are not a field)
+					var h0 := height_at(xx, zz)
+					var gp := _fs_grad(p)
+					var rough := 0.0
+					for k in 8:
+						var q := p + Vector3(cos(TAU * k / 8.0), 0, sin(TAU * k / 8.0)) * float(args.get("bf-ring-m", "10"))
+						var gq: Vector2 = rocks.call("get_block_field_at", q)
+						lo = minf(lo, gq.x)
+						stripe += gq.y
+						rough = maxf(rough, absf(height_at(q.x, q.z) - (h0 + gp.x * (q.x - xx) + gp.y * (q.z - zz))))
+					if rough > float(args.get("bf-rough", "3")):
+						n_rough += 1
+						zz += 16.0
+						continue
+					# (no ring passing: the field round the point still ranks it, below every point whose ring passes)
+					var score := lo + 0.05 * stripe - (0.0 if lo >= bmin * float(args.get("bf-ring", "0.5")) else 2.0)
+					if score > best:
+						best = score
+						bp = Vector3(xx, gen.get_height(p), zz)
+			zz += 16.0
+		xx += 16.0
+	if bp == Vector3.INF:
+		_log("block field: none found (strongest gate %.2f; %d points over %.2f, %d of them dry and above the sea, %d on %.0f..%.0f deg, %d too rough)" % [gmax, n_gate, bmin, n_dry, n_slope, dmin, dmax, n_rough])
+		return
+	var gr := _fs_grad(bp)
+	var down := Vector3(-gr.x, 0, -gr.y).normalized()
+	var cp := bp + down * float(args.get("bf-back", "14"))
+	# (never below the spot: looking down onto the blocks lets the gaps between them read)
+	cp.y = maxf(height_at(cp.x, cp.z), bp.y) + float(args.get("bf-up", "6"))
+	var c3: Camera3D = get_viewport().get_camera_3d()
+	c3.fov = 55.0
+	c3.global_position = cp
+	c3.look_at(bp + Vector3.UP * float(args.get("bf-look-up", "0")))
+	_log("block field: spot %s (score %.2f, %.1f deg; %d too rough), camera %s" % [str(bp.round()), best, rad_to_deg(atan(gr.length())), n_rough, str(cp.round())])
+	rocks.build_area(Rect2(cp.x - 40.0, cp.z - 40.0, 80.0, 80.0))
+	var w := 0
+	while rocks.has_method("get_ground_detail_pending") and int(rocks.get_ground_detail_pending()) > 0 and w < 1200:
+		await get_tree().process_frame
+		w += 1
+	_log("block field: rocks laid round the camera (%d frames for the detail)" % w)
 
 func _frost_sorted_cam() -> void:
 	# --frost-sorted: frost-sorted patterned ground (RockField3D frost_sorting, 94c5a825/1a8aff72). On a 16 m grid, the

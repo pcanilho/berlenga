@@ -227,6 +227,19 @@
 				How many stones are rigid bodies now (see [member stones_react]).
 			</description>
 		</method>
+		<method name="get_block_field_at" qualifiers="const">
+			<return type="Vector2" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The block field at a world position: x is its gate (0 to 1, from the cold, the summer warmth, the slope, the soil and exposure gates of [member block_fields]), y the block streams' stripe share there (1 on a stripe). (0, 0) with [member block_fields] off or no [WeatherMap3D].
+			</description>
+		</method>
+		<method name="get_varnish_amount" qualifiers="const">
+			<return type="float" />
+			<description>
+				The rock varnish the stones' materials carry now (0 humid to 1 arid), from the climate when [member desert_varnish] is on.
+			</description>
+		</method>
 		<method name="get_kit_stats" qualifiers="const">
 			<return type="Dictionary" />
 			<description>
@@ -513,6 +526,15 @@
 		</member>
 		<member name="rain_pedestals" type="bool" setter="set_rain_pedestals" getter="is_rain_pedestals" default="true">
 			Rain splash pedestals in the ground detail: where plants leave the soil bare (a dry climate from the [WorldContracts] weather's yearly precipitation times the terrain's precipitation pattern, or a burn scar from [WorldFire] in its first years), stones of the soil lie on it, and each stands on a column of the soil it shielded from the raindrops' splash while the ground round it was lowered (up to about a third of the stone's width); some have toppled off theirs. Trails, rooting, frost churn and storm runoff level them. Drawn as soil columns of fresh subsoil under the stones (flared, undercut under the cap, fluted by the splash; a toppled stone's empty column rounds off beside it); counted in the far cover map. Tiles of piles are not cut over them. Off, the same stones lie on the soil without their columns.
+		</member>
+		<member name="block_fields" type="bool" setter="set_block_fields" getter="is_block_fields" default="true">
+			Frost-shattered block fields (felsenmeer) in the scree layer: openwork angular blocks of 0.25 to 2 m covering cold, gentle ground of thin soil or exposed bedrock above the tree line (mean annual air under -1 to -3 C and the warmest month under 8 to 11 C at the ground's height, from the [WeatherMap3D] climate; slopes under 20 to 26 degrees). On 4 to 20 degrees they gather into block streams, downslope stripes with their long axes down the fall line, dipping upslope.
+		</member>
+		<member name="desert_varnish" type="bool" setter="set_desert_varnish" getter="is_desert_varnish" default="true">
+			Rock varnish on old stones in dry climates (from the [WeatherMap3D] climate's precipitation at the field: none over about 400 mm a year, full under about 180 mm): black on exposed tops and in curtains down the runoff paths of steep faces, orange-brown on the undersides and near the soil, a pale band at the ground line, none on fresh breaks or young talus. Not on blocks matched to the terrain's cliff colour.
+		</member>
+		<member name="karst" type="bool" setter="set_karst" getter="is_karst" default="true">
+			Stream sinks and springs ([WorldCaves]): where a stream runs onto limestone (this field's [member rock_type], or its soft strata with [member soft_rock_type] limestone) it sinks at a swallet, and the water comes out at a resurgence lower down the valley, on the valley wall a few metres above the bed. The generator lays its rivers with them (ending at the sink, starting again at the spring).
 		</member>
 		<member name="frost_sorting" type="bool" setter="set_frost_sorting" getter="is_frost_sorting" default="true">
 			Frost-sorted patterned ground in the ground detail: where the mean annual air from the active [WeatherMap3D] climate (cooled by its lapse rate with height) is below about -1 C, the year's precipitation is over about 300 mm, the ground slopes under 10 degrees and has soil over bare rock, away from water, sand and talus, freeze and thaw sort the stones from the fines. Flat ground shows circles 1 to 3 m across, stony borders round bare fine centres; from 2 to 5 degrees the borders draw out into stripes down the fall line. The pattern comes from a phase separation run once per kind (Cahn-Hilliard, after Kessler and Werner 2003), tiled with warp and rotation per block so it does not repeat. The border stones are blocky and coarse, piled over the soil, some heaved up on edge. Tiles of piles are not used where the pattern is. Past the drawn stones the far cover maps ([member ground_detail_cover]) carry the borders' stones by the pattern's mean share. The gate and stone share are also published round the target as the global terrain_frost_map (r gate, g stone share, b dome) over terrain_frost_rect, so [TerrainMaterial3D] shades the fine centres as bare wet silt domed by frost heave (b: the dome's height share) and the borders with a gravel lag. See [method get_frost_at].

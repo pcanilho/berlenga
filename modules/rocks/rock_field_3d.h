@@ -73,7 +73,7 @@ class StaticBody3D;
 // river stones carry the rock of their headwaters. Each layer streams in square cells round the follow target (or
 // the camera) out to its radius; instances share one mesh per shape (MultiMesh), so one acceleration structure per
 // shape serves every stone of it.
-class RockField3D : public Node3D, public WorldCoverProvider, public WorldRecessProvider, public WorldFrostSortedProvider {
+class RockField3D : public Node3D, public WorldCoverProvider, public WorldRecessProvider, public WorldFrostSortedProvider, public WorldCavesProvider {
 	GDCLASS(RockField3D, Node3D);
 
 public:
@@ -353,6 +353,21 @@ private:
 	bool detail_rivers = true; // ground detail on the river beds
 	bool ground_wear = true; // ground detail worn by game trails and turned by boar rooting (WorldStand)
 	bool frost_sorting = true; // frost-sorted circles and stripes of stones on cold, wet, gentle soil (WorldWeather climate)
+	bool desert_varnish = true; // rock varnish on old stones in dry climates (the weather's precipitation)
+	float varnish_amount = 0.0f; // the materials' varnish now (0 humid .. 1 arid)
+	double varnish_clock = 0.0;
+	float _varnish_from_climate() const;
+	void _update_varnish(bool p_force);
+	// Karst sinks and springs (WorldCaves; docs/ideas/rocks.md, "Stream sinks and springs"): laid on first ask from
+	// the generator's raw river network and the field's rock types, dropped with the generator's result.
+	bool karst = true;
+	mutable Mutex karst_lock;
+	mutable bool karst_ready = false;
+	mutable LocalVector<WorldSwallet> karst_sinks;
+	mutable LocalVector<WorldResurgence> karst_springs;
+	void _prepare_karst() const;
+	void _karst_reset(bool p_notify);
+	bool block_fields = true; // frost-shattered block fields (felsenmeer) on cold, gentle, thin-soiled ground above the tree line
 	bool runoff_gravel = true; // a coarse lag in the terrain's rill and gully floors, fine grains on their fans
 	bool snow_burial = true; // stones under the snowpack are left out of the ground detail
 	float snow_check = 0.0f; // s to the next look at the pack over the laid cells
@@ -931,6 +946,40 @@ public:
 		rebuild();
 	}
 	real_t get_cliff_block_max_slope() const { return cliff_block_max_slope; }
+	void set_desert_varnish(bool p_enabled) {
+		desert_varnish = p_enabled;
+		_update_varnish(true);
+	}
+	bool is_desert_varnish() const { return desert_varnish; }
+	float get_varnish_amount() const { return varnish_amount; }
+	void set_karst(bool p_enabled) {
+		if (karst == p_enabled) {
+			return;
+		}
+		karst = p_enabled;
+		_karst_reset(true);
+	}
+	bool is_karst() const { return karst; }
+	void contract_swallets(const Rect2 &p_rect, LocalVector<WorldSwallet> &r_out) const override;
+	void contract_resurgences(const Rect2 &p_rect, LocalVector<WorldResurgence> &r_out) const override;
+	void set_block_fields(bool p_enabled) {
+		if (block_fields == p_enabled) {
+			return;
+		}
+		block_fields = p_enabled;
+		rebuild();
+	}
+	bool is_block_fields() const { return block_fields; }
+	// The block field at a point: x the gate (0..1), y the block streams' stripe share there (1 on a stripe).
+	Vector2 get_block_field_at(const Vector3 &p_position) const;
+	struct BlockClimate {
+		bool on = false;
+		float maat = 99.0f, warm = 99.0f; // mean annual and warmest month air at the reference height, C
+		float lapse = 5.5f, lapse_warm = 5.5f; // K/km
+		float reference = 0.0f;
+	};
+	static void _block_climate(BlockClimate &r_climate);
+	float _block_gate(const TerrainGenerator3D *p_gen, const BlockClimate &p_climate, const Vector3 &p_at, float &r_slope_deg, Vector3 &r_fall) const;
 	void set_cliff_kit(bool p_enabled) {
 		cliff_kit = p_enabled;
 		_kit_reset(true);

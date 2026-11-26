@@ -11,6 +11,7 @@ def get_doc_classes():
         "FootPlacementModifier3D",
         "WorldBeaverDam3D",
         "WorldBurnScar3D",
+        "WorldCaves",
         "WorldContracts",
         "WorldExclusion3D",
         "WorldFire",

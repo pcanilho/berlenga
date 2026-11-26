@@ -1919,6 +1919,17 @@
    "topic": "Shapes"
   },
   {
+   "name": "Desert varnish",
+   "settings": [
+    "RockField3D.desert_varnish"
+   ],
+   "note": "",
+   "what": "in dry climates old stones darken with a black film on their tops and down the runoff paths of steep faces, and turn orange-brown underneath and near the soil; fresh breaks stay bright.",
+   "page": "rocks",
+   "title": "Rocks",
+   "topic": "Shapes"
+  },
+  {
    "name": "Moss cushions",
    "settings": [
     "moss_cushions"
@@ -1978,6 +1989,17 @@
    ],
    "note": "",
    "what": "pebbles and gravel from 1 to 8 cm as real stones near the camera, sized and sorted like the beach, scree or river bed around them (coarse on riffles, silted in pools, each stone tilted against the flow), each drawn only while it stays a few pixels tall; the path tracer traces every one, grouped into tiles of piles shared across cells so it handles far fewer instances, and small stones off screen leave its scene with no change to the image (`rendering/pathtracing/offscreen_record_cull`). Beyond that the ground takes on their cover, colour and shading toward the sun, so no edge shows where the stones stop. Feet and wheels press the stones into the bed, push some aside and flick a few loose, which settle again. Stones buried by the snowpack are left out, so only coarse ones show through (`snow_burial`).",
+   "page": "rocks",
+   "title": "Rocks",
+   "topic": "Placement"
+  },
+  {
+   "name": "Block fields",
+   "settings": [
+    "RockField3D.block_fields"
+   ],
+   "note": "",
+   "what": "frost-shattered angular blocks cover cold, gentle, thin-soiled ground above the tree line, open between them, and gather into block streams down slopes.",
    "page": "rocks",
    "title": "Rocks",
    "topic": "Placement"

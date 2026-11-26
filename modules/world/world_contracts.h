@@ -950,6 +950,63 @@ struct WorldContactBody {
 	bool feet = false; // meta world_contact_feet: its feet are contact bodies of their own; deformers skip the walker
 };
 
+// Karst: stream sinks and springs (docs/ideas/terrain-generation.md, "Karst sinks and springs"). A cave producer
+// (CaveNetwork3D) says where surface streams sink into the rock (swallets: ponors, stream sinks) and where the water
+// comes out again (resurgences: karst springs at cave mouths low on valley sides, at the water table). The river
+// producer (TerrainGenerator3D) ends and starts its rivers on those points: a swallet takes up to its capacity, so a
+// low river sinks whole (a dry blind valley below in summer) while a flood overflows down the valley; a resurgence
+// delivers its swallets' water (lagged) plus its own base flow. Ford and Williams, Karst Hydrogeology and
+// Geomorphology (2007), ch. 5 and 7. The producer fits its swallets to the rivers without karst
+// (TerrainGenerator3D.get_rivers(area, false)), so the two never wait on each other.
+struct WorldSwallet {
+	Vector3 position; // world, on the channel bed where the stream sinks
+	float capacity = 0.0f; // m3/s the sink takes; flow above it runs on down the valley
+	int resurgence = -1; // id of the resurgence the water comes out at, -1 unknown or beyond the map
+	float lag_days = 0.0f; // days from sinking to coming out
+	int id = -1; // the producer's own id for it (unique among all producers), -1 none
+};
+
+struct WorldResurgence {
+	int id = -1; // unique among all producers
+	Vector3 position; // world, the spring pool's surface at the mouth
+	Vector3 direction; // horizontal unit vector, the way the water leaves the mouth
+	float base_flow = 0.0f; // m3/s of its own (rain on the karst itself, autogenic recharge), all year
+};
+
+class WorldCavesProvider {
+public:
+	// Appends the swallets / resurgences whose position lies in the world xz rectangle.
+	virtual void contract_swallets(const Rect2 &p_rect, LocalVector<WorldSwallet> &r_out) const = 0;
+	virtual void contract_resurgences(const Rect2 &p_rect, LocalVector<WorldResurgence> &r_out) const = 0;
+	virtual ~WorldCavesProvider() {}
+};
+
+class WorldCaves : public RefCounted {
+	GDCLASS(WorldCaves, RefCounted);
+
+	friend class WorldContracts;
+	LocalVector<WorldCavesProvider *> providers;
+
+protected:
+	static void _bind_methods();
+
+	GDVIRTUAL1RC(Array, _get_swallets, Rect2)
+	GDVIRTUAL1RC(Array, _get_resurgences, Rect2)
+
+public:
+	bool has_provider() const { return !providers.is_empty() || get_script_instance() != nullptr; } // a script stub (set_caves) counts
+	// Every producer's, in the world xz rectangle. Empty with none.
+	void swallets(const Rect2 &p_rect, LocalVector<WorldSwallet> &r_out) const;
+	void resurgences(const Rect2 &p_rect, LocalVector<WorldResurgence> &r_out) const;
+	// The same for scripts and tests. Swallets: {position, capacity, resurgence, lag_days, id}; resurgences:
+	// {id, position, direction, base_flow}. A script stub returns these from _get_swallets / _get_resurgences.
+	Array get_swallets(const Rect2 &p_rect) const;
+	Array get_resurgences(const Rect2 &p_rect) const;
+	// A producer reports its sinks or springs changed within a world xz rectangle (built, moved, gone): signal
+	// karst_changed(rect), and the rivers there are laid again. Never emitted for a river rebuild (that would loop).
+	void notify_karst_changed(const Rect2 &p_rect);
+};
+
 class Camera3D;
 
 class WorldContracts : public Object {
@@ -974,6 +1031,8 @@ class WorldContracts : public Object {
 	Ref<WorldWater> water_override;
 	Ref<WorldFire> builtin_fire;
 	Ref<WorldFire> fire_override;
+	Ref<WorldCaves> builtin_caves;
+	Ref<WorldCaves> caves_override;
 	Ref<WorldSnow> builtin_snow;
 	Ref<WorldStand> builtin_stand;
 	Ref<WorldStand> stand_override;
@@ -1001,6 +1060,7 @@ public:
 	static WorldWater *water();
 	static WorldGround *ground();
 	static WorldFire *fire();
+	static WorldCaves *caves();
 	static WorldStand *stand();
 	static WorldSnow *snow();
 
@@ -1123,6 +1183,9 @@ public:
 	static void register_fire(WorldFireProvider *p_provider);
 	static void unregister_fire(WorldFireProvider *p_provider);
 	static void fire_burn_changed(const Rect2 &p_area); // WorldFire.burn_changed() on the contract in use
+	static void register_caves(WorldCavesProvider *p_provider); // any number: all their sinks and springs count
+	static void unregister_caves(WorldCavesProvider *p_provider);
+	static void karst_changed(const Rect2 &p_rect); // WorldCaves.notify_karst_changed() on the built-in contract and any stub
 	static void register_snow(WorldSnowProvider *p_provider);
 	static void unregister_snow(WorldSnowProvider *p_provider);
 
@@ -1135,6 +1198,8 @@ public:
 	Ref<WorldWater> get_water() const;
 	void set_fire(const Ref<WorldFire> &p_stub);
 	Ref<WorldFire> get_fire() const;
+	void set_caves(const Ref<WorldCaves> &p_stub);
+	Ref<WorldCaves> get_caves() const;
 	void set_stand(const Ref<WorldStand> &p_stub);
 	Ref<WorldStand> get_stand() const;
 	void set_snow(const Ref<WorldSnow> &p_stub);

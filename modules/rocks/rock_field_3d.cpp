@@ -355,6 +355,19 @@ static real_t rf_height(const TerrainGenerator3D *p_gen, const Vector3 &p) {
 	return p_gen->get_height(Vector3(CLAMP(p.x, w.position.x, w.get_end().x), p.y, CLAMP(p.z, w.position.y, w.get_end().y)));
 }
 
+// Block streams: on 4 to 20 degrees the blocks gather in downslope stripes some 6 to 10 m apart with finer ground
+// between (sorted stripes at block scale; Ballantyne 2018, ch. 8). 1 on a stripe, about 0.2 between.
+static float rf_block_stripe(float p_x, float p_z, const Vector3 &p_fall, float p_slope_deg) {
+	const float k = Math::smoothstep(4.0f, 9.0f, p_slope_deg);
+	if (k <= 0.0f || p_fall == Vector3()) {
+		return 1.0f;
+	}
+	const float u = p_x * -p_fall.z + p_z * p_fall.x; // across the slope
+	const float w = 1.6f * Math::sin(p_x * 0.043f + 1.7f * Math::sin(p_z * 0.031f)) + 1.2f * Math::sin(p_z * 0.051f + 0.9f);
+	const float s = Math::smoothstep(-0.3f, 0.5f, Math::sin((u + w) * float(Math::TAU) / 8.0f));
+	return Math::lerp(1.0f, 0.2f + 0.8f * s, k);
+}
+
 // The cliff kit's boxes (docs/ideas/rocks.md, "Cliff kit recess contract"): fixed by the world (hashes of world
 // positions, no cell's random state), so the pillars a cell lays and the recess a mesh worker reads agree.
 static const float RF_KIT_SQUARE = 8.0f;
@@ -814,7 +827,8 @@ void RockField3D::_prepare_rivers() {
 		rivers_ready = true;
 		return;
 	}
-	const Array rs = gen->get_rivers(river_min_area);
+	// The raw network (no karst): a blind valley below a sink keeps the bed the water cut, boulders and all.
+	const Array rs = gen->get_rivers(river_min_area, false);
 	for (int r = 0; r < rs.size(); r++) {
 		const Dictionary d = rs[r];
 		const PackedVector3Array pts = d.get("points", PackedVector3Array());
@@ -1201,7 +1215,12 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_cell_rect, uint32_t p_see
 				Vector3 xz;
 				float size;
 				float t;
+				Vector3 fall = Vector3(); // a block field's block: the fall line it lines up with (zero: flat)
+				bool block = false;
 			};
+			BlockClimate bclim;
+			_block_climate(bclim);
+			const float bmin = MAX(float(min_size), 0.25f);
 			struct TrySizeGreater {
 				bool operator()(const Try &p_a, const Try &p_b) const { return p_a.size > p_b.size; }
 			};
@@ -1211,6 +1230,26 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_cell_rect, uint32_t p_see
 					const Vector3 c(x + sub * 0.5f, 0, z + sub * 0.5f);
 					// Talus under a fifth is soil with a few stones (the ground material shows it); full scree from there.
 					const float t = (float(gen->get_talus(c)) - 0.2f) / 0.8f;
+					// Block field (felsenmeer, docs/ideas/rocks.md): openwork blocks 0.25 to 2 m, a power law (exponent
+					// 2.2, mean b squared about 3.7 bmin^2), covering 85% of the full field, tried 2.5 times over;
+					// angular, little sunk (they rest on each other), long axes down the fall line on block streams.
+					float bslope = 0.0f;
+					Vector3 bfall;
+					const float bg = bclim.on && t < 0.5f ? _block_gate(gen, bclim, c, bslope, bfall) : 0.0f;
+					const float tb = bg > 0.0f ? bg * rf_block_stripe(float(c.x), float(c.z), bfall, bslope) : 0.0f;
+					if (tb >= 0.05f) {
+						const float want_b = 2.5f * 0.85f * tb * float(sub * sub) * float(density) / (0.785f * 1.4f * 3.7f * bmin * bmin);
+						const int nb = int(want_b) + (rng.randf() < want_b - int(want_b) ? 1 : 0);
+						for (int k = 0; k < nb; k++) {
+							Try tr;
+							tr.xz = Vector3(x + rng.randf() * sub, 0, z + rng.randf() * sub);
+							tr.size = MIN(bmin * Math::pow(1.0f - rng.randf() * 0.999f, -1.0f / 2.2f), 2.0f);
+							tr.t = tb;
+							tr.fall = bslope > 6.0f ? bfall : Vector3();
+							tr.block = true;
+							tries.push_back(tr);
+						}
+					}
 					if (t < 0.05f) {
 						continue;
 					}
@@ -1293,6 +1332,18 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_cell_rect, uint32_t p_see
 				pd.sink = 0.2f + 0.13f * rng.randf();
 				pd.follow = 0.8f;
 				pd.film = 0.0f;
+				if (tr.block) {
+					// Openwork: resting on each other more than sunk in fines, leaning (to 25 degrees). On a block
+					// stream the long (x) axis runs down the fall line and the blocks dip upslope (imbrication).
+					pd.sink = 0.06f + 0.08f * rng.randf();
+					pd.follow = 0.6f;
+					pd.tilt = Math::deg_to_rad(25.0f) * rng.randf();
+					if (tr.fall != Vector3()) {
+						pd.yaw = Math::atan2(-tr.fall.z, tr.fall.x) + Math::deg_to_rad(25.0f) * (rng.randf() - 0.5f);
+						pd.tilt_axis = Vector3(-tr.fall.z, 0, tr.fall.x);
+						pd.tilt = Math::deg_to_rad(8.0f + 14.0f * rng.randf());
+					}
+				}
 				pending.push_back(pd);
 			}
 		} break;
@@ -3358,6 +3409,8 @@ Ref<ShaderMaterial> RockField3D::_material(RockGenerator::RockType p_type, RockG
 	Ref<ShaderMaterial> m = RockGenerator::get_material(p_type)->duplicate();
 	m->set_shader_parameter("cliff_match", p_cliff);
 	m->set_shader_parameter("lichen_cover", lichen_cover);
+	m->set_shader_parameter("varnish", varnish_amount);
+	m->set_shader_parameter("varnish_wall", p_cliff && !p_group);
 	m->set_shader_parameter("surface_age", age);
 	m->set_shader_parameter("instance_tint", p_group ? 0.45f : 0.0f);
 	m->set_shader_parameter("moss_cover", moss_cover);
@@ -3760,6 +3813,77 @@ Vector2 RockField3D::get_frost_at(const Vector3 &p_position) const {
 	const float g = _frost_gate(gen, fc, p_position, n);
 	const float slope = Math::rad_to_deg(Math::acos(CLAMP(float(n.y), -1.0f, 1.0f)));
 	return Vector2(g, g > 0.0f ? rf_frost_share(gen, float(p_position.x), float(p_position.z), slope) : 0.0f);
+}
+
+// Frost-shattered block fields (docs/ideas/rocks.md, "Frost-shattered block fields"): openwork angular blocks a metre
+// or so deep on cold, gentle ground of thin regolith over bedrock, above the tree line (Ballantyne 1998, 2018;
+// Boelhouwers and Sumner 2003). Periglacial cold (MAAT under -1 to -3 C at the point's height), the tundra's summer
+// (warmest month under 8 to 11 C: Koeppen ET, the tree line's 6 to 10 C), slopes under 20 to 26 degrees (steeper:
+// talus), thin soil or exposed bedrock (deep soil sorts into circles instead), no water, sand, sea or ice.
+void RockField3D::_block_climate(BlockClimate &r_climate) {
+	r_climate = BlockClimate();
+	WeatherSeason::Climate cl;
+	if (!WorldContracts::weather() || !WorldContracts::weather()->season_climate(cl)) {
+		return;
+	}
+	r_climate.on = true;
+	r_climate.maat = 0.5f * (cl.temperature_january + cl.temperature_july);
+	r_climate.lapse = 0.5f * (cl.lapse_rate_january + cl.lapse_rate_july);
+	const bool july = cl.temperature_july >= cl.temperature_january;
+	r_climate.warm = july ? cl.temperature_july : cl.temperature_january;
+	r_climate.lapse_warm = july ? cl.lapse_rate_july : cl.lapse_rate_january;
+	r_climate.reference = cl.reference_height;
+}
+
+float RockField3D::_block_gate(const TerrainGenerator3D *p_gen, const BlockClimate &p_climate, const Vector3 &p_at, float &r_slope_deg, Vector3 &r_fall) const {
+	r_slope_deg = 0.0f;
+	r_fall = Vector3();
+	if (!p_climate.on || !block_fields) {
+		return 0.0f;
+	}
+	const float h = float(rf_height(p_gen, p_at));
+	const float dz = (h - p_climate.reference) / 1000.0f;
+	const float cold = Math::smoothstep(-1.0f, -3.0f, p_climate.maat - p_climate.lapse * dz);
+	const float alpine = Math::smoothstep(11.0f, 8.0f, p_climate.warm - p_climate.lapse_warm * dz);
+	if (cold * alpine <= 0.0f) {
+		return 0.0f;
+	}
+	const Vector3 at(p_at.x, h, p_at.z);
+	if (p_gen->get_water_depth(at) > 0.03 || p_gen->get_sand_depth_at(at) > 0.05 || p_gen->get_glacier_depth(at) > 0.5) {
+		return 0.0f;
+	}
+	if (p_gen->has_sea_result() && h < float(p_gen->get_sea_level()) + 2.5f) {
+		return 0.0f;
+	}
+	const Vector3 n = ground_normal(p_gen, p_at.x, p_at.z, 3.0);
+	r_slope_deg = Math::rad_to_deg(Math::acos(CLAMP(float(n.y), -1.0f, 1.0f)));
+	const float gentle = 1.0f - Math::smoothstep(20.0f, 26.0f, r_slope_deg);
+	if (gentle <= 0.0f) {
+		return 0.0f;
+	}
+	const Vector2 f(float(n.x), float(n.z));
+	r_fall = f.length() > 1e-4f ? Vector3(f.x, 0.0f, f.y).normalized() : Vector3();
+	// Regolith over bedrock: thin soil, or the rock itself at the surface (shattered in place). The complement of the
+	// frost sorting's soil gates (deep, fine soil sorts into circles and stripes; thin or rocky ground stays blocks).
+	const float deep = Math::smoothstep(0.1f, 0.4f, float(p_gen->get_soil_depth(at)));
+	const float soil = 1.0f - Math::smoothstep(0.4f, 0.7f, float(p_gen->get_rock_exposure(at)));
+	return cold * alpine * gentle * (1.0f - MIN(deep, soil));
+}
+
+Vector2 RockField3D::get_block_field_at(const Vector3 &p_position) const {
+	const TerrainGenerator3D *gen = Object::cast_to<TerrainGenerator3D>(ObjectDB::get_instance(kit_generator));
+	if (!gen && Thread::is_main_thread() && is_inside_tree()) {
+		gen = _get_generator();
+	}
+	if (!gen) {
+		return Vector2();
+	}
+	BlockClimate bc;
+	_block_climate(bc);
+	float slope = 0.0f;
+	Vector3 fall;
+	const float g = _block_gate(gen, bc, p_position, slope, fall);
+	return Vector2(g, g > 0.0f ? rf_block_stripe(float(p_position.x), float(p_position.z), fall, slope) : 0.0f);
 }
 
 // WorldGround.frost_sorted_at: the gate and the stone share at a point, for CPU placers (cover plants keep off the
@@ -6621,7 +6745,7 @@ void RockField3D::_update_moss(const HashMap<uint64_t, LocalVector<Transform3D>>
 			job->source = *src;
 			job->params.xform = xf;
 			job->params.custom = cd;
-			job->params.moss_cover = float(moss_cover) * age_cover;
+			job->params.moss_cover = float(moss_cover) * age_cover * (1.0f - varnish_amount); // none in arid climates (the shader's moss term too)
 			const Ref<ShaderMaterial> mat = _material(key_type(lk), RockGenerator::Family(key_family(lk)));
 			if (mat.is_valid()) {
 				const Variant pd = mat->get_shader_parameter("pole_direction");
@@ -7365,7 +7489,7 @@ void RockField3D::_update_process() {
 		set_physics_process_internal(false);
 		return;
 	}
-	set_process_internal(streaming || live_rockfall || ground_contact || frost_sorting);
+	set_process_internal(streaming || live_rockfall || ground_contact || frost_sorting || desert_varnish);
 	set_physics_process_internal(rockfall_dust || stones_react);
 }
 
@@ -8298,6 +8422,11 @@ bool RockField3D::_obstacle_cache_base(const TerrainGenerator3D *p_gen, String &
 	if (!key.object(this) || !key.object(p_gen)) {
 		return false;
 	}
+	// The climate (the scree layer's block fields read it).
+	BlockClimate bc;
+	_block_climate(bc);
+	const float clim[] = { float(bc.on), bc.maat, bc.warm, bc.lapse, bc.lapse_warm, bc.reference };
+	key.bytes(clim, sizeof(clim));
 	p_gen->hash_result([&](const void *p_data, size_t p_size) { key.bytes(p_data, p_size); });
 	if (const LocalVector<WorldReliefProvider *> *rel = WorldContracts::relief_providers_list()) {
 		key.value(uint64_t(rel->size()));
@@ -8911,6 +9040,7 @@ void RockField3D::set_generator(const NodePath &p_path) {
 
 void RockField3D::set_seed(int p_seed) {
 	seed = p_seed;
+	_karst_reset(true);
 	clear(); // workers read the libraries
 	libraries.clear();
 	rebuild();
@@ -8918,11 +9048,13 @@ void RockField3D::set_seed(int p_seed) {
 
 void RockField3D::set_rock_type(RockGenerator::RockType p_type) {
 	rock_type = RockGenerator::RockType(CLAMP(int(p_type), 0, int(RockGenerator::ROCK_MAX) - 1));
+	_karst_reset(true);
 	rebuild();
 }
 
 void RockField3D::set_soft_rock_type(RockGenerator::RockType p_type) {
 	soft_rock_type = RockGenerator::RockType(CLAMP(int(p_type), 0, int(RockGenerator::ROCK_MAX) - 1));
+	_karst_reset(true);
 	rebuild();
 }
 
@@ -8933,6 +9065,7 @@ void RockField3D::set_erratic_rock_type(RockGenerator::RockType p_type) {
 
 void RockField3D::set_use_strata(bool p_use) {
 	use_strata = p_use;
+	_karst_reset(true);
 	rebuild();
 }
 
@@ -8948,6 +9081,40 @@ void RockField3D::set_detail(real_t p_detail) {
 	clear(); // workers read the libraries
 	libraries.clear();
 	rebuild();
+}
+
+// Rock varnish forms where the rock dries out between rare wettings: thick and dark in deserts under about 150 to
+// 250 mm of rain a year, patchy and thin up to some 400 mm, washed away and outgrown by lichens where it is wetter
+// (Dorn 2009; Liu and Broecker 2000). From the weather's climate and the terrain's rain pattern at the field's middle.
+float RockField3D::_varnish_from_climate() const {
+	if (!desert_varnish) {
+		return 0.0f;
+	}
+	WeatherSeason::Climate cl;
+	if (!WorldContracts::weather() || !WorldContracts::weather()->season_climate(cl)) {
+		return 0.0f;
+	}
+	const Vector3 mid = is_inside_tree() ? get_global_position() : Vector3();
+	const float f = WorldContracts::climate_precipitation_factor_at(mid);
+	const float precip = cl.precipitation * (f >= 0.0f ? f : 1.0f);
+	return Math::smoothstep(400.0f, 180.0f, precip);
+}
+
+void RockField3D::_update_varnish(bool p_force) {
+	const float v = _varnish_from_climate();
+	if (!p_force && Math::abs(v - varnish_amount) < 0.01f) {
+		return;
+	}
+	const bool moss_changed = Math::abs(v - varnish_amount) > 0.05f;
+	varnish_amount = v;
+	for (KeyValue<int, Ref<ShaderMaterial>> &kv : materials) {
+		kv.value->set_shader_parameter("varnish", varnish_amount);
+	}
+	if (moss_changed && moss_cushions) {
+		// The cushions are grown with the dryness: grown again.
+		_clear_moss();
+		close_dirty = true;
+	}
 }
 
 void RockField3D::set_lichen_cover(real_t p_cover) {
@@ -9270,6 +9437,7 @@ void RockField3D::set_min_size(real_t p_size) {
 
 void RockField3D::set_river_min_area(real_t p_area) {
 	river_min_area = MAX(p_area, real_t(1.0));
+	_karst_reset(true);
 	rebuild();
 }
 
@@ -10466,6 +10634,150 @@ void RockField3D::_kit_base_update() {
 
 void RockField3D::_on_kit_generator_changing() {
 	_kit_base_stale();
+	_karst_reset(false); // the generator lays its rivers again and asks anew
+}
+
+// Karst sinks and springs (docs/ideas/rocks.md, "Stream sinks and springs"; Ford and Williams 2007, ch. 5 to 7;
+// Worthington 1991). A stream off impermeable ground sinks where it first runs onto limestone (an allogenic swallet at
+// the contact), up to a capacity of about 0.6 to 1.8 times its mean flow (so it sinks whole in the dry months and
+// floods run on down the blind valley); not the big rivers (over 20 m3/s), which keep their beds across the karst.
+// The water comes out at a resurgence lower down the same valley: where the river leaves the limestone (a contact
+// spring), or failing that 1.2 km on (or the river's end), at least 8 m lower and 150 m on, on the valley side a few
+// metres above the floor at the
+// water table. Tracer velocities through conduits are about 1 to 3 km a day (median 1.7: Worthington 1991): the lag.
+void RockField3D::_prepare_karst() const {
+	MutexLock lock(karst_lock);
+	if (karst_ready) {
+		return;
+	}
+	karst_sinks.clear();
+	karst_springs.clear();
+	karst_ready = true;
+	const TerrainGenerator3D *gen = Object::cast_to<TerrainGenerator3D>(ObjectDB::get_instance(kit_generator));
+	if (!gen && Thread::is_main_thread() && is_inside_tree()) {
+		gen = _get_generator();
+	}
+	if (!karst || !gen || (rock_type != RockGenerator::ROCK_LIMESTONE && !(use_strata && soft_rock_type == RockGenerator::ROCK_LIMESTONE))) {
+		return;
+	}
+	const Array rs = gen->get_rivers(river_min_area, false);
+	for (int r = 0; r < rs.size(); r++) {
+		const Dictionary d = rs[r];
+		const PackedVector3Array pts = d.get("points", PackedVector3Array());
+		const PackedFloat32Array widths = d.get("widths", PackedFloat32Array());
+		const PackedFloat32Array areas = d.get("areas", PackedFloat32Array());
+		const int n = pts.size();
+		if (n < 4) {
+			continue;
+		}
+		LocalVector<uint8_t> lime;
+		lime.resize(n);
+		for (int i = 0; i < n; i++) {
+			lime[i] = _type_at(gen, pts[i]) == RockGenerator::ROCK_LIMESTONE ? 1 : 0;
+		}
+		// The first point onto limestone after two off it.
+		int i0 = -1;
+		for (int i = 2; i < n - 1 && i0 < 0; i++) {
+			if (lime[i] && !lime[i - 1] && !lime[i - 2]) {
+				i0 = i;
+			}
+		}
+		if (i0 < 0) {
+			continue;
+		}
+		// Not on the shore (a stream reaching the sea) or at the map's edge.
+		const Rect2 inner = gen->get_result_rect().grow(-32.0);
+		if (!inner.has_point(Vector2(pts[i0].x, pts[i0].z)) || (gen->has_sea_result() && pts[i0].y < gen->get_sea_level() + 2.5)) {
+			continue;
+		}
+		const float q = i0 < areas.size() ? float(gen->get_discharge(areas[i0])) : 0.0f;
+		if (q < 0.005f || q > 20.0f) {
+			continue;
+		}
+		RandomPCG rng(hash_murmur3_one_32(uint32_t(r) * 2654435761u ^ uint32_t(seed)));
+		WorldSwallet sw;
+		sw.position = pts[i0];
+		sw.capacity = CLAMP(q * (0.6f + 1.2f * rng.randf()), 0.02f, 3.0f);
+		sw.id = 7100000 + r;
+		// Down the valley to the resurgence.
+		float dist = 0.0f;
+		int j0 = -1;
+		for (int j = i0 + 1; j < n; j++) {
+			dist += Vector2(pts[j].x - pts[j - 1].x, pts[j].z - pts[j - 1].z).length();
+			const float drop = float(pts[i0].y - pts[j].y);
+			if (dist >= 150.0f && drop >= 8.0f && (!lime[j] || dist >= 1200.0f || j == n - 1)) {
+				j0 = j;
+				break;
+			}
+		}
+		if (j0 > 0) {
+			const Vector3 a = pts[j0 - 1], b = pts[j0];
+			Vector3 along = Vector3(b.x - a.x, 0, b.z - a.z);
+			along = along.length() > 1e-3f ? along.normalized() : Vector3(1, 0, 0);
+			const Vector3 side(-along.z, 0, along.x);
+			const float half_w = 0.5f * (j0 < widths.size() ? widths[j0] : 2.0f);
+			// On the valley wall, the nearest spot 0.5 to 12 m above the bed (either side, out to about 30 m).
+			Vector3 best;
+			bool found = false;
+			for (int k = 0; k < 16 && !found; k++) {
+				const float off = half_w + 3.0f + 3.0f * float(k >> 1);
+				const Vector3 dir = (k & 1) ? -side : side;
+				Vector3 p = b + dir * off;
+				p.y = gen->get_height(p);
+				const float up = float(p.y - b.y);
+				if (up >= 0.5f && up <= 12.0f && gen->get_water_depth(p) < 0.05) {
+					best = p;
+					found = true;
+					WorldResurgence rsg;
+					rsg.id = 7200000 + r;
+					rsg.position = best;
+					rsg.direction = -dir;
+					rsg.base_flow = 0.02f + 0.06f * rng.randf();
+					karst_springs.push_back(rsg);
+					sw.resurgence = rsg.id;
+					sw.lag_days = dist / 1700.0f;
+				}
+			}
+		}
+		karst_sinks.push_back(sw);
+	}
+}
+
+void RockField3D::_karst_reset(bool p_notify) {
+	bool had = false;
+	{
+		MutexLock lock(karst_lock);
+		had = !karst_sinks.is_empty() || !karst_springs.is_empty();
+		karst_ready = false;
+		karst_sinks.clear();
+		karst_springs.clear();
+	}
+	// (No limestone: no sinks before or after, so nothing for the rivers to lay again.)
+	const bool could = karst && (rock_type == RockGenerator::ROCK_LIMESTONE || (use_strata && soft_rock_type == RockGenerator::ROCK_LIMESTONE));
+	if (p_notify && (had || could) && is_inside_tree()) {
+		const TerrainGenerator3D *gen = _get_generator();
+		WorldContracts::karst_changed(gen ? gen->get_result_rect().grow(16.0) : Rect2(-1e6, -1e6, 2e6, 2e6));
+	}
+}
+
+void RockField3D::contract_swallets(const Rect2 &p_rect, LocalVector<WorldSwallet> &r_out) const {
+	_prepare_karst();
+	MutexLock lock(karst_lock);
+	for (const WorldSwallet &w : karst_sinks) {
+		if (p_rect.has_point(Vector2(w.position.x, w.position.z))) {
+			r_out.push_back(w);
+		}
+	}
+}
+
+void RockField3D::contract_resurgences(const Rect2 &p_rect, LocalVector<WorldResurgence> &r_out) const {
+	_prepare_karst();
+	MutexLock lock(karst_lock);
+	for (const WorldResurgence &w : karst_springs) {
+		if (p_rect.has_point(Vector2(w.position.x, w.position.z))) {
+			r_out.push_back(w);
+		}
+	}
 }
 
 struct Vector2iLess {
@@ -10535,6 +10847,7 @@ void RockField3D::_kit_reset(bool p_notify) {
 		kit_base_gen = kit_generator;
 	}
 	_kit_base_stale();
+	_karst_reset(p_notify); // a new ground: its sinks and springs laid again (the generator relays its rivers)
 	if (p_notify && (had || gen) && is_inside_tree()) {
 		if (WorldGround *wg = WorldContracts::ground()) {
 			const Rect2 w = gen ? gen->get_result_rect() : Rect2(-1e6, -1e6, 2e6, 2e6);
@@ -11014,6 +11327,7 @@ void RockField3D::_notification(int p_what) {
 			WorldContracts::register_cover(this);
 			WorldContracts::register_recess(this);
 			WorldContracts::register_frost_sorted(this);
+			WorldContracts::register_caves(this);
 			_kit_reset(true); // a landscape built before the field draws its recess now
 			// Before any node is ready, so the weather's first shelter bake finds the boulders.
 			if (wind_obstacles) {
@@ -11048,6 +11362,11 @@ void RockField3D::_notification(int p_what) {
 			}
 			_update_frost_map();
 			_update_snow_cells(get_process_delta_time());
+			varnish_clock -= get_process_delta_time();
+			if (varnish_clock <= 0.0) {
+				varnish_clock = 2.0; // the climate changes slowly: checked every 2 s
+				_update_varnish(false);
+			}
 		} break;
 		case NOTIFICATION_INTERNAL_PHYSICS_PROCESS: {
 			if (rockfall_dust) {
@@ -11075,6 +11394,7 @@ void RockField3D::_notification(int p_what) {
 			WorldContracts::unregister_cover(this);
 			WorldContracts::unregister_recess(this);
 			WorldContracts::unregister_frost_sorted(this);
+			WorldContracts::unregister_caves(this);
 			{
 				bool had = false;
 				{
@@ -11265,6 +11585,14 @@ void RockField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("is_rain_pedestals"), &RockField3D::is_rain_pedestals);
 	ClassDB::bind_method(D_METHOD("get_pedestal_at", "position"), &RockField3D::get_pedestal_at);
 	ClassDB::bind_method(D_METHOD("get_pedestal_spots", "rect", "step", "max_count"), &RockField3D::get_pedestal_spots, DEFVAL(2.0), DEFVAL(64));
+	ClassDB::bind_method(D_METHOD("set_desert_varnish", "enabled"), &RockField3D::set_desert_varnish);
+	ClassDB::bind_method(D_METHOD("is_desert_varnish"), &RockField3D::is_desert_varnish);
+	ClassDB::bind_method(D_METHOD("get_varnish_amount"), &RockField3D::get_varnish_amount);
+	ClassDB::bind_method(D_METHOD("set_karst", "enabled"), &RockField3D::set_karst);
+	ClassDB::bind_method(D_METHOD("is_karst"), &RockField3D::is_karst);
+	ClassDB::bind_method(D_METHOD("set_block_fields", "enabled"), &RockField3D::set_block_fields);
+	ClassDB::bind_method(D_METHOD("is_block_fields"), &RockField3D::is_block_fields);
+	ClassDB::bind_method(D_METHOD("get_block_field_at", "position"), &RockField3D::get_block_field_at);
 	ClassDB::bind_method(D_METHOD("set_frost_sorting", "enabled"), &RockField3D::set_frost_sorting);
 	ClassDB::bind_method(D_METHOD("is_frost_sorting"), &RockField3D::is_frost_sorting);
 	ClassDB::bind_method(D_METHOD("get_frost_at", "position"), &RockField3D::get_frost_at);
@@ -11350,6 +11678,9 @@ void RockField3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "ground_detail_cover"), "set_ground_detail_cover", "is_ground_detail_cover");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "ground_detail_rivers"), "set_ground_detail_rivers", "is_ground_detail_rivers");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "ground_wear"), "set_ground_wear", "is_ground_wear");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "block_fields"), "set_block_fields", "is_block_fields");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "karst"), "set_karst", "is_karst");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "desert_varnish"), "set_desert_varnish", "is_desert_varnish");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "frost_sorting"), "set_frost_sorting", "is_frost_sorting");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "runoff_gravel"), "set_runoff_gravel", "is_runoff_gravel");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "rain_pedestals"), "set_rain_pedestals", "is_rain_pedestals");

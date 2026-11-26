@@ -1606,3 +1606,41 @@ while it is stale is built and not stored. `get_kit_stats()`: squares built and 
 box. Check (rocks bench cliff view): warm 17,456 squares loaded, none built, the same box hash; the cliff stage
 13.1 s cold to 3.7 s warm (10.9 s of kit building gone); a warm raster still byte-identical to one with the kit
 rebuilt.
+
+## Frost-shattered block fields, built (26 Nov)
+`block_fields` (on), in the scree layer's packing. Gate (`get_block_field_at`): periglacial cold (MAAT under -1 to
+-3 C at the point's height) and a tundra summer (warmest month under 11 to 8 C: Koeppen ET, the tree line's 6 to
+10 C) from the weather's climate; slopes under 20 to 26 degrees (Ballantyne 1998: blockfields only under about 25
+degrees, steeper is talus); thin regolith, the complement of the frost sorting's soil gates (deep, fine soil sorts
+into circles and stripes, thin or rocky ground stays blocks); no water, sand, sea or ice. Blocks 0.25 to 2 m, a power
+law (2.2), angular (the scree family), 85% cover, little sunk (openwork: resting on each other), leaning to 25
+degrees. On 4 to 20 degrees they gather in block streams, downslope stripes 8 m apart, long axes down the fall line
+and dipping upslope (imbrication; Boelhouwers and Sumner 2003). The climate joins the obstacle cache's key. Bench:
+`--world --uplift=0.5 --frost=-6 --view=scree --block-spot[=stream] --eye=1.7 --dist=10 --beyond=25`,
+`--no-block-fields` for the before frame. Not yet: a second tier of blocks perched on the first, far cover maps
+(the far tier's big blocks only), lichen-dark tops by age (the shared lichen terms apply as on other stones).
+
+## Desert varnish, built (26 Nov)
+`desert_varnish` (on). The amount follows the climate's precipitation at the field (with the terrain's rain pattern):
+none over about 400 mm a year, full under about 180 mm (Dorn 2009: thick dark varnish in arid lands, patchy and thin
+in semi-arid, washed off and outgrown by lichens where wetter), checked every 2 s. In the rock shader, on old surfaces
+(surface_age, never fresh breaks): manganese-black on the exposed tops and in curtains down the runoff lines of steep
+faces (the mesh's flow routing, COLOR.a, broken along their length), iron orange-brown on the undersides and near the
+soil, a pale ground-line band, one satin sheen over the crystals. Lichens and moss go with it (they need frequent wetting; lichen
+acids etch varnish). Not on pieces of the terrain's own wall (cliff blocks, pillars, ledges): the terrain material
+has no varnish, so it stays matched; varnish curtains on terrain cliffs belong to the terrain material. Bench:
+`--rock=granite,glacial --varnish=1` (one stone), `--world --rain-climate=150 --view=tor --dist=7` and
+`--no-varnish` for the world's before frame.
+
+## Stream sinks and springs, built (26 Nov)
+`karst` (on). RockField3D answers WorldCaves (terrain's contract, dd8e6009) from the generator's raw river network
+(`get_rivers(area, false)`) and its own rock types (`_type_at`: limestone, or the soft strata when soft_rock_type is
+limestone). A swallet where a stream first runs onto limestone after two points off it (an allogenic sink at the
+contact; Ford and Williams 2007, ch. 5), capacity 0.6 to 1.8 times its mean flow (it sinks whole in the dry months,
+floods run on down the blind valley), not on rivers over 20 m3/s, the shore or the map's edge. Its resurgence lower
+down the same valley: where the river leaves the limestone (a contact spring), else 1.2 km on or at the river's end,
+at least 8 m lower and 150 m on, on the valley wall 0.5 to 12 m above the bed (the water table), facing the channel;
+base flow 0.02 to 0.08 m3/s; lag at 1.7 km a day (Worthington 1991). karst_changed on a new ground or a change of
+rock types, seed or river area. The river layer's stones follow the raw network, so a blind valley keeps its
+boulder bed. Bench: `--world --world-size=2048 --karst-report` (2 sinks, 2 springs lower, 2 rivers ending at a sink,
+1 spring-fed), `--no-karst`. Not yet: tufa at the springs, a sink's swallow hole in the bed.

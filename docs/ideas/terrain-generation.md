@@ -1604,6 +1604,40 @@ retreats as a whole (Ward, Anderson and Haff 2011, cliff and talus in layered ro
 - Not covered: Landscape3D's finer cliff relief (beds of 3 m and joint steps on the drawn surface) has its own lips;
   slabs seat on the generator's surface plus `WorldGround.relief_at`.
 
+## Karst sinks and springs (contract with rocks, 26 Nov)
+
+On limestone a surface stream can sink into a cave entrance (a swallet, ponor or stream sink) and come out again lower
+down at a karst spring (a resurgence), often at a cave mouth low on a valley side at the water table. Below the sink
+the valley runs on dry in the low months (a blind valley); a flood beyond what the sink takes overflows down it. Ford
+and Williams, Karst Hydrogeology and Geomorphology (2007), ch. 5 (recharge, sinking streams) and ch. 7 (springs); the
+"capacity" view of a ponor is theirs (a sink swallows up to the conduit's capacity, the rest overflows).
+
+- **Contract.** `WorldCavesProvider` in world_contracts.h, script side `WorldCaves` (`WorldContracts.get_caves()`,
+  stub with `set_caves`):
+  `get_swallets(rect)` -> {position (on the channel bed), capacity m3/s, resurgence (id, -1 unknown or off the map),
+  lag_days, id}; `get_resurgences(rect)` -> {id, position (the spring pool's surface at the mouth), direction
+  (horizontal unit, the way the water leaves), base_flow m3/s}; signal `karst_changed(rect)`
+  (`WorldContracts.karst_changed`), never emitted for a river rebuild. Producer: CaveNetwork3D (rocks). Consumer: the
+  generator's rivers.
+- **No loop.** The producer fits its swallets to `get_rivers(area, false)`, the rivers as the ground drains. Heights
+  and carved channels never read the karst, so the dry valley below a sink keeps the channel the water cut.
+- **Rivers with karst** (`get_rivers(area)`, default true, and so `build_river_paths`). Month by month, every cell
+  down the drainage from a swallet carries its flow less what the swallet takes, min(capacity, flow there); every cell
+  down from a resurgence carries that much more: its swallets' intake, lagged by whole and part months (the annual mean
+  is unchanged by the lag), plus base_flow. Reaches under 0.001 m3/s in `river_month` are dry, so each river is cut
+  into its wet runs: a run ends in `"swallet"` (`swallet` id, `sink_taken`) or `"dry"`; a tributary whose junction
+  dried ends `"dry"`; the main stem starts again where a tributary or the spring water reaches it. A spring off every
+  wet river gets a river of its own from the spring pool down the receivers to the first wet one (`resurgence` id,
+  `spring_flow`), widths from w = a Q^0.5 as everywhere. A spring on a cell a river already runs through (a cave
+  mouth on its valley wall) gets a two-point outfall from the pool to the river's nearest point when it stands more
+  than half the river's width plus 1 m off it; its water is already in the river below. With no producer the list is the old one plus `swallet` and
+  `resurgence` at -1. Waterfall and river-site indices refer to the list without karst.
+- **Rebuild.** `karst_changed` over the map lays the auto water again (one deferred rebuild per frame).
+- **Tests.** Generator alone: landscape bench `--karst-stub=auto --map=out.png` (or sx,sz,cap,rx,rz[,lag,base]): one
+  stub sink taking all of a river's water a third of the way down, and a spring 250 m off another river. The map draws
+  dry reaches dark, wet rivers cyan, the sink red and the spring white, and the log checks the balance (sunk + base =
+  spring flow, without lag). Rocks alone: CaveNetwork3D's own lists. Together: world bench with `--no-karst` for A/B.
+
 ## Sources
 
 - Yuan, Braun, Guerit, Rouby, Cordonnier 2019, "A new efficient method to solve the stream power law model taking into account sediment deposition", JGR Earth Surface 124, 1346-1365.

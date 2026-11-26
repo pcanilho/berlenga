@@ -1224,14 +1224,18 @@ float WeatherMap3D::_sample_grid(const Vector<float> &p_field, int p_n, float p_
 // ---------------------------------------------------------------------------------------------------------
 // Time
 
+// Clouds and storms drift with the wind aloft: the log law up to about 1 km.
+Vector2 WeatherMap3D::get_cloud_steering() const {
+	const float z0 = MAX(roughness_length, 1e-5f);
+	const float aloft = Math::log(1000.0f / z0) / Math::log(10.0f / z0);
+	return cur_wind_direction * cur_wind_speed * aloft;
+}
+
 void WeatherMap3D::_advance(double p_weather_dt, double p_real_dt) {
 	weather_time += p_weather_dt;
 	_ease_base(p_weather_dt);
 
-	// Clouds and storms drift with the wind aloft: the log law up to about 1 km.
-	const float z0 = MAX(roughness_length, 1e-5f);
-	const float aloft = Math::log(1000.0f / z0) / Math::log(10.0f / z0);
-	const Vector2 steer = cur_wind_direction * cur_wind_speed * aloft;
+	const Vector2 steer = get_cloud_steering();
 	cloud_drift += steer * float(p_weather_dt);
 	// The high sheet rides the wind at its own height (get_wind_aloft: shear above the boundary layer).
 	high_cloud_drift += get_wind_aloft(_self_position(), high_cloud_height) * float(p_weather_dt);
@@ -5088,6 +5092,7 @@ void WeatherMap3D::_bind_methods() {
 	ClassDB::bind_static_method("WeatherMap3D", D_METHOD("get_wind_shader_code"), &WeatherMap3D::get_wind_shader_code);
 	ClassDB::bind_method(D_METHOD("get_mean_wind_at", "position", "terrain"), &WeatherMap3D::get_mean_wind_at, DEFVAL(true));
 	ClassDB::bind_method(D_METHOD("get_wind_aloft", "position", "altitude"), &WeatherMap3D::get_wind_aloft);
+	ClassDB::bind_method(D_METHOD("get_cloud_steering"), &WeatherMap3D::get_cloud_steering);
 	ClassDB::bind_method(D_METHOD("get_cirrocumulus_share"), &WeatherMap3D::get_cirrocumulus_share);
 	ClassDB::bind_method(D_METHOD("set_boundary_layer_height", "height"), &WeatherMap3D::set_boundary_layer_height);
 	ClassDB::bind_method(D_METHOD("get_boundary_layer_height"), &WeatherMap3D::get_boundary_layer_height);

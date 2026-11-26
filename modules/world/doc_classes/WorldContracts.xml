@@ -36,6 +36,12 @@
 				How the world systems read a body: [code]center[/code], [code]radius[/code], [code]half_height[/code], [code]round[/code], [code]wheel[/code], [code]box[/code], [code]width[/code] and [code]mass[/code] (kg on the ground), from its first collision shape and its metas ([code]deform_wheel_radius[/code], [code]deform_wheel_width[/code], [code]trample_radius[/code], [code]ground_mass[/code]).
 			</description>
 		</method>
+		<method name="get_caves" qualifiers="const">
+			<return type="WorldCaves" />
+			<description>
+				The karst contract now: the stub a test set, else the one over every cave producer.
+			</description>
+		</method>
 		<method name="get_fire" qualifiers="const">
 			<return type="WorldFire" />
 			<description>
@@ -70,6 +76,13 @@
 			<return type="WorldWeather" />
 			<description>
 				The weather contract now: the stub a test set, else the one backed by the active [WeatherMap3D].
+			</description>
+		</method>
+		<method name="set_caves">
+			<param index="0" name="stub" type="WorldCaves" />
+			<return type="void" />
+			<description>
+				Replaces the karst sinks and springs for every system with [param stub], a script extending [WorldCaves].
 			</description>
 		</method>
 		<method name="set_fire">

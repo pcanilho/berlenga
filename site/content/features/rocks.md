@@ -22,6 +22,7 @@ summary: "Rocks and stones as geometry, broken along each rock type's joints and
 
 - **Mineral glints** (`RockField3D.mineral_glints`): glossy crystals in granite and other quartz-bearing rock keep sparkling at a distance, counted per pixel footprint, and lichen, moss, water, snow and dust cover them.
 - **Ground contact and aspect** (rock material: `contact_height`, `aspect_strength`; RockField3D `ground_contact`, `ground_blend`, `ground_blend_height`, `ground_material`): stones sit in the soil, with damp, gritty ground and fines banked uphill round each foot; the foot blends into the ground with a soil band, or takes the ground's own grain with a damp, darker foot (the landscape's TerrainMaterial3D when `ground_material` is unset), and stones take wetness and snow from the weather; moss grows on shaded faces and lichen on sunlit ones.
+- **Desert varnish** (`RockField3D.desert_varnish`): in dry climates old stones darken with a black film on their tops and down the runoff paths of steep faces, and turn orange-brown underneath and near the soil; fresh breaks stay bright.
 - **Moss cushions** (`moss_cushions`): on near stones, moss grows as real cushions 1 to 3.5 cm thick, with tufts that hold up under path tracing.
 
 ## Placement
@@ -39,6 +40,7 @@ summary: "Rocks and stones as geometry, broken along each rock type's joints and
 
   *Shingle shore: before, scattered pebbles on bare sand; after, a band of gravel and small pebbles runs along the shore below the cobbles.*
 
+- **Block fields** (`RockField3D.block_fields`): frost-shattered angular blocks cover cold, gentle, thin-soiled ground above the tree line, open between them, and gather into block streams down slopes.
 - **Frost-sorted ground** (`RockField3D.frost_sorting`): on cold, wet, gentle soil, frost sorts the stones into circles round fine-soil centres, drawn out into stripes on slopes.
 - **Runoff gravel** (`RockField3D.runoff_gravel`): coarse lag gathers on gully floors and fine grains spread on the fans below.
 - **Rain splash pedestals** (`RockField3D.rain_pedestals`): on bare, rained-on soil, stones stand on little columns of the soil they shielded from the splash, and some topple off.

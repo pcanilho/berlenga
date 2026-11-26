@@ -1869,6 +1869,134 @@ Ref<WorldWater> WorldContracts::get_water() const {
 	return water_override.is_valid() ? water_override : builtin_water;
 }
 
+// Karst sinks and springs.
+
+void WorldCaves::swallets(const Rect2 &p_rect, LocalVector<WorldSwallet> &r_out) const {
+	Array a;
+	if (GDVIRTUAL_CALL(_get_swallets, p_rect, a)) {
+		for (int i = 0; i < a.size(); i++) {
+			const Dictionary d = a[i];
+			WorldSwallet w;
+			w.position = d.get("position", Vector3());
+			w.capacity = float(d.get("capacity", 0.0));
+			w.resurgence = int(d.get("resurgence", -1));
+			w.lag_days = float(d.get("lag_days", 0.0));
+			w.id = int(d.get("id", -1));
+			r_out.push_back(w);
+		}
+		return;
+	}
+	for (WorldCavesProvider *p : providers) {
+		p->contract_swallets(p_rect, r_out);
+	}
+}
+
+void WorldCaves::resurgences(const Rect2 &p_rect, LocalVector<WorldResurgence> &r_out) const {
+	Array a;
+	if (GDVIRTUAL_CALL(_get_resurgences, p_rect, a)) {
+		for (int i = 0; i < a.size(); i++) {
+			const Dictionary d = a[i];
+			WorldResurgence w;
+			w.id = int(d.get("id", -1));
+			w.position = d.get("position", Vector3());
+			const Vector3 dir = d.get("direction", Vector3());
+			w.direction = Vector3(dir.x, 0, dir.z).length() > 1e-6f ? Vector3(dir.x, 0, dir.z).normalized() : Vector3();
+			w.base_flow = float(d.get("base_flow", 0.0));
+			r_out.push_back(w);
+		}
+		return;
+	}
+	for (WorldCavesProvider *p : providers) {
+		p->contract_resurgences(p_rect, r_out);
+	}
+}
+
+Array WorldCaves::get_swallets(const Rect2 &p_rect) const {
+	LocalVector<WorldSwallet> l;
+	swallets(p_rect, l);
+	Array out;
+	for (const WorldSwallet &w : l) {
+		Dictionary d;
+		d["position"] = w.position;
+		d["capacity"] = w.capacity;
+		d["resurgence"] = w.resurgence;
+		d["lag_days"] = w.lag_days;
+		d["id"] = w.id;
+		out.push_back(d);
+	}
+	return out;
+}
+
+Array WorldCaves::get_resurgences(const Rect2 &p_rect) const {
+	LocalVector<WorldResurgence> l;
+	resurgences(p_rect, l);
+	Array out;
+	for (const WorldResurgence &w : l) {
+		Dictionary d;
+		d["id"] = w.id;
+		d["position"] = w.position;
+		d["direction"] = w.direction;
+		d["base_flow"] = w.base_flow;
+		out.push_back(d);
+	}
+	return out;
+}
+
+void WorldCaves::notify_karst_changed(const Rect2 &p_rect) {
+	emit_signal(SNAME("karst_changed"), p_rect);
+}
+
+void WorldCaves::_bind_methods() {
+	ClassDB::bind_method(D_METHOD("has_provider"), &WorldCaves::has_provider);
+	ClassDB::bind_method(D_METHOD("get_swallets", "rect"), &WorldCaves::get_swallets);
+	ClassDB::bind_method(D_METHOD("get_resurgences", "rect"), &WorldCaves::get_resurgences);
+	ClassDB::bind_method(D_METHOD("notify_karst_changed", "rect"), &WorldCaves::notify_karst_changed);
+	GDVIRTUAL_BIND(_get_swallets, "rect");
+	GDVIRTUAL_BIND(_get_resurgences, "rect");
+	ADD_SIGNAL(MethodInfo("karst_changed", PropertyInfo(Variant::RECT2, "rect")));
+}
+
+WorldCaves *WorldContracts::caves() {
+	static Ref<WorldCaves> fallback;
+	if (singleton == nullptr) {
+		if (fallback.is_null()) {
+			fallback.instantiate();
+		}
+		return fallback.ptr();
+	}
+	return singleton->caves_override.is_valid() ? singleton->caves_override.ptr() : singleton->builtin_caves.ptr();
+}
+
+void WorldContracts::register_caves(WorldCavesProvider *p_provider) {
+	if (singleton && p_provider && !singleton->builtin_caves->providers.has(p_provider)) {
+		singleton->builtin_caves->providers.push_back(p_provider);
+	}
+}
+
+void WorldContracts::unregister_caves(WorldCavesProvider *p_provider) {
+	if (singleton) {
+		singleton->builtin_caves->providers.erase(p_provider);
+	}
+}
+
+void WorldContracts::karst_changed(const Rect2 &p_rect) {
+	if (!singleton) {
+		return;
+	}
+	singleton->builtin_caves->notify_karst_changed(p_rect);
+	if (singleton->caves_override.is_valid()) {
+		singleton->caves_override->notify_karst_changed(p_rect);
+	}
+}
+
+void WorldContracts::set_caves(const Ref<WorldCaves> &p_stub) {
+	caves_override = p_stub;
+}
+
+Ref<WorldCaves> WorldContracts::get_caves() const {
+	return caves_override.is_valid() ? caves_override : builtin_caves;
+}
+
 WorldFire *WorldContracts::fire() {
 	static Ref<WorldFire> fallback;
 	if (singleton == nullptr) {
@@ -2574,6 +2702,7 @@ void WorldContracts::clear_overrides() {
 	ground_override.unref();
 	water_override.unref();
 	fire_override.unref();
+	caves_override.unref();
 	snow_override.unref();
 	stand_override.unref();
 	_clear_water_stubs();
@@ -2880,6 +3009,8 @@ void WorldContracts::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("add_water_stub", "stub"), &WorldContracts::add_water_stub);
 	ClassDB::bind_method(D_METHOD("set_fire", "stub"), &WorldContracts::set_fire);
 	ClassDB::bind_method(D_METHOD("get_fire"), &WorldContracts::get_fire);
+	ClassDB::bind_method(D_METHOD("set_caves", "stub"), &WorldContracts::set_caves);
+	ClassDB::bind_method(D_METHOD("get_caves"), &WorldContracts::get_caves);
 	ClassDB::bind_method(D_METHOD("set_stand", "stub"), &WorldContracts::set_stand);
 	ClassDB::bind_method(D_METHOD("get_stand"), &WorldContracts::get_stand);
 	ClassDB::bind_method(D_METHOD("set_snow", "stub"), &WorldContracts::set_snow);
@@ -2894,6 +3025,7 @@ WorldContracts::WorldContracts() {
 	builtin_water.instantiate();
 	builtin_ground.instantiate();
 	builtin_fire.instantiate();
+	builtin_caves.instantiate();
 	builtin_snow.instantiate();
 	builtin_stand.instantiate();
 }

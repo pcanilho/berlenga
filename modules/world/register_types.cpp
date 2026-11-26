@@ -69,6 +69,7 @@ void initialize_world_module(ModuleInitializationLevel p_level) {
 	GDREGISTER_CLASS(WorldWater);
 	GDREGISTER_CLASS(WorldGround);
 	GDREGISTER_CLASS(WorldFire);
+	GDREGISTER_CLASS(WorldCaves);
 	GDREGISTER_CLASS(WorldSnow);
 	GDREGISTER_CLASS(WorldStand);
 	GDREGISTER_CLASS(WorldContracts);
