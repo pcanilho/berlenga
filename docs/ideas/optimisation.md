@@ -648,3 +648,10 @@ sites of each callee's size); the remedy is one call site per heavy function.
   one by one on the main thread) built every square on its own thread. `_kit_ensure` now hands the missing squares to
   the pool when its caller is not a worker. The rocks bench's cliff stage went from 171 s to 51 s, same stones, same
   frame byte for byte.
+- CPU device memory on the first drawn frame (software Vulkan in the cloud): the landscape bench draws no 3D until its
+  view is set, so a raster run with TAA compiles the advanced shader group (motion vectors) for every material and
+  then the specialised pipelines for the view, all at once. The software driver compiles each pipeline with LLVM on
+  the asking thread, and the freed pages stay in that thread's malloc arena; the frost view grew from 8 GB to 15 GB
+  and was killed before saving. Two changes, both CPU device only: ubershader variants are no longer compiled (draws
+  there never use them), and the heap is trimmed after a pipeline compile, at most once a second. The same view now
+  holds at 12.2 GB through the capture. Raster frames are byte for byte the same.

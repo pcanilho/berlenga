@@ -2395,3 +2395,14 @@ tip, and fits to the ideal 3/4 power profile far worse (reduced chi-square 50 ag
 35% of its radius 15% of the way down, its radius wanders by 8% over 5 cm (spells of flow), its section is fluted by
 10% (the film favours some sides), its ripples are 0.12 mm (from 0.03) with spacing wandering 30%, and the ice is
 roughness 0.1. Path traced, the ripples break each glint into dashes as photographs show.
+
+### Snow fills relief under the cover's cells (26 Nov 2026)
+
+At the suncups site a gully bank 3.5 m high at 66 degrees lay inside a 4 m cover cell holding 2 m of snow; the surface
+draped that depth over the drawn ground and hung a ribbed snow wall 1 to 2 m high down the bank, while the gully's
+floor (more than 0.5 m under the cell's mean ground) was cut bare as if under a roof. The cover's depth is the depth on
+its cells' mean ground, so where the drawn ground leaves that mean by more than 0.3 m (fully from 1 m) the surface now
+keeps the cover's own surface: hollows fill, knolls and lips stand out, as deep snow smooths terrain roughness
+(Veitinger et al. 2014). Only the catch map's shelter (roofs, overhangs, water) still leaves the ground under it bare.
+Thin relief is draped as before. The shader (snow_fill) and SnowSurface3D._cover_depth_at (surface heights, the
+deformation columns) agree.

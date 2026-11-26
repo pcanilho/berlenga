@@ -247,6 +247,7 @@ class SnowSurface3D : public Node3D {
 	void _upload_deform();
 	void _upload_ground();
 	void _update_material();
+	float _cover_depth_at(float p_x, float p_z, float p_ground, const SnowCover3D *p_cover) const;
 	float _surface_at(float p_x, float p_z, const SnowCover3D *p_cover) const;
 
 protected:

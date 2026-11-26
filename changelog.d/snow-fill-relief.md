@@ -1,0 +1,1 @@
+- Snow: deep snow fills gullies and hollows finer than the cover instead of hanging walls of snow down their banks.

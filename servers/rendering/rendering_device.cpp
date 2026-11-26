@@ -46,6 +46,11 @@
 
 #include "modules/modules_enabled.gen.h"
 
+#ifdef __GLIBC__
+#include <malloc.h>
+#endif
+#include <atomic>
+
 #ifdef MODULE_GLSLANG_ENABLED
 #include "modules/glslang/shader_compile.h"
 #endif
@@ -60,6 +65,22 @@
 #define ERR_RENDER_THREAD_MSG String("This function (") + String(__func__) + String(") can only be called from the render thread. ")
 #define ERR_RENDER_THREAD_GUARD() ERR_FAIL_COND_MSG(render_thread_id != Thread::get_caller_id(), ERR_RENDER_THREAD_MSG);
 #define ERR_RENDER_THREAD_GUARD_V(m_ret) ERR_FAIL_COND_V_MSG(render_thread_id != Thread::get_caller_id(), (m_ret), ERR_RENDER_THREAD_MSG);
+
+// A CPU device (lavapipe) compiles pipelines with LLVM on whichever thread asks, and each compile
+// leaves hundreds of MB of free pages in that thread's malloc arena. glibc keeps them, so a burst
+// of first-frame compiles grows the process by gigabytes while the main thread waits. Hand the free
+// pages back after a compile, at most once a second. GPU devices never get here.
+static void _cpu_device_trim_heap() {
+#ifdef __GLIBC__
+	static std::atomic<uint64_t> last_trim_usec{ 0 };
+	const uint64_t now = OS::get_singleton()->get_ticks_usec();
+	uint64_t last = last_trim_usec.load(std::memory_order_relaxed);
+	if (now - last < 1000000 || !last_trim_usec.compare_exchange_strong(last, now, std::memory_order_relaxed)) {
+		return;
+	}
+	malloc_trim(0);
+#endif
+}
 
 /**************************/
 /**** HELPER FUNCTIONS ****/
@@ -5936,6 +5957,7 @@ RID RenderingDevice::render_pipeline_create(RID p_shader, FramebufferFormatID p_
 			p_specialization_constants);
 	if (_cpu_device_serializes_pipelines()) {
 		cpu_device_pipeline_compile_lock.read_unlock();
+		_cpu_device_trim_heap();
 	}
 
 	// Don't print error when it's expected.
@@ -6036,6 +6058,7 @@ RID RenderingDevice::compute_pipeline_create(RID p_shader, const Vector<Pipeline
 	pipeline.driver_id = driver->compute_pipeline_create(shader->driver_id, p_specialization_constants);
 	if (_cpu_device_serializes_pipelines()) {
 		cpu_device_pipeline_compile_lock.read_unlock();
+		_cpu_device_trim_heap();
 	}
 	ERR_FAIL_COND_V(!pipeline.driver_id, RID());
 

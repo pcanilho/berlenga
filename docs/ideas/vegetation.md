@@ -1637,6 +1637,10 @@ PRESET_HORSE_DUNG 105, PRESET_DEER_PELLETS 106, PRESET_DUNG_ROUGH 107; PRESET_MA
   also in the wood (shade to 0.9). All in the light (shade under 0.4), slopes under 30 degrees, 2 m from water.
   Roughs and pats keep GrassField3D blades out through sward_mound, as the mounds do; the lawn round them is the
   sward's own (graze_height and the lawn mosaic).
+- Pasture (26 Nov, scene: a cattle meadow drew waist-high ungrazed grass). The lawn needs grazing pressure: a
+  WorldStand.add_browse disc over the pasture (pressure about 0.9; reach is the browse line on trees, cattle about
+  1.5 m). Every set, not only deer, now keeps to RULE_BROWSE 0.3 and up, so that one disc gives the cropped sward,
+  the pats and the roughs together, and with no disc none of them.
 - Meshes. Pat: a ring-grid dome with a wobbly outline and coil ridges, crust paling from the top and rim, broken
   into plates with grass through it when old; roughness 0.5 fresh to 0.88 crusted. Horse dung: 6 to 14 domed balls
   with straw fibres. Deer pellets: 2 x 6 domes each, 2 to 4k triangles a group. Rough: 500 to 750 blades 20 to
