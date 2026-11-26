@@ -7999,6 +7999,7 @@ func _block_field_cam() -> void:
 	var n_gate := 0
 	var n_dry := 0
 	var n_slope := 0
+	var n_rough := 0
 	var xx := wr.position.x + 100.0
 	while xx < wr.end.x - 100.0:
 		var zz := wr.position.y + 100.0
@@ -8015,11 +8016,20 @@ func _block_field_cam() -> void:
 					n_slope += 1
 					var lo := 1.0
 					var stripe := g.y
+					# --bf-rough (3) m: the ring's most off a plane through the point (ledges and gully walls are not a field)
+					var h0 := height_at(xx, zz)
+					var gp := _fs_grad(p)
+					var rough := 0.0
 					for k in 8:
 						var q := p + Vector3(cos(TAU * k / 8.0), 0, sin(TAU * k / 8.0)) * float(args.get("bf-ring-m", "10"))
 						var gq: Vector2 = rocks.call("get_block_field_at", q)
 						lo = minf(lo, gq.x)
 						stripe += gq.y
+						rough = maxf(rough, absf(height_at(q.x, q.z) - (h0 + gp.x * (q.x - xx) + gp.y * (q.z - zz))))
+					if rough > float(args.get("bf-rough", "3")):
+						n_rough += 1
+						zz += 16.0
+						continue
 					# (no ring passing: the field round the point still ranks it, below every point whose ring passes)
 					var score := lo + 0.05 * stripe - (0.0 if lo >= bmin * float(args.get("bf-ring", "0.5")) else 2.0)
 					if score > best:
@@ -8028,17 +8038,18 @@ func _block_field_cam() -> void:
 			zz += 16.0
 		xx += 16.0
 	if bp == Vector3.INF:
-		_log("block field: none found (strongest gate %.2f; %d points over %.2f, %d of them dry and above the sea, %d on %.0f..%.0f deg)" % [gmax, n_gate, bmin, n_dry, n_slope, dmin, dmax])
+		_log("block field: none found (strongest gate %.2f; %d points over %.2f, %d of them dry and above the sea, %d on %.0f..%.0f deg, %d too rough)" % [gmax, n_gate, bmin, n_dry, n_slope, dmin, dmax, n_rough])
 		return
 	var gr := _fs_grad(bp)
 	var down := Vector3(-gr.x, 0, -gr.y).normalized()
 	var cp := bp + down * float(args.get("bf-back", "14"))
-	cp.y = height_at(cp.x, cp.z) + float(args.get("bf-up", "6"))
+	# (never below the spot: looking down onto the blocks lets the gaps between them read)
+	cp.y = maxf(height_at(cp.x, cp.z), bp.y) + float(args.get("bf-up", "6"))
 	var c3: Camera3D = get_viewport().get_camera_3d()
 	c3.fov = 55.0
 	c3.global_position = cp
 	c3.look_at(bp + Vector3.UP * float(args.get("bf-look-up", "0")))
-	_log("block field: spot %s (score %.2f, %.1f deg), camera %s" % [str(bp.round()), best, rad_to_deg(atan(gr.length())), str(cp.round())])
+	_log("block field: spot %s (score %.2f, %.1f deg; %d too rough), camera %s" % [str(bp.round()), best, rad_to_deg(atan(gr.length())), n_rough, str(cp.round())])
 	rocks.build_area(Rect2(cp.x - 40.0, cp.z - 40.0, 80.0, 80.0))
 	var w := 0
 	while rocks.has_method("get_ground_detail_pending") and int(rocks.get_ground_detail_pending()) > 0 and w < 1200:
