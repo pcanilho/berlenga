@@ -7694,6 +7694,15 @@ func _snow_strata() -> void:
 	surf.call("press_box", Vector3(best.x, g, best.z), Vector2(w, 8.0), atan2(sf.x, sf.z), g + 0.01)
 	for i in 30:
 		await get_tree().physics_frame
+	if args.has("strata-profile"):
+		# --strata-profile: the dent (cm) along both walls, 2 cm in from the edge and 2 cm out, every 3 cm over 1.2 m.
+		for side in [-1.0, 1.0]:
+			for off in [-0.02, 0.02]:
+				var vals := PackedStringArray()
+				for k in 40:
+					var q: Vector3 = best + nrm * float(side) * (w * 0.5 + float(off)) + sf * (1.0 + 0.03 * k)
+					vals.append("%d" % int(float(surf.call("get_dent_at", q)) * 100.0))
+				_log("strata wall %+d %+.2f: %s" % [int(side), off, " ".join(vals)])
 	var top := g + snow.get_depth_at(best + nrm * 3.0)
 	var wall := best - nrm * (w * 0.5)
 	var cp := wall + nrm * float(args.get("strata-dist", "1.5"))
