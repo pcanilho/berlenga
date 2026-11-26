@@ -339,6 +339,14 @@ layout(set = 0, binding = 23) uniform texture3D gas_glow_texture;
 layout(set = 0, binding = 24, std140) uniform GasGlowDataBlock {
 	GasGlowData data;
 } gas_glow_data;
+// The clouds' sky visibility (WeatherMap3D's cloud sky map): red the clear sky's share reaching the ground through
+// the clouds, green the column's optical depth, blue its height, alpha its transmission straight up (mipmapped);
+// see cloud_sky_light and cloud_far_sun in scene_forward_clustered.glsl.
+layout(set = 0, binding = 25) uniform texture2D cloud_sky_texture;
+layout(set = 0, binding = 26, std140) uniform CloudSkyDataBlock {
+	vec4 rect; // corner x, z, 1 / size, the followed point's height
+	vec4 info; // x: 1 when on
+} cloud_sky_data;
 /* Set 1: Render Pass (changes per render pass) */
 
 layout(set = 1, binding = 0, std140) uniform SceneDataBlock {

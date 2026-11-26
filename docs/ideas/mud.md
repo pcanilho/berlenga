@@ -1527,6 +1527,16 @@ out slowly, rain rinses it, and dried it cracks off with the body's mud. arch_cl
 get_wheel_arch_drag(). Bench --test=arches: 10 s spinning in stiff clay packed 1.2 cm in a 12 cm arch; a 1 cm arch
 rubbed at up to 223 N m and the car got 1.12 m against 1.18 m; open wheels none.
 
+**Scan on the mud (texture audit, 25 Nov).** TerrainMaterial3D's mud_scan slot (brown_mud_02, 1.3 m; see
+scan-textures.md) goes by the patch's own maps (material.cpp ground_deform_mud()), not by where the cover is opened:
+ruts, digs, prints and the rims and laid mud they leave pressed a centimetre or more, and turned or mud-filmed ground,
+where the worked soil is wet mud: the gloss the patch already gives freshly worked wet ground (the deform map's
+roughness factor: mud 0.35 to 0.7, moist soil 0.6, dry soil 1), or the pore water's saturation past half; wallows of
+muddy water and fresh mud deposits at any wetness. Ground bench: --view=ruts --meadow --ground=mud --mud=0.3,0.7
+--scans=dir (--scans-mud=0 for the frame without). A dry rut keeps the soil's
+crumb, a puddle on turf keeps the turf. The scan is detail only (no baked shading); the mud's darkening, film and water
+stay the patch's. One function, so raster and the path tracer (which runs the material's fragment) agree.
+
 ### Look (any stage)
 
 Wet mud is dark and glossy with a thin water film (the Lagarde film we have); stiff mud matte, with

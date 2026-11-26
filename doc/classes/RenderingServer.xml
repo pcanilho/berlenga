@@ -1733,6 +1733,12 @@
 				Returns the RID of the test cube. This mesh will be created and returned on the first call to [method get_test_cube], then it will be cached for subsequent calls. See also [method make_sphere_mesh].
 			</description>
 		</method>
+		<method name="get_texture_debug_usage">
+			<return type="Array" />
+			<description>
+				Returns every texture the renderer holds, one [Dictionary] each with the keys [code]texture[/code] (its [RID]), [code]width[/code], [code]height[/code], [code]depth[/code], [code]format[/code] ([enum Image.Format]), [code]bytes[/code] (its memory, mipmaps included) and [code]path[/code] (its resource path, empty when it has none). For finding what holds texture memory.
+			</description>
+		</method>
 		<method name="get_test_texture">
 			<return type="RID" />
 			<description>

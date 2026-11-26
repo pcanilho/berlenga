@@ -116,6 +116,37 @@ vec3 rain_ripples(vec2 p_xz, float p_time, float p_rate, float p_footprint) {
 	return r;
 }
 
+// A footstep, a wheel or a dropped stone in shallow standing water (docs/ideas/rain.md, step 7): one impact
+// p_impact = (x, z, age s, amplitude; 1 a walker's step). A sole slapping into a puddle sends out a short train of
+// waves from its edge. In water a centimetre deep their wavelength (about 4 cm) sits where gravity and surface tension
+// both matter, with depth: w^2 = (g k + sigma k^3 / rho) tanh(k h) (Lamb 1932, 267), about 0.26 m/s at h = 1 cm,
+// so the train's front leaves the sole's edge (8 cm) at that speed. The train is wider than a raindrop's packet
+// (a sole is not a point) and spreads as it travels; its height falls with the square root of its radius and with
+// damping in the shallow layer (Lighthill 1978), over its 1.6 s life. Finer than the pixel (p_footprint, m) it fades.
+vec2 water_impact_ripple(vec2 p_xz, vec4 p_impact, float p_footprint) {
+	const float life = 1.6;
+	const float wl = 0.04;
+	const float r0 = 0.08;
+	float age = p_impact.z;
+	if (p_impact.w <= 0.0 || age < 0.0 || age >= life) {
+		return vec2(0.0);
+	}
+	vec2 d = p_xz - p_impact.xy;
+	float r = length(d);
+	float front = r0 + 0.26 * age;
+	float sig = wl * (1.2 + 2.0 * age / life);
+	float x = r - front;
+	if (abs(x) > 3.0 * sig) {
+		return vec2(0.0);
+	}
+	float k = 6.2831853 / wl;
+	float u = 1.0 - age / life;
+	float g = u * u * sqrt(r0 / (r0 + 0.26 * age));
+	float shown = 1.0 - smoothstep(0.3 * wl, wl, p_footprint);
+	float s = 0.3 * p_impact.w * shown * g * (-sin(k * x) - 2.0 * x / (k * sig * sig) * cos(k * x)) * exp(-x * x / (sig * sig));
+	return s * d / max(r, 1e-4);
+}
+
 // A roughness that also carries p_variance of unresolved slope (Beckmann alpha^2 = 2 sigma^2, added to
 // the surface's own alpha^2; alpha is roughness squared).
 float rain_ripple_roughness(float p_roughness, float p_variance) {
@@ -272,4 +303,189 @@ float rain_surface_wetness(float p_wet, float p_running, vec3 p_normal, vec4 p_r
 // mean (mm); the caller's relief (heightmap, AO) decides where it lies, filling the lowest first.
 float rain_surface_puddle(vec3 p_normal, float p_puddle_mm) {
 	return max(p_puddle_mm, 0.0) * smoothstep(0.94, 0.99, p_normal.y);
+}
+
+// Rain on glass (docs/ideas/rain.md, step 7.4): drops and runners on a window or a windscreen, raster and path
+// tracer alike. Glass is partly wetting: a drop sits as a spherical cap with a contact angle of about 40 to 60
+// degrees (clean float glass, weathered), held by contact-angle hysteresis until gravity along the pane beats it,
+// which for water on glass is a drop of about 2 to 3 mm (Bond number about 0.6 at the critical size; Furmidge 1962).
+// Two layers of sessile drops: fine ones from the impacts (0.4 to 1.1 mm) renewed as rain keeps landing, and
+// larger ones grown by coalescence while the pane stays wet (1.2 to 2.4 mm). Runners: a drop past the critical
+// size slides down the fall line in jerks (stick-slip between pinning sites, so the path kinks; Kaneda, Yuasa and
+// Nishita 1993 lay the same paths on a cell grid of the glass's affinity), the wind leaning it
+// (rain_surface_fall_line()). Its wake is a thread that breaks into a row of beads (Rayleigh-Plateau: fastest
+// growing at about 9 thread radii, so beads about 4.5 thread widths apart) and its path is swept clear of the fine
+// drops. p_rain: weather_surface_rain() (x catch mm/h, y film, zw push). p_wipe: the share of the water a wiper took.
+// p_footprint: the pixel's size (m; 0 = full detail, as the path tracer has); finer features fade to their mean
+// cover, which r_mist returns with the drops too small to draw (the caller roughens the glass with it).
+// Returns xyz the water surface's slope (world, in the face's plane: the drop's normal is normalize(n - slope)) and
+// w the share of the point under water.
+float rain_glass_noise(float p_x, uint p_seed) {
+	float i = floor(p_x);
+	float f = p_x - i;
+	float a = rain_ring_rand(rain_ring_hash(uint(int(i)) * 2654435761u ^ p_seed)) * 2.0 - 1.0;
+	float b = rain_ring_rand(rain_ring_hash(uint(int(i) + 1) * 2654435761u ^ p_seed)) * 2.0 - 1.0;
+	return mix(a, b, f * f * (3.0 - 2.0 * f));
+}
+
+// A cap of contact radius p_r at offset p_d (in the face's frame), contact angle about 50 degrees: (slope u, v, cover).
+vec3 rain_glass_cap(vec2 p_d, float p_r, float p_footprint) {
+	float rho = length(p_d);
+	float shown = 1.0 - smoothstep(0.5 * p_r, 2.0 * p_r, p_footprint);
+	if (rho >= p_r || shown <= 0.0) {
+		return vec3(0.0);
+	}
+	float rs = p_r / 0.766; // the sphere's radius: r / sin(50 degrees)
+	vec2 slope = p_d / sqrt(max(rs * rs - rho * rho, 1e-12));
+	return vec3(slope * shown, shown);
+}
+
+vec4 rain_glass(vec3 p_world, vec3 p_normal, vec4 p_rain, float p_time, float p_wipe, float p_footprint, out float r_mist) {
+	r_mist = 0.0;
+	float rain = max(p_rain.x, 0.0);
+	float film = clamp(p_rain.y, 0.0, 1.0);
+	if (rain <= 0.0 && film <= 0.02) {
+		return vec4(0.0);
+	}
+	// The face's frame: v down its slope (gravity alone, so the drops stay put when the wind turns), u across.
+	vec3 down = vec3(0.0, -1.0, 0.0) - p_normal * -p_normal.y;
+	float tilt = length(down);
+	vec3 vax = tilt > 0.05 ? down / tilt : normalize(cross(p_normal, abs(p_normal.x) < 0.9 ? vec3(1.0, 0.0, 0.0) : vec3(0.0, 0.0, 1.0)));
+	vec3 uax = cross(p_normal, vax);
+	vec2 q = vec2(dot(p_world, uax), dot(p_world, vax));
+	float keep = 1.0 - clamp(p_wipe, 0.0, 1.0);
+	vec2 slope = vec2(0.0);
+	float cover = 0.0;
+
+	// Runners, first: their paths sweep the fine drops away.
+	float swept = 0.0;
+	float run_rate = clamp(rain / 12.0, 0.0, 1.0) * smoothstep(0.3, 0.7, tilt) * keep;
+	if (run_rate > 0.0) {
+		vec3 fl = rain_surface_fall_line(p_normal, p_rain.zw);
+		float fu = dot(fl, uax);
+		float fv = max(dot(fl, vax), 0.2);
+		float lean = clamp(fu / fv, -2.0, 2.0);
+		const float col_w = 0.035;
+		const float seg = 0.5;
+		float us = q.x - lean * q.y;
+		float col = floor(us / col_w);
+		uint hc = rain_ring_hash(uint(int(col)) * 73856093u ^ 1540483477u);
+		for (int k = 0; k < 2; k++) {
+			float sj = floor(q.y / seg) - float(k);
+			uint h = rain_ring_hash(hc ^ (uint(int(sj)) * 19349663u));
+			if (rain_ring_rand(h) >= run_rate) {
+				continue;
+			}
+			// One runner at a time in this column's segment, every period seconds; it slides seg * 1.6 then is gone.
+			float period = mix(9.0, 3.0, run_rate) * (0.7 + 0.6 * rain_ring_rand(h + 1u));
+			float u = p_time / period + rain_ring_rand(h + 2u);
+			float life = floor(u);
+			uint hl = rain_ring_hash(h ^ (uint(int(life)) * 83492791u));
+			float age = (u - life) * period;
+			float speed = mix(0.06, 0.16, rain_ring_rand(hl)) * sqrt(tilt) * length(fl);
+			float jerks = mix(2.0, 5.0, rain_ring_rand(hl + 1u));
+			float qa = age * jerks;
+			float travel = speed / jerks * (floor(qa) + smoothstep(0.5, 1.0, fract(qa)));
+			float v0 = (sj + 0.3 * rain_ring_rand(hl + 2u)) * seg;
+			float vh = v0 + min(travel, 1.6 * seg);
+			if (q.y > vh + 0.004 || q.y < v0) {
+				continue;
+			}
+			// Its path: kinks where it pinned (pinning sites about 1 cm apart), within its column.
+			uint hp = hl + 3u;
+			float xc = (col + 0.5 + 0.22 * rain_glass_noise(q.y / 0.012, hp) + 0.08 * rain_glass_noise(q.y / 0.004, hp + 7u)) * col_w;
+			float du = us - xc;
+			// The head: a drop at the critical size.
+			float rh = mix(0.0016, 0.0024, rain_ring_rand(hl + 4u));
+			vec3 head = rain_glass_cap(vec2(du, (q.y - vh) * 0.8), rh, p_footprint);
+			// The wake: a thin thread just behind the head, beads further up (they stay; older ones dry smaller).
+			float behind = vh - q.y;
+			float tw = 0.00045;
+			float bead_l = 9.0 * tw;
+			float bi = floor(behind / bead_l);
+			uint hb = rain_ring_hash(hl ^ (uint(int(bi)) * 2246822519u));
+			float bead_r = tw * mix(1.3, 2.2, rain_ring_rand(hb)) * (1.0 - 0.5 * smoothstep(0.0, seg, behind));
+			vec2 bead_c = vec2(0.25 * tw * (rain_ring_rand(hb + 1u) * 2.0 - 1.0), (bi + 0.5 + 0.3 * (rain_ring_rand(hb + 2u) - 0.5)) * bead_l);
+			vec3 wake = behind > 3.0 * rh && rain_ring_rand(hb + 3u) < 0.8 ? rain_glass_cap(vec2(du, behind) - bead_c, bead_r, p_footprint) : vec3(0.0);
+			if (behind > 0.0 && behind <= 3.0 * rh) {
+				// The thread: a cylinder cap across, flat along.
+				float x = du / tw;
+				float sh = 1.0 - smoothstep(0.5 * tw, 2.0 * tw, p_footprint);
+				if (abs(x) < 1.0) {
+					wake = vec3(x / sqrt(max(1.0 - x * x, 0.04)) * 0.8 * sh, 0.0, sh);
+				}
+			}
+			vec3 r = head.z > 0.0 ? head : wake;
+			slope += r.xy;
+			cover = max(cover, r.z);
+			if (behind > -rh && abs(du) < 1.5 * rh) {
+				swept = max(swept, 1.0 - smoothstep(0.0, 1.6 * seg, behind));
+			}
+		}
+	}
+
+	// Sessile drops: fine ones from the impacts, bigger ones grown while the pane stays wet. A cell holds one drop
+	// inside its middle 60%, renewed when rain lands on it again.
+	float wet = max(1.0 - exp(-rain / 3.0), 0.7 * film) * keep;
+	for (int i = 0; i < 2; i++) {
+		float cell = i == 0 ? 0.0038 : 0.0085;
+		float occ = (i == 0 ? 0.75 : 0.45 * smoothstep(0.15, 0.7, film + 0.3 * smoothstep(2.0, 10.0, rain))) * wet * (1.0 - swept);
+		vec2 g = q / cell;
+		vec2 c = floor(g);
+		uint h = rain_ring_hash((uint(int(c.x)) * 73856093u) ^ (uint(int(c.y)) * 19349663u) ^ uint(i + 11) * 2654435761u);
+		// The fine layer renews with the impact rate (a few seconds a cell in steady rain); the big drops stay.
+		float renew = i == 0 && rain > 0.0 ? mix(12.0, 2.5, clamp(rain / 15.0, 0.0, 1.0)) : 1e6;
+		float u = p_time / renew + rain_ring_rand(h);
+		uint h2 = rain_ring_hash(h ^ (uint(int(floor(u))) * 83492791u));
+		float mean = occ * (i == 0 ? 0.13 : 0.2); // the share of a cell a drop covers, on average
+		r_mist += mean * smoothstep(0.5 * cell * 0.1, cell * 0.5, p_footprint); // the drops too fine for the pixel
+		if (rain_ring_rand(h2) >= occ) {
+			continue;
+		}
+		float rd = i == 0 ? mix(0.0004, 0.0011, rain_ring_rand(h2 + 1u)) : mix(0.0012, 0.0024, rain_ring_rand(h2 + 1u));
+		vec2 centre = (c + 0.2 + 0.6 * vec2(rain_ring_rand(h2 + 2u), rain_ring_rand(h2 + 3u))) * cell;
+		vec2 d = q - centre;
+		// Gravity sags a drop on a slope: its lower edge fuller than its upper.
+		d.y *= d.y > 0.0 ? mix(1.0, 0.8, tilt) : 1.0;
+		vec3 r = rain_glass_cap(d, rd, p_footprint);
+		if (r.z > cover) {
+			slope = r.xy;
+			cover = r.z;
+		}
+	}
+	// Mist: drops finer than a tenth of a millimetre between the drawn ones, which the runners and the wiper clear.
+	r_mist = clamp(r_mist + 0.5 * smoothstep(0.0, 6.0, rain) * (1.0 - swept) * keep, 0.0, 1.0);
+	return vec4(slope.x * uax + slope.y * vax, cover);
+}
+
+
+// Standing water on a built surface (docs/ideas/rain.md, step 7.3; Lagarde 2013, "Water drop 3b"): the relief its
+// pooled water fills, 0 at the lowest point and 1 at the highest. Paving, tarmac and roofs settle into broad shallow
+// hollows a metre or more across, with smaller dips between joints and stones; puddles gather in the broad ones
+// first. Two octaves of value noise at 2.6 and 0.8 m and a third at 0.25 m, so no two puddles repeat.
+float rain_standing_noise(vec2 p_x, uint p_seed) {
+	vec2 i = floor(p_x);
+	vec2 f = p_x - i;
+	f = f * f * (3.0 - 2.0 * f);
+	uint hx = uint(int(i.x)) * 73856093u;
+	uint hz = uint(int(i.y)) * 19349663u;
+	float a = rain_ring_rand(rain_ring_hash(hx ^ hz ^ p_seed));
+	float b = rain_ring_rand(rain_ring_hash((hx + 73856093u) ^ hz ^ p_seed));
+	float c = rain_ring_rand(rain_ring_hash(hx ^ (hz + 19349663u) ^ p_seed));
+	float d = rain_ring_rand(rain_ring_hash((hx + 73856093u) ^ (hz + 19349663u) ^ p_seed));
+	return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+}
+
+float rain_standing_relief(vec2 p_xz) {
+	float r = 0.6 * rain_standing_noise(p_xz / 2.6, 1757159915u) + 0.3 * rain_standing_noise(p_xz / 0.8, 48610963u) + 0.1 * rain_standing_noise(p_xz / 0.25, 2524612763u);
+	return clamp((r - 0.2) / 0.6, 0.0, 1.0);
+}
+
+// The share of the point under standing water: p_mm of water above the relief's lowest point (the weather's puddle,
+// weather_surface_puddle()), the point p_relief (0..1) up a relief p_relief_mm deep. The shore eases over 0.3 mm, or
+// over the relief the pixel spans (p_footprint, m; the relief's finest octave is 0.25 m) so it never aliases.
+float rain_standing_cover(float p_mm, float p_relief, float p_relief_mm, float p_footprint) {
+	float depth = p_mm - p_relief * max(p_relief_mm, 0.1);
+	float edge = max(0.3, p_relief_mm * p_footprint / 0.25);
+	return smoothstep(-0.5 * edge, 0.5 * edge, depth);
 }

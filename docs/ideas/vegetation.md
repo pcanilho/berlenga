@@ -884,7 +884,7 @@ Plan:
 Built (19 Nov): world-links' `WorldFire.burn_age_at` (b7e28ec4; WorldBurnScar3D for authored scars, PhysXFireSpread3D
 for fires in play, c15a10b7). VegetationField3D samples it on a grid (2 m or more, at most 512 a side) when a species
 needs it; `PlantSpecies.RULE_BURN_AGE` places the burn presets, `PlantSpecies.burn_recovery` (from
-`PlantGenerator.get_burn_recovery`, set by tag_species) thins everything else: grasses back in 0.7 years, herbs 1.5,
+`PlantGenerator.get_burn_recovery`, set by tag_species) thins everything else: grasses back in 2 years (was 0.7; Parker et al. 2024: a year after a mixed-grass megafire bare ground +59%, sward height -39%, recovered by 2.5 years; the blades also regrow short, a fifth of their height at five months, and placed plants on a burn grow from a tenth of their size to full over their recovery years), herbs 1.5,
 heaths 8, mosses 10, soil crust 30. Presets PRESET_FIREWEED, PRESET_FIRE_MOSS, PRESET_CHARRED_STEMS,
 PRESET_BURNT_TUSSOCK (plant_burn.cpp) read the season's `burn_age`; `make_burn(BURN_HEATH | BURN_GRASS | BURN_SCRUB)`
 builds each in age bands. Bench vegetation `--burn[=off]`: four scars 0.05 to 5 years old in dry heath; all checks
@@ -2232,6 +2232,83 @@ over it: the turf under the blades (GrassField3D.get_ground_shader_code(), grass
   towards the first grass field's dry_color by the climate's share. Floor plants' far colours carry their drought cure
   (PlantGenerator.get_drought_cure, the shader's yellow-to-brown ramp mirrored on the CPU).
 
+## Tall meadow heads (Paulo, 24 Nov: "at least waist high vegetation like the flower heads")
+Star Citizen's Nyx 1 meadows read as a deep layer of seed heads over the sward; no talk or article gives its
+technique, so the model is the real thing: a lowland hay meadow in early summer (NVC MG1, false oat-grass grassland;
+Rodwell 1992) stands 0.8 to 1.5 m in heads over a leafy sward 20 to 40 cm deep. Three grasses, sizes from Stace, New
+Flora of the British Isles (3rd ed. 2010), added to make_flowering_grasses after the fog, each in its own drifts:
+- False oat-grass (PRESET_FALSE_OAT_GRASS): culms 60 to 150 cm, loose nodding shining panicle 10 to 30 cm, large
+  spikelets (7 to 11 mm) with a bent awn; June to September. Open ground, patch 11 m.
+- Meadow foxtail (PRESET_MEADOW_FOXTAIL): culms 30 to 90 cm, soft cylindrical spike 3 to 13 cm by 6 to 10 mm; April to
+  June. Damper ground (wetness index over 6).
+- Tufted hair-grass (PRESET_TUFTED_HAIR_GRASS): dark tussock, culms 50 to 150 cm, airy panicle 10 to 50 cm of hair-thin
+  branches, silvery purple then golden; heads stand into winter. Wet hollows (index over 7.5), tussocks 0.9 m apart.
+- Heading: culms stand headed (closed, green) from about 250 degree days before their flowers (an estimate of the
+  two to four weeks from heading to anthesis), no earlier than half the warmth to flowering.
+- Cost: 8 to 25k triangles a plant (spikelets as glume pairs, the fog's technique); plants bench checks heights, stages
+  and the 60k cap.
+
+## Tall meadow flowers (same ask; Paulo picked "grasses first, then tall forbs")
+The same MG1 hay meadow carries its colour in a few tall forbs standing among the heads (Rodwell 1992). Three, sizes
+from Stace (2010), added to make_flowering_grasses after the grasses, each in its own drifts:
+- Ox-eye daisy (PRESET_OX_EYE_DAISY): stems 20 to 70 cm, single heads 25 to 50 mm, 15 to 25 white rays on a yellow
+  disc; May to September. Open, drier ground.
+- Meadow cranesbill (PRESET_MEADOW_CRANESBILL): stems 30 to 80 cm, palmate leaves, paired violet-blue saucers 25 to
+  40 mm, beaked fruits after; June to September.
+- Red campion (PRESET_RED_CAMPION): stems 30 to 90 cm, forked clusters of rose-pink notched flowers 18 to 25 mm on
+  dark calyces; May to June. Takes part shade (hedge and wood edges), so its drifts run to shade 0.65.
+- Flowers face outward and up from the plant (heliotropic faces of meadow herbs read from the side, not edge-on).
+- Drought: ox-eye and cranesbill brown at 0.45 of the grass cure, campion 0.75 (shallower roots; an estimate).
+- Cost: 2 to 9k triangles a plant; plants bench checks height, flowering month, March bare and the 40k cap.
+
+## Dry tussocks (Paulo, 24 Nov: yes to real tussocks over the cured straw)
+Terrain cures the soil cover to straw under 1000 mm a year (WorldContracts::cured_share_for_precipitation) and by the
+season (greenness_for_season); from about 15 m that straw is a texture. Real summer-dry grassland stands in
+perennial bunchgrass tussocks with bare or annual-grass ground between (the two-phase mosaic of arid grasslands), so
+`PlantGenerator.make_dry_tussocks` adds two as geometry, keeping off the climate's bare patches (bare_patch):
+- Esparto (PRESET_ESPARTO, Macrochloa tenacissima): the alfa steppe of south-east Spain and North Africa at 250 to
+  375 mm (Gasque and Garcia-Fayos 2003), "a perennial tussock grass ... forms a dense clump"; flowers March and April,
+  seed shed May and June. Size from horticultural floras (30 cm leafy, 60 to 80 cm in flower, 40 to 60 cm wide;
+  mymediterraneangarden.com) and dimensions.com (61 to 122 cm, spread 91 to 152 cm): leaves 30 to 60 cm, rolled and
+  wiry, grey-green, about 40% standing dead (an estimate), a third of clumps dead in the middle as rings (an
+  estimate); culms 0.5 to 0.75 m plus a 20 to 30 cm narrow panicle, awns 4 to 6 cm. Rain 150 to 470 mm. Spacing
+  0.95 m (an estimate; no field cover figure found).
+- Thatching grass (PRESET_THATCHING_GRASS, Hyparrhenia hirta): a dominant of the Mediterranean tall perennial dry
+  grassland and Iberian andropogonid steppes (EUNIS); culms 30 to 300 cm in the genus (Grass Genera of the World),
+  here 40 to 95 cm, caespitose, narrow flat or folded leaves; paired racemes with bent awns. Rain 320 to 850 mm (an
+  estimate from its range), slopes to 45 degrees.
+- Drought: esparto rolls its leaves and greys rather than curing through (reach 0.4, an estimate); thatching grass
+  cures as the grasses (0.62). Far colour: the cured leaf colour, never under a 0.35 cure (the standing dead).
+- Cost: 15 to 27k triangles a plant; plants bench checks heights, spread, the 60k cap and the set's rainfall.
+- Wiring: the landscape takes the set where it builds its species (scene's bench).
+
+## Thin snow on the sward (GrassField3D.get_snow_sward_shader_code)
+The scene's burial scout (valley, 10 Jan, about 1.6 cm of fresh snow) left the far hills green: the terrain laid its
+snow, but the blades and the far shell drew the green sward over it, and the blades only whitened below the snow's
+surface (1.6 cm of a 20 to 50 cm blade). Snow falls onto the sward's canopy, not under it: blades catch the flakes and
+bow under them, so a centimetre or two whitens a short sward with only the tips showing.
+- Covered share seen from above: Niu and Yang (2007), tanh(d / (2.5 z0 (rho / rho_new))), the same form as
+  snow_cover_at(), with the sward's roughness z0 = 0.1 h (the usual grass rule) instead of the bare ground's 0.004 m.
+  Fresh snow (100 kg/m3) 1.6 cm deep: 86% of a 5 cm sward, 31% of 20 cm, 13% of 50 cm; 5 cm deep: 100%, 76%, 38%.
+- Blades (and the far rings, the same shader; raster and path tracer run the same vertex code): a blade is laden
+  when its hash is under the share, white along its lower 70% with its tip clear; the burial term (below the snow's
+  surface) stays for deep packs. Far shell: its colour goes to the snow's albedo by the share at the sward's mean height.
+- Grass bench --thin-snow=D sets a uniform fresh pack on the snow globals (no SnowCover3D).
+
+## Seasonal sward height (GrassField3D.season_height_for)
+The scene's burial scout (mild valley, 1.5 cm of snow at 200 kg/m3 in February) still showed the far hills green after
+the thin-snow work: the blades and far shell are inside their reach (rings to 250 m, shell to 500 m) and read the
+snow, but at the summer sward's 0.33 m mean height Niu and Yang's cover gives about 9%. The gap was the height: a
+sward is not summer-tall in winter. The summer's growth dies back and lodges under autumn rain and wind, and what
+stands is the short new tillers; grass growth restarts in spring at a temperature sum of about 200 degree days from
+1 January (the agronomists' T-sum 200, Eurofins Agro "Temperature sum"), and a meadow is full height by heading.
+- season_height_for(season): lerp(0.35, 1, smoothstep(40, 550, forcing)) (forcing over 5 C from 1 January: T-sum 200
+  is about 40 of it; heading about 550, late May to June at 46 N); after midsummer, down to 0.35 with the senescence
+  sum (150 to 900). The winter third is an estimate. 1 with no season.
+- Blades and far shell stand at it (season_height uniform; the shell's sward_height for the snow too). Thin snow on
+  the winter sward then covers about three times the share at the same depth.
+- Grass bench test checks the curve.
+
 ## Terracettes (GrassField3D.terracettes)
 Steep grazed hillsides carry sub-parallel steps along the contours (Wikipedia, "Terracette"). A grazing model
 (Seleb, Chatterjee and Bhamla 2025, arXiv 2504.17496) forms them from stock walking cross-slope routes and treads
@@ -2248,3 +2325,8 @@ dimensions; not read).
   (GLSL `wc_terracette`, after `climate_bare_shader_code()`): x tread, y phase up the step, z the slope's forming.
   GrassField3D.get_terracette_at exposes it. Check: vegetation `--test=deer` (none at 15 degrees, 3.4 m at 35).
 - View: grass `--steep` (GRASS_TERRACETTES=0 the before frame).
+- (25 Nov) On the ground's steps: the terrain now draws terracettes as relief (WorldContracts::terracette_step, treads
+  0.3 of each 2 m rise). Blades are placed on map texels (4 m in the landscape), which cannot hold a 3.4 m step
+  pattern, so their heights take WorldGround.relief_at(p, steps = false) and each blade and crop stem adds
+  wc_terracette_step at its root in the vertex stage (filtered over 0.5 m as the near ground, gated by
+  wc_terracette_soil). Before, the steps sampled at texel centres left blades up to about 0.37 m off the drawn ground.

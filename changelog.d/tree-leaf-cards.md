@@ -1,0 +1,1 @@
+- Trees: scanned leaf cards cut the real outline (teeth, lobes, holes) by alpha for 29 species (CC0); close up they curve (droop, cup, twist). Setting: TreeGenerator.near_leaf_detail.

@@ -368,6 +368,10 @@ default (--no-tiles for a before frame). Built on top:
 - Material. Channel floors in soil become a gravel lag (scree layer: the flow strips the fines, Poesen et al. 2003),
   lose the sward tint and read damp (albedo 0.78, Lobell and Asner 2002); deposits over 0.15 m on gentle ground
   read as fresh fines (alluvium layer). TerrainMaterial3D's CPU ground contract mirrors both.
+- (24 Nov) Fines settle only where the gradient falls off: the fan rule takes alluvium from 18 degrees down (full by 10),
+  the floodplain rule from 23 (full by 14), the rim broken by the edge noise. Fluvial fans are mostly under 5 degrees and
+  debris-flow fans reach about 15 (Blair and McPherson 1994); taken to 32 degrees, 25 degree dry slopes drew flat pale
+  slabs of bare alluvium with hard edges.
 - Open: on the rocks world tile erosion's 15 m max depth makes canyons of most soil gullies; sub-2 m rills still only
   in the erosion detail normal.
 
@@ -426,6 +430,15 @@ grey-brown silt 10YR 6/2.
   a metre the patches fade to the share. Bare patches take `bare_soil_color` / `bare_alluvium_color` with the scans'
   detail kept. Grass fields and far plant cover still draw over it.
 - CPU: `contract_albedo_at` mixes the same share (the patches' mean). Setting: `TerrainMaterial3D.climate_bare_soil`.
+- (24 Nov) Snow on the bare patches: a thin fresh pack settles on the flattest facets of the detail normal first, and
+  the soil scan's normal drew bare ground as rough, so a 15 m bare patch stayed brown under 1.6 cm of fresh snow while
+  the turf round it was white. Bare soil's relief is millimetres to a couple of centimetres, buried by the first
+  centimetre or two, so the snow's hold takes a normal flattened toward the surface's by the bare share.
+- (25 Nov) Snow on gentle bedrock: the same rule read the walls of the rock scan's joints (and its macro variation's,
+  about a metre across) as steep facets and left them bare, black slivers through 2 cm of snow on the scree scout's
+  rock flat. A fresh pack fills a slab's joints and pits before it covers its knobs (snow smooths the ground it lands
+  on, depressions first: Veitinger et al. 2014), so rock below about 23 degrees takes the bare patches' flattened
+  normal by its share; faces keep the rule and their broken patches.
 
 ### Cured cover in summer-dry climates (24 Nov, the bare-soil scout read green)
 
@@ -438,8 +451,59 @@ about 500 mm a year they cure fully, humid ones over about 1000 mm stay green.
   `climate_cured_share_at(p)`; GLSL `wc_climate_cured(p)` from the same precipitation (`wc_climate_mm`).
 - The soil's cover takes `cured_cover_color` (senescent grassland, Munsell 2.5Y 5/4) by the share, the alluvium's by
   0.8 of it; bare patches still take the bare colours. Same on the CPU (`contract_albedo_at`).
-- Not covered: the season. The cover stays straw all year in a dry climate (in a Mediterranean one it greens up in the
-  winter rains); the grass fields' own blades follow their season_source (vegetation).
+- Seasonal (24 Nov, second pass): the share now follows the weather's season, as the sward's own greenness does: one
+  rule, `WorldContracts::greenness_for_season(soil_moisture, temperature)` (PhenoGrass, Hufkens et al. 2016; the Growing
+  Season Index of Jolly et al. 2005: green with soil water over about 40% of capacity and days above freezing), and
+  `cured_share_for_season` = 1 - it. `climate_cured_share_at(p)` reads WorldWeather.season_at(p); shaders read
+  `weather_climate` y (soil moisture) and z (the day's mean temperature), which WeatherMap3D now publishes, set again
+  when the day moves the season. A Mediterranean or semi-arid cover greens in the wet season and cures in the summer
+  drought; a humid one stays green, a hard winter leaves it tan. Without a weather: the precipitation rule above.
+  Vegetation's GrassField3D.season_greenness is the same formula and can call the contract.
+- Texture (docs review: flat mustard blobs): the cover is standing straw, grey weathered litter and soil between the
+  tussocks (about a third), at 0.35 m and 0.1 m with 1.4 m patches of greyer and fresher, each scale fading to its
+  mean once a pixel spans a quarter of it (faded at a pixel's own size they aliased into smooth bands under the
+  temporal filter); `cured_cover_color` is their mean. Each tussock is lit on top and shaded at its base (0.62 to
+  1.3), and clumps and swales of 3 m vary the cover's tone and how much soil shows (0.72 to 1.28), what a dry sward
+  shows from afar: with colour alone (plus or minus 14%) the second review still read flat blobs.
+
+## Terracette steps (24 Nov)
+
+Grazed slopes of 25 to 51 degrees carry terracettes: stock walk across the slope and their paths settle into steps a
+few metres apart, a level tread and a riser grazed between (Seleb, Chatterjee and Bhamla 2025). Vegetation's sward
+draws them from the shared layout (`WorldContracts::terracette_at`: tread, phase up the step, strength); the ground now
+builds them as relief.
+- Profile in units of the step's rise (`TERRACETTE_RISE`, 2 m of height: 3.4 m apart along a 36 degree slope): flat
+  over the tread (the first `TERRACETTE_TREAD`, 0.3, of the phase, where the layout's tread ends), the riser taking the
+  rest, less its mean, so the ground keeps its height on average. Steps of about 0.6 m, treads of about a metre,
+  risers some 10 degrees steeper than the slope, times the layout's strength at the step. At a tread of 0.185 the
+  risers stood only 4 degrees steeper and the docs review saw one faint step.
+- The step is the shared contract's (`WorldContracts::terracette_step`, GLSL `wc_terracette_step`, gate
+  `wc_terracette_soil`), so plants and stones add it at their own roots: the GPU relief map leaves it out (sampled at
+  its texels a 3 m pattern aliases; blades stood up to 0.37 m off the drawn ground). `WorldGround.relief_at` keeps it.
+- The layout's phase goes by height over that fixed rise. It first took the rise from the local slope (3.4 m times its
+  sine), and 100 m up a few centimetres' change of rise moved the phase by a whole step: the bands broke into a
+  scribble of short dashes wherever the slope varied (the sward's too). A fixed rise keeps each band on one contour.
+- Filtered, not sampled: the profile's integral is closed form, so each reader takes its box-filtered mean over its own
+  grid (prefiltering, as for any procedural pattern): the landscape's vertices over twice the vertex spacing (wider
+  with distance; at one spacing a metre grid drew each step with two or three vertices, a sawtooth along the
+  contours), the near patch over twice its grid, the pixel's slope over its footprint. A grid coarser than a tread gets the
+  steps' mean, never an alias of them.
+- Geometry in both renderers: TerrainMaterial3D's vertex stage moves the landscape and the near patch; the per-pixel
+  slope sharpens the tread edges and fades out where a pixel covers a step. Placers read it through
+  WorldGround.relief_at (Landscape3D adds it, filtered over 0.5 m).
+- On open soil only: none on sand or thin soil, nor in a geology cell with any rock, talus or till, where the layer
+  mix lays a steep slope bare (the first test spots were steps on grey debris).
+- Setting: `Landscape3D.terracette_relief` (share, 1), published in `terrain_bank_relief.y` for the material.
+
+## Burn scars (25 Nov, world-links)
+
+WorldBurnScar3D drew no char on the ground. Landscape3D bakes WorldFire.burn_age_at into the stand map's blue
+channel (1 - years / 10.2, 0 never burnt; 2 m grid like the rooting), and reads only the area the fire's change log
+names again when the map has not moved. TerrainMaterial3D puts OVERLAY_BURN (scans.cfg [burn], burned_ground_01 at
+1 m) over soil and alluvium with a char tint: fresh char albedo about 0.05, grey-white ash in drifts for the first
+months, which wind and rain strip (Pereira et al. 2015); the darkening then goes over one to three years as the field
+layer regrows in patches 1.5 to 5 m across (Lentile et al. 2006; burn albedo recovery, Gatebe et al. 2014), not as one
+even fade. The scar's edge breaks up over a few metres. Rocks bench: `--world --burn=years[,r]`.
 
 ## Next round candidates (21 Nov, card posted)
 
@@ -465,6 +529,11 @@ concentrates. Established approach:
   catchment); cost of the extra finest-chunk vertices on the cliff-relief path.
 
 ### Relief on moderate slopes
+- (25 Nov) Lichen colonies as mosaics: thalli of 5 to 11 cm in 15 cm cells touch and fuse inside a colony (Armstrong
+  2011 on crustose colonies), and from afar a colony averages to its crowded cover (0.55 of the density). Cells of
+  0.4 m with mostly 3 to 6 cm thalli scattered lone round dots evenly 40 cm apart, a regular pattern of white spots
+  on the cliff (docs review of the ledge frames); smaller thalli in the small cells only turned them into speckle. The
+  map lichen a dull yellow-green (about 5Y 6/6), not a bright fleck.
 Cliff relief starts at 50 degrees (full by 62). Banks and cave mouths at 35-50 degrees stay as flat 4 m triangles with
 long straight silhouette edges. Extend the face weight down to about 35 degrees with a smaller amplitude (a soil bank
 slumps, it does not keep joints), using the same _cliff_offset noise scaled by slope. Watch the triangle budget and

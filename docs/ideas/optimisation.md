@@ -567,3 +567,84 @@ colour bake draws its own world in a SubViewport for about 117 frames while the 
 frames no longer run the landscape's caustics and collider. The bake wait on the landscape bench went from 474 s at
 100 frames to 258 s.
 
+
+## Path tracer pipeline build memory: one call site, no standby variant on a CPU device
+
+Building the landscape's path tracing pipeline on the software device passed 12.5 GB. Drivers turn each material's
+hit group into one closest-hit program with its whole call tree inlined (SPIR-V to NIR inlines every function; the
+software driver then keeps every stage's code and links the whole pipeline into one program), and every material's
+closest hit carries the shared integrator, `shade_and_bounce()`. Counting instructions after inlining in the cached
+SPIR-V (`spirv-opt --inline-entry-points-exhaustive`, and a call-site count per function) showed that integrator at
+about 320k instructions per hit group, most of it copies: `shade_local_surface()` and
+`sample_surface_continuation()` were each called from two places (the transparency peel and the opaque hit), and
+`surface_continuation_pdf()` from four places in each continuation, so the compiled code held two copies of the
+lighting, two of the bounce and ten of the density. This is ordinary inlining growth (code size is the sum over call
+sites of each callee's size); the remedy is one call site per heavy function.
+
+- `shade_and_bounce()` runs the peel and the opaque hit through one call of `shade_local_surface()` and one of
+  `sample_surface_continuation()`; each path keeps its own steps before and after, in the same order, with the
+  same random numbers.
+- `sample_surface_continuation()` wraps `sample_surface_lobe()`, which picks the lobe and direction and says whether
+  the density is owed; the wrapper takes it once, for `ps.next_ray_dir` under the same material.
+- The default hit shader went from about 400k to 215k instructions after inlining, and a materials bench start from
+  82 s to 19 s on the software device. The software device's output is not repeatable run to run (a few hundred
+  pixels of a 480x270 frame at 4 spp move by up to about 30 levels between two runs of one build); old against new
+  stays inside that on seven material scenes (coat, layer textures, transmission, back light, hair, subsurface,
+  water).
+- Scene-feature elision keeps a second, standby variant (nothing left out) built so a feature that streams in is
+  traced at once. On a CPU device that doubles every hit group's memory and its link alone needs gigabytes, and a
+  variant takes it minutes to build anyway, so a CPU device skips the standby. Traced frames use the scene's own
+  variant either way.
+- The water surface's hit and any-hit shaders were the largest (its `vertex()` and `fragment()` run in them): the
+  path tracer's foam gradient and the per-vertex normal each took four central-difference samples through four
+  calls, four copies of the foam or wave code. Each is now one call in a four-step loop (same arguments, same
+  arithmetic after); a body that size is never unrolled. Water hit shader 916k to 656k instructions after inlining,
+  any-hit 787k to 527k. Raster draws per-pixel normals by default, so it does not run the vertex samples.
+- Where the rest goes on the landscape (software device, allocations of 32 MB and up caught in a debugger): the
+  pipeline link itself is small now (about 50 MB); the last 4 GB before the peak are GPU allocations the path tracer
+  makes for its first frames (256 MB blocks, which on a CPU device are system memory) and the raster material
+  pipelines compiling on a worker at the same time (glibc arenas of 64 and 128 MB). `MALLOC_ARENA_MAX=2` trims a
+  little. The landscape at 640 still peaks near 13 GB there; the next cut is in those allocations, not the shaders.
+- Those allocations, on a CPU device only (a GPU keeps every path as before): MultiMesh instances are traced as
+  TLAS instances of the mesh's own BLAS instead of being copied into merged per-tile BLASes (the merge cap,
+  `rendering/pathtracing/multimesh_merged_blas_max_triangles`, is held at its floor of 256 there). Merging trades
+  memory for trace speed on hardware traversal; a software device has the memory cost (merged vertex copies,
+  per-tile BLASes and their build scratch, all system memory) and none of the gain. The same triangles are traced
+  either way. And the free heap is handed back to the system (`malloc_trim`) at most every 5 s while a CPU device
+  renders, since the pipeline compiles on worker threads leave glibc arenas full of freed pages that the next
+  allocation spike stacks on. The landscape at 480x270 now saves its path traced frame on the software device, peak
+  11.9 GB resident (it was killed at about 13.5 GB). A GPU-written MultiMesh scene and the grass meadow match the
+  previous build inside the run-to-run noise.
+- With the full art set (ground, stone, cave, floor and bark scans, the showcase props) the landscape went back over
+  13 GB on the software device, and not every run: the peak swung between 12.4 and 13.5 GB. Memory maps at 10 GB:
+  4.3 GB device memory, 4.3 GB main heap, 0.8 GB in worker arenas. A debugger on every mapping of 32 MB and up showed
+  the last 2.8 GB is the driver compiling the path tracing pipeline: the software driver links every hit group into one
+  compute program (Mesa's lavapipe, `lvp_compile_ray_tracing_pipeline`) and LLVM holds gigabytes while it optimises
+  it, while raster pipelines compiled on other threads added theirs at the same moment. On a CPU device only:
+  - a ray tracing pipeline compiles alone (`RenderingDevice`: raster and compute pipeline creation take a shared lock,
+    ray tracing pipeline creation the exclusive one), so the two spikes no longer meet;
+  - scans that systems load from files at run time (TerrainMaterial3D, RockField3D, CaveNetwork3D, VegetationField3D
+    and TreeGenerator scan sets) are halved by 2x2 boxes to at most
+    `rendering/textures/scans/cpu_device_max_size` (1024; 0 keeps them whole), the full texture's own next mip
+    levels; the scans are 2K, so this is a quarter of their memory;
+  - the vertex capture arena keeps no 50% headroom.
+  The landscape with the full art set then saved its frame at a 12.3 GB peak. `RenderingServer.get_texture_debug_usage()`
+  (new binding) lists every texture with its size and source, and the landscape bench's `--tex-report` prints the
+  largest after each memory line: textures were about 1 GB of it, not the cause.
+- Cliff wall views (rocks bench `--world --view=cliff`): placing the wall blocks and cliff kit pillars is under 4% of
+  the CPU there; 82% is Landscape3D building its cliff relief meshes (`_build_cliff_surface`), most of it the same
+  reads made again at one point. Now each edge's split test runs once (an edge is shared by two triangles) and keeps
+  its middle's displacement for the vertex a split puts there, and the per-vertex pass reads the heightfield normal,
+  face weights, fold scale and the two relief scale bounds (`_cliff_scale_limit`, `_bank_scale_limit`) once, shared
+  by the displaced point and the CUSTOM channels (`ReliefFrame`). All 611 chunk meshes of the view hash the same
+  (positions, normals, CUSTOM0-2, indices) and the frame is byte-identical; their build time fell by a third.
+  Each chunk's build then keeps the grid normals it reads (`LandscapeNormalCache`, over the chunk and the face
+  weights' reach, filled as read): the relief read the same grid normal tens of times. Again every mesh and the frame
+  are the same, and the build time fell by another fifth (981 s summed over the view's chunks, then 648 s, now 511 s).
+- Cliff kit squares (RockField3D `_kit_square`, the 8 m squares of pillar boxes the cells lay and the recess contract
+  answers from): the recess queries themselves are cheap, but a square fits its candidates to the drawn face through
+  the landscape's relief (about two thirds of its time) and the cliff view's 1.6 km take some 160 s of CPU. Cells on
+  workers spread that over the pool; a caller off the pool (get_stones, build_area: tools and benches placing cells
+  one by one on the main thread) built every square on its own thread. `_kit_ensure` now hands the missing squares to
+  the pool when its caller is not a worker. The rocks bench's cliff stage went from 171 s to 51 s, same stones, same
+  frame byte for byte.

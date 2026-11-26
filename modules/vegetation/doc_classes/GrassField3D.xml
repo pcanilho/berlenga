@@ -253,7 +253,14 @@
 			<return type="float" />
 			<param index="0" name="season" type="Dictionary" />
 			<description>
-				How green a temperate sward is for a season state ([method WeatherMap3D.get_season]), 0 to 1: grassland greenness follows soil water and temperature (PhenoGrass, Hufkens et al. 2016; the Growing Season Index of Jolly et al. 2005 without its day-length term, as a temperate sward stays green through short days). [code]smoothstep(0.1, 0.4, soil_moisture) * smoothstep(-8, 2, temperature)[/code]: a summer drought browns it, a hard winter leaves it tan, a mild wet winter keeps it green. 1 for an empty state.
+				How green a temperate sward is for a season state ([method WeatherMap3D.get_season]), 0 to 1: grassland greenness follows soil water and temperature (PhenoGrass, Hufkens et al. 2016; the Growing Season Index of Jolly et al. 2005 without its day-length term, as a temperate sward stays green through short days), the shared rule [code]WorldContracts::greenness_for_season[/code]: [code]smoothstep(0.1, 0.4, soil_moisture) * smoothstep(-8, 2, temperature)[/code]: a summer drought browns it, a hard winter leaves it tan, a mild wet winter keeps it green. 1 for an empty state.
+			</description>
+		</method>
+		<method name="season_height_for" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="season" type="Dictionary" />
+			<description>
+				The sward's standing height over its summer height for a season state ([method WeatherMap3D.get_season]): a third in winter (the summer's growth dead and lodged, short new tillers), regrowing from a forcing of about 40 (the T-sum of 200 at which grass growth restarts) to full height by about 550 (heading), declining with the autumn's senescence sum. The blades and the far shell stand at it, and thin snow covers the shorter winter sward more. 1 for an empty state.
 			</description>
 		</method>
 		<method name="get_field_stage" qualifiers="const">
@@ -283,8 +290,8 @@
 		<member name="base_color" type="Color" setter="set_base_color" getter="get_base_color" default="Color(0.1, 0.2, 0.05, 1)">
 			Blade colour at the root.
 		</member>
-		<member name="burn_recovery" type="float" setter="set_burn_recovery" getter="get_burn_recovery" default="0.7">
-			Years the sward takes to grow back over burnt ground ([code]WorldFire.burn_age_at[/code]): gone on a fresh burn, short sparse blades first, full cover after this many years. The rules' [member PlantSpecies.burn_recovery] wins when it is set. 0 leaves the grass blind to fire. The ages are read once a bake, so a live fire shows after the next [method rebuild].
+		<member name="burn_recovery" type="float" setter="set_burn_recovery" getter="get_burn_recovery" default="2.0">
+			Years the sward takes to grow back over burnt ground ([code]WorldFire.burn_age_at[/code]): gone on a fresh burn, short sparse blades first (a fifth of their height at five months, about half by a year), full cover after this many years (2: a year after a grassland wildfire bare ground is up by half). The rules' [member PlantSpecies.burn_recovery] wins when it is set. 0 leaves the grass blind to fire. The ages are read once a bake, so a live fire shows after the next [method rebuild].
 		</member>
 		<member name="blade_height" type="Vector2" setter="set_blade_height" getter="get_blade_height" default="Vector2(0.2, 0.5)">
 			Minimum and maximum blade height, in metres. Each clump picks a height in this range.
@@ -469,6 +476,9 @@
 		</member>
 		<member name="trample_resistance" type="float" setter="set_trample_resistance" getter="get_trample_resistance" default="300.0">
 			Walkers a year on a path that halve the sward's cover. Grasses resist trampling well (Cole 1995); 0 turns paths off for this field.
+		</member>
+		<member name="editor_preview" type="bool" setter="set_editor_preview" getter="is_editor_preview" default="true">
+			Grows grass round the editor's 3D view in the scene being edited, without the game-time systems (trampling, fire, floods, far bakes). Nothing it places is saved.
 		</member>
 	</members>
 	<signals>

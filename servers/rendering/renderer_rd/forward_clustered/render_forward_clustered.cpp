@@ -3707,10 +3707,53 @@ void RenderForwardClustered::base_uniforms_changed() {
 	render_base_uniform_set = RID();
 }
 
+// The clouds' sky visibility map from the shader globals (WeatherMap3D publishes them), its rect in r_data
+// (corner x, z, 1 / size, the height its visibility is for; then 1 when on). White without one.
+RID RenderForwardClustered::_cloud_sky_texture(float r_data[8]) {
+	for (int i = 0; i < 8; i++) {
+		r_data[i] = 0.0f;
+	}
+	RendererRD::MaterialStorage *ms = RendererRD::MaterialStorage::get_singleton();
+	static const StringName map_name = "weather_cloud_sky_map";
+	static const StringName rect_name = "weather_cloud_sky_rect";
+	const Variant rect_var = ms->global_shader_parameter_get_internal(rect_name);
+	const Vector4 rect = rect_var.get_type() == Variant::VECTOR4 ? Vector4(rect_var) : Vector4();
+	const Variant tex_var = ms->global_shader_parameter_get_internal(map_name);
+	RID tex;
+	if (tex_var.get_type() == Variant::RID) {
+		tex = tex_var;
+	} else if (tex_var.get_type() == Variant::OBJECT) {
+		Object *t = tex_var;
+		if (t) {
+			tex = t->call(SNAME("get_rid"));
+		}
+	}
+	RID rd = tex.is_valid() ? RendererRD::TextureStorage::get_singleton()->texture_get_rd_texture(tex) : RID();
+	if (rd.is_valid() && rect.z > 0.0f) {
+		r_data[0] = rect.x;
+		r_data[1] = rect.y;
+		r_data[2] = 1.0f / rect.z;
+		r_data[3] = rect.w;
+		r_data[4] = 1.0f;
+		return rd;
+	}
+	return RendererRD::TextureStorage::get_singleton()->texture_rd_get_default(RendererRD::TextureStorage::DEFAULT_RD_TEXTURE_WHITE);
+}
+
 void RenderForwardClustered::_update_render_base_uniform_set() {
 	RendererRD::LightStorage *light_storage = RendererRD::LightStorage::get_singleton();
 
-	if (render_base_uniform_set.is_null() || !RD::get_singleton()->uniform_set_is_valid(render_base_uniform_set) || (lightmap_texture_array_version != light_storage->lightmap_array_get_version()) || volume_shadow_texture_bound != light_storage->directional_volume_shadow_get_texture() || gas_glow_texture_bound != light_storage->gas_glow_get_texture()) {
+	float sky_data[8];
+	const RID sky_texture = _cloud_sky_texture(sky_data);
+	if (!cloud_sky_buffer.is_valid()) {
+		cloud_sky_buffer = RD::get_singleton()->uniform_buffer_create(sizeof(cloud_sky_data), Span<uint8_t>((const uint8_t *)cloud_sky_data, sizeof(cloud_sky_data)));
+	}
+	if (memcmp(sky_data, cloud_sky_data, sizeof(cloud_sky_data)) != 0) {
+		memcpy(cloud_sky_data, sky_data, sizeof(cloud_sky_data));
+		RD::get_singleton()->buffer_update(cloud_sky_buffer, 0, sizeof(cloud_sky_data), cloud_sky_data);
+	}
+
+	if (render_base_uniform_set.is_null() || !RD::get_singleton()->uniform_set_is_valid(render_base_uniform_set) || (lightmap_texture_array_version != light_storage->lightmap_array_get_version()) || volume_shadow_texture_bound != light_storage->directional_volume_shadow_get_texture() || gas_glow_texture_bound != light_storage->gas_glow_get_texture() || cloud_sky_texture_bound != sky_texture) {
 		if (render_base_uniform_set.is_valid() && RD::get_singleton()->uniform_set_is_valid(render_base_uniform_set)) {
 			RD::get_singleton()->free_rid(render_base_uniform_set);
 		}
@@ -3926,6 +3969,23 @@ void RenderForwardClustered::_update_render_base_uniform_set() {
 			u.binding = 24;
 			u.uniform_type = RD::UNIFORM_TYPE_UNIFORM_BUFFER;
 			u.append_id(light_storage->gas_glow_get_buffer());
+			uniforms.push_back(u);
+		}
+
+		{
+			RD::Uniform u;
+			u.binding = 25;
+			u.uniform_type = RD::UNIFORM_TYPE_TEXTURE;
+			cloud_sky_texture_bound = sky_texture;
+			u.append_id(cloud_sky_texture_bound);
+			uniforms.push_back(u);
+		}
+
+		{
+			RD::Uniform u;
+			u.binding = 26;
+			u.uniform_type = RD::UNIFORM_TYPE_UNIFORM_BUFFER;
+			u.append_id(cloud_sky_buffer);
 			uniforms.push_back(u);
 		}
 
@@ -5977,6 +6037,11 @@ RenderForwardClustered::RenderForwardClustered() {
 }
 
 RenderForwardClustered::~RenderForwardClustered() {
+	if (cloud_sky_buffer.is_valid()) {
+		RD::get_singleton()->free_rid(cloud_sky_buffer);
+		cloud_sky_buffer = RID();
+	}
+
 	if (ss_effects != nullptr) {
 		memdelete(ss_effects);
 		ss_effects = nullptr;

@@ -170,6 +170,8 @@ var suncups_m := 0.0 # --suncups=M: the sparkle view's suncup relief
 var sastrugi_arg := "" # --sastrugi=M[,deg]
 var slush_mm := 0.0 # --slush=MM: rain on a thin pack over frozen ground (trail view)
 var air := INF # --air=C: the snowfall view's air temperature (sleet near and above 0 C)
+var trench_yaw := 0.0 # --trench-yaw=DEG: the strata view's trench and ruts turned off the deform grid
+var strata_texel := 0.015625 # --strata-texel=M: the strata view's deform texel (16 m over 1024 by default)
 
 
 func _ready() -> void:
@@ -196,6 +198,8 @@ func _ready() -> void:
 		elif a.begins_with("--suncups="): suncups_m = float(a.substr(10))
 		elif a.begins_with("--sastrugi="): sastrugi_arg = a.substr(11)
 		elif a.begins_with("--slush="): slush_mm = float(a.substr(8))
+		elif a.begins_with("--trench-yaw="): trench_yaw = float(a.substr(13))
+		elif a.begins_with("--strata-texel="): strata_texel = float(a.substr(15))
 		elif a.begins_with("--sun="): sun_hours = float(a.substr(6))
 		elif a.begins_with("--steps="): steps = int(a.substr(8))
 		elif a.begins_with("--wind="): wind = float(a.substr(7))
@@ -4225,7 +4229,7 @@ func _build_strata(cam: Camera3D) -> void:
 	surface.snow_cover = NodePath("../SnowCover3D")
 	surface.follow_target = NodePath("../Probe")
 	surface.detail_spacing = 0.03125
-	surface.deform_resolution = 1024
+	surface.deform_resolution = int(round(16.0 / strata_texel))
 	surface.deform_extent = 16.0
 	surface.gpu_simulation = false
 	surface.clumps = false
@@ -4237,11 +4241,45 @@ func _build_strata(cam: Camera3D) -> void:
 	# A dug trench across the view and two tyre ruts beside it.
 	surface.rim_share = 0.0 # a dug trench: the snow is thrown out, not pushed into a rim
 	surface.compacted_density = 900.0 # pressed nearly to the ground: a dug trench
-	surface.press_box(Vector3(0.0, g, 0.0), Vector2(2.4, 7.0), 0.0, g + 0.01)
-	surface.press_box(Vector3(-2.2, g, 0.0), Vector2(0.3, 7.0), 0.0, g + 0.01)
-	surface.press_box(Vector3(-3.2, g, 0.0), Vector2(0.3, 7.0), 0.0, g + 0.01)
+	# --trench-yaw turns them off the deform grid's axes (their walls then cross the texels at an angle).
+	var ty := deg_to_rad(trench_yaw)
+	var probe := OS.get_cmdline_user_args().has("--trench-probe")
+	if probe or OS.get_cmdline_user_args().has("--no-wall-collapse"):
+		surface.wall_collapse = false # the stamped walls alone
+	surface.press_box(Vector3(0.0, g, 0.0), Vector2(2.4, 7.0), ty, g + 0.01)
+	surface.press_box(Vector3(-2.2, g, 0.0).rotated(Vector3.UP, ty), Vector2(0.3, 7.0), ty, g + 0.01)
+	surface.press_box(Vector3(-3.2, g, 0.0).rotated(Vector3.UP, ty), Vector2(0.3, 7.0), ty, g + 0.01)
 	for i in 30:
 		await get_tree().process_frame
+	if probe:
+		# --trench-probe: the trench's +x wall, where its dent crosses half the floor's, at 400 points along it:
+		# how far that line wanders across the wall (a texel staircase wanders; a straight wall does not).
+		var floor_dent := surface.get_dent_at(Vector3.ZERO)
+		var ax := Vector3(1, 0, 0).rotated(Vector3.UP, ty)
+		var along := Vector3(0, 0, 1).rotated(Vector3.UP, ty)
+		var level := float(OS.get_environment("TRENCH_LEVEL")) if OS.get_environment("TRENCH_LEVEL") != "" else 0.5
+		var offs: Array[float] = []
+		for k in 400:
+			var base := along * (-2.0 + 4.0 * k / 399.0)
+			var prev := surface.get_dent_at(base + ax * 0.6)
+			for j in range(1, 1601):
+				var u := 0.6 + 1.8 * j / 1600.0
+				var dd := surface.get_dent_at(base + ax * u)
+				if dd <= level * floor_dent and prev > level * floor_dent:
+					offs.append(u - 1.8 / 1600.0 * (level * floor_dent - dd) / (prev - dd))
+					break
+				prev = dd
+		var mean := 0.0
+		for o in offs:
+			mean += o
+		mean /= maxf(offs.size(), 1)
+		var rms := 0.0
+		for o in offs:
+			rms += (o - mean) * (o - mean)
+		rms = sqrt(rms / maxf(offs.size(), 1))
+		print("trench probe (level %.2f): floor dent %.3f m, wall at %.3f m, wobble %.1f mm p2p, %.1f mm rms over %d points (texel %.4f m, yaw %.1f)" % [level, floor_dent, mean, (offs.max() - offs.min()) * 1000.0, rms * 1000.0, offs.size(), strata_texel, trench_yaw])
+		get_tree().quit()
+		return
 	var top := g + snow.get_depth_at(p)
 	print("strata: surface %.2f m, trench floor %.2f m" % [top - g, surface.get_height_at(Vector3(0, 0, 0)) - g if surface.has_method("get_height_at") else -1.0])
 	# In the trench, low, across to its far wall and along it.

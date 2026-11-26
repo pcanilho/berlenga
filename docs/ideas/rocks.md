@@ -1382,6 +1382,13 @@ terrain material drew as sward. It now reads the shared pattern (WorldContracts:
 point, the same as climate_bare_patch_at): a pedestal only on bare soil patches, each soil stone checked at its own
 spot. get_pedestal_spots(rect, step, max) lists bare spots, deepest splash first, for framing.
 
+Cobble caps (25 Nov). A column is capped at 0.35 of its cap's width, and the soil stones are 1 to 8 cm, so no column
+stood above about 3 cm however much soil the rain took. Field pedestals of 5 to 10 cm, on badly eroding slopes and
+fresh burns, stand under cobbles. Now 4 percent of the pebble class's soil stones are 15 to 40 cm cobbles, with the same
+rule and cap. Default valley: a few cm of soil lost is right (mm to a few cm a wet season). For 5 to 15 cm, use a burn
+scar under half a year old on a bare 15 to 25 degree slope with 1200 mm or more of rain (10 to 14 cm lost), or a fully
+bare 20 degree dry patch (about 7 cm).
+
 ## Falling ledges (24 Nov)
 
 Technique: cantilever failure. An undercut caprock slab fails at its root over the bench's edge, where the bending
@@ -1425,3 +1432,166 @@ either side of the line, so they ran single file and evenly spaced along each st
 stones. Now the band is at least three medians wide (the bed's coarse grains sit side by side), the stones keep to the
 riffles (the detail bed's riffle phase, about six widths apart; pools between hold few) and gather about a thalweg
 that swings from bank to bank at twice the riffle spacing (alternate bars). Same count per segment on average.
+
+## Ledge slabs in the cliff's own rock (25 Nov)
+
+Ledge slabs drew in their own stone colour, pale procedural granite on a grey scanned face, so they read as wedges
+stuck on rather than the bench's caprock standing out. They now join the wall's blocks (cave mouths, cliff courses,
+stacks) under cliff_match, and cliff_match also takes the landscape rock layer's scan: TerrainMaterial3D's
+tm_rock_albedo_tex and tm_rock_normal_tex at the layer's tile size, triplanar in world space with the UDN normal blend
+(Golus 2017), the colour over the texture's mean so it keeps the face's mean colour. The stone keeps its own light
+and dark (beds, marks, rind) on top. Without a scan on the ground material nothing changes.
+
+## Scanned detail on stones and caves (25 Nov)
+
+Under the scan rule (docs/ideas/scan-textures.md): stones take a scan as detail only, triplanar in the stone's own
+frame (it moves with a loosed or broken stone) at the scan's real size, its colour divided by its linear mean so the
+rock type and its mottling, beds and rind keep the colour, and its normal on the surface's (UDN blend, Golus 2017).
+Two scans, half the stones each, so neighbours of one shape do not carry one texture: rock_boulder_dry (1.8 m, p98/mean
+1.68) and rock_surface (2 m, 1.73). Not on ground detail grains (a metre-scale scan on a 2 cm grain is a tint) nor on
+the wall's own blocks (cliff_match takes the landscape's rock scan). Cave walls take rock_face_03 (2.7 m, 1.88) in world
+space on the rock, not the fill, flowstone or stream bed. rock_wall_02 was turned down (p98/mean 2.5, wet moss tones).
+Loaded by RockField3D.load_scan_set and CaveNetwork3D.load_scan_set from the art folder's scans.cfg sections marked
+system="rocks" (TerrainMaterial3D.load_scan_set skips them); benches: --stone-scans=0 for the A/B.
+Follow-up (25 Nov): the wall's blocks take the cliff overlay's face scan where the ground has one (what the face past
+about 45 degrees shows, rock_face_03), not the rock layer's, divided so their mean is the face's own (the face's
+albedo_mean when detail_only, times the rock texture's mean that ground_rock already holds); and their light and dark
+is capped at the wall's colour (it ran to 1.3 times: a block paler than the face round it reads as a plate stuck on).
+
+## Wall blocks on steep faces (25 Nov)
+
+A heightfield cannot hold a wall. Past about 60 degrees one terrain cell covers metres of height with only a few
+vertices, so the face is a stretched step. Its shading and textures draw long vertical bands (draped folds) that no
+texture projection hides. Open worlds built on heightfields cover these faces with real geometry. Horizon Zero Dawn
+placed rock and cliff kit pieces by slope density maps (Guerrilla, GDC 2017, "GPU-Based Run-Time Procedural Placement
+in Horizon Zero Dawn"). Far Cry 5 placed cliff meshes along steep terrain (Carrier, GDC 2018, "Procedural World
+Generation of Far Cry 5").
+
+Here the cliff layer's coursed blocks are that kit. They used to stop at 76 degrees, the faces that need them most.
+Now they run to `cliff_block_max_slope` (88 degrees by default, 76 for the old look). On faces steeper than 68 degrees
+the courses are nearly closed (95 percent kept, not about 65), and a block may stand up to 0.45 of a course proud of a
+fold, because on a sheer wall that reads as a jutting joint block, not a shelf. The face-fit test (the face must stay
+near planar where the block sits) is now measured square to the face and over the wall's own width. A whole terrain
+cell up and down the fall line landed on the bench above and the foot below, which rejected every sheer wall.
+
+Bench (rocks, --world --world-size=1024 --view=cliff, fixed camera): 159k to 365k stones; frame primitives 6.9M to
+10.0M in 111 to 723 draw calls; rock build 34 s to 110 s. The path tracer uses the full meshes.
+
+### Jointed rock, not masonry (25 Nov, second pass)
+
+Fixed 1.4 m courses with one block per 3 m cell read as man-made rows of same-sized bricks. Real sheer faces break
+along bedding and joint sets:
+- **Bed thickness varies.** In a sedimentary pile it is close to log-normal. The height is now cut into packages of
+  about 3.6 m with jittered tops, each split into one to three beds of 0.4 m and up. The cut is the same for every
+  cell, so a bed runs on along the wall.
+- **Joints are spaced in proportion to bed thickness.** Thin beds break into short blocks and thick beds into long
+  ones (Narr and Suppe 1991, "Joint spacing in sedimentary rocks"; Bai and Pollard 2000, fracture spacing). Each bed
+  has its own ratio, 1 to 2.6 times its thickness, with joints jittered by 0.3 of the spacing either way. A quarter of joints never opened, so some
+  blocks span two or three spacings and blocks along one bed differ in length. Joints are spaced along a world axis, so
+  neighbouring cells agree.
+- **Blocks fill the span between joints, less an open joint.** Of three shapes, the one whose proportions best match
+  the span is used. The open joints read as shadowed lines.
+- **Hard and soft beds weather apart (differential erosion).** Each bed has a hardness. On faces past 60 degrees a
+  hard bed stands out half its depth and a soft one a fifth, with more gaps where blocks have weathered out. The
+  setback blends in from 60 to 75 degrees, so the 50 to 60 degree faces keep the flush blocks that avoid pale shelves.
+- **Down to 50 degrees (third pass).** Terrain tried joint-bounded pillars as offset relief, and they do not hold past
+  about 60 degrees, so the placed blocks cover the fluted walls from 50 degrees. Every face the layer takes now gets the
+  closed beds. The setback blends from flush at 50 degrees to fully weathered at 65.
+- **On sheer faces the rock exposure map no longer gates placement.** Soil does not hold there, and the map fades
+  out over the flutes. Faces past 50 degrees need only 0.15 instead of 0.5.
+
+Rocks bench cliff view: 362k to 368k stones. --slope-map=cx,cz,half,step prints a slope map, to find the faces past
+60 degrees.
+
+## Cliff kit on fluted walls (25 Nov)
+
+A rounded or fluted wall of 50 to 75 degrees turns away the bed blocks. Their fit tests need the face near planar
+across a block, so the heightfield's vertical flutes stayed bare. Terrain tried joint-bounded pillars as offset relief
+on these faces, and offset relief does not hold past about 60 degrees. Open worlds on heightfields cover such faces
+with placed kit meshes, fitted to the terrain they stand over:
+- Horizon Zero Dawn placed rock and cliff pieces by density maps and fitted each piece to the terrain (Guerrilla,
+  GDC 2017, "GPU-Based Run-Time Procedural Placement in Horizon Zero Dawn").
+- Far Cry 5 placed cliff meshes along steep terrain and sank them in, so the heightfield's stretched faces sit behind
+  real geometry (Carrier, GDC 2018, "Procedural World Generation of Far Cry 5").
+
+Here the kit pieces are the cliff layer's own joint blocks, stood on end as pillars. This is how a sheer jointed face
+breaks: vertical joint sets cut each bed into columns.
+- **Tiers.** Pillars come in tiers of about 5.5 m up the face, with jittered tops.
+- **Width.** Each tier's pillars are a third to three fifths of its height wide. Their joints are spaced along a world
+  axis so neighbouring cells agree.
+- **Fitted plane.** Each piece's plane comes from the face's gradient over 5 m, across a flute rather than one flank of
+  it. The face is sampled at 9 points over the piece's footprint and measured square to that plane.
+- **Placement.** The piece's front stands 0.3 m proud of the highest ridge, because the drawn face sits decimetres off
+  the bilinear heights on a steep face. Its back must reach 0.15 m behind the deepest groove, so no piece floats.
+- **Rejected.** A footprint whose ridge stands more than 2 m out of the plane gets no piece; that is a convex corner or
+  a ledge, where a piece reads as a slab.
+- **Bed blocks.** The bed blocks a piece would bury are left out, so the stone count barely changes (cliff-foot view:
+  357k to 363k).
+
+Second pass, to remove visible repetition:
+- **Beds weather out in stretches.** Runs of two to five joint spans either stay or go, 30 percent gone, so no bed
+  stands out as one unbroken course.
+- **Blocks vary.** Each block sits up or down in its bed by a quarter of the bed, fills 62 to 94 percent of its joint
+  span, has its own setback (0.3 of its depth), and tilts on its bed.
+- **Pillars vary.** Kit pillars sit up or down their tier by 0.3 of it.
+- **Deep grooves.** A piece whose back cannot reach behind a groove is tried again at 1.35 and 1.8 times its size,
+  deeper as well as larger.
+- **Kit range.** Kit pieces start at 50 degrees, like the beds.
+- **Skyline.** The wall must go on past a piece's top (within a quarter of its height) and sides (within 0.6 of its
+  width). A grown piece once stood on a spire's tip above the skyline. A narrow convex spire now keeps its bed blocks
+  rather than pillars.
+
+On the cliff-foot view the dark vertical bands left on the far right are on faces of 40 to 50 degrees (--slope-map).
+These are the terrain material's streaks, below where the wall's rock goes, and they show the same with the cliff
+layer off.
+
+On the cliff-foot view the fit tests pass 88 percent of the tried pieces. `cliff_kit` (on by default) and the bench's
+--no-cliff-kit give the before frame. The path tracer draws the same full meshes.
+
+## Cliff kit recess contract (25 Nov)
+
+Rigid pillars against flutes metres deep either sink in (only dark specks and feet show) or stand stuck on. No
+placement rule fixes that, so the terrain steps back under the kit the way Far Cry 5 sinks its heightfield under
+cliff meshes (Carrier, GDC 2018, "Procedural World Generation of Far Cry 5"): the pillars become the visible wall.
+Agreed with terrain on 25 Nov.
+
+- **Contract.** `WorldRecessProvider::contract_recess_at(p) -> (depth, share)` in world_contracts.h, script side
+  `WorldGround.recess_at(position)`, `has_recess()`, `notify_recess_changed(AABB)` and signal
+  `recess_changed(box)`. `p` is a point of the drawn, unrecessed face. Depth is metres back along the face's
+  horizontal outward normal. Share is 1 where a pillar's front covers the point and fades to 0 within the last 0.5 m
+  of its outline, unless a neighbouring segment or column continues the wall there (then the outline grows 0.3 m
+  under the joint). The deepest answer of all providers wins (depth times share). Zero with no provider.
+- **Producer: RockField3D** (`cliff_recess`, on by default). Kit boxes are built per 8 m plan square on first use
+  from the unrecessed face (`relief_at(p, true, false)`), from world hashes only, and cached until the kit's
+  settings or the generator change. The pillars each cell lays come from the same boxes, so pillars and recess
+  always agree. The query is const and thread-safe (RWLock; squares are built outside the lock because they read
+  the landscape's relief). A box stands at the face's mean plus up to 0.27 m; the face behind steps back by a third
+  of the column's width (0.5 to 1.1 m), and every pillar's back stays at least 0.15 m behind that. No box where the
+  face would step back more than 3 m or the pillar would bridge a gully deeper than 3 m.
+- **Consumer: Landscape3D** (terrain thread). It moves the finest cliff vertices back by depth times share,
+  includes the recess in its split test, fades its analytic relief by (1 - share), applies it in
+  `relief_at(p, steps, recess = true)`, and rebuilds the finest chunks a `recess_changed` box overlaps. Collision
+  is unchanged (heightfield tiles have no relief; pillars carry their own collision). With no provider its output is
+  byte-identical.
+- **Standalone tests.** Terrain alone: rocks bench `--no-rocks --recess-stub=x,y,z,nx,nz,w,h,d` installs a
+  WorldGround script stub that recesses one box. Rocks alone: with no landscape, or `--no-cliff-recess`, the pillars
+  stand just proud of the ridges as before. All together: the cliff-foot bench, raster pair and a cloud PT frame.
+- **Cache.** `contract_recess_object()` is the field; its state is cliff_kit, cliff_recess, the cliff layer's
+  on/density, cliff_block_max_slope and a rules version, bumped whenever `_kit_square` changes.
+- **Second pass (26 Nov), from the first frames with the landscape's recess.**
+  - Pillars are square joint-bounded prisms: four upright sides near square to the face, flat bed-joint tops, no
+    taper or lean (the stack family's pointed tops read as spikes).
+  - Each segment is set by the 3 m square nearest its root; before, a segment whose root fell between two squares'
+    planes was dropped by both, and the wall showed gaps.
+  - The skyline test read single grooves as the wall's edge and dropped half the pillars. Now each edge (top, foot,
+    sides) holds where the face beyond it stands within 1.5 m of the step back at two of three points (one of three
+    at the sides), and under the foot it must reach the step back itself (else the underside shows). The kit covers
+    55% of the steep face in the cliff-foot view, up from 31% (`--recess-probe` in the rocks bench).
+  - No pillar where the rock 2.5 m behind the step back is air: on a fin thinner than that the step back cut through
+    it and the far side's pillars hung in the sky. None on a fin's nose either.
+  - Pillars fill their segment's height (width up to 1.5 times the column's); scaled to the width, the segments of a
+    column left gaps.
+  - The contract gains `recess_vector_at(p) -> (offset xyz, share)`: the step back along the pillar's own normal.
+    Along the drawn face's normal the flanks of a flute moved sideways and the ridges stayed in front of the pillars.
+    Landscape3D uses it.
+

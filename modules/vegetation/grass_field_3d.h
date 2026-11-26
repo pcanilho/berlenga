@@ -35,6 +35,7 @@
 #include "plant_species.h"
 #include "vegetation_holes.h"
 #include "vegetation_obstacles.h"
+#include "modules/world/world_exclusion_3d.h"
 #include "vegetation_paths.h"
 #include "water_current_bend.h"
 
@@ -173,6 +174,8 @@ private:
 	float trample_resistance = 300.0f; // Passes a year that halve the sward's cover (Cole 1995: grasses resist).
 	float _trample_cover(float p_passes) const;
 	float _trample_scale(float p_passes) const;
+	WorldExclusions exclusions; // keep-out areas for grass (WorldExclusion3D)
+	void _on_exclusions_changed(const Rect2 &p_area);
 	VegetationHoles holes; // Openings in the ground (cave mouths, the data map's generator): no blade there.
 	ObjectID hole_source;
 	void _follow_holes(TerrainDataMap3D *p_map);
@@ -194,6 +197,8 @@ private:
 	NodePath season_source;
 	float season_response = 1.0f;
 	float season_green = 1.0f;
+	float season_height = 1.0f; // The sward's standing height over its summer height (season_height_for()).
+	void _set_season_height(float p_height);
 	float season_baked_dryness = -1.0f; // The effective dryness of the last far colour bake.
 	int season_wait = 0;
 	bool ground_published = false; // This field's _bake_ground() set the grass_ground_* globals.
@@ -251,6 +256,8 @@ private:
 	// Trample field (docs/ideas/grass.md, contact): bend per texel around the camera, pressed by
 	// movers and relaxing back, so blades stay stateless and trails persist.
 	bool trample_enabled = true;
+	// Editor preview (docs/ideas/editor-tools.md, A): in the scene being edited, blades grow round the editor's view.
+	bool editor_preview = true;
 	StringName trample_group = "grass_trample";
 	float trample_size = 32.0f;
 	int trample_resolution = 128;
@@ -378,7 +385,7 @@ private:
 	// Burnt ground (WorldFire.burn_age_at): the sward is gone on a fresh burn and grows back, short
 	// blades first, over burn_recovery years (the rules' own burn_recovery when they set one).
 	// Sampled once a bake on a grid over the map (cell at least 2 m), like VegetationField3D.
-	float burn_recovery = 0.7f;
+	float burn_recovery = 2.0f;
 	LocalVector<float> burn_ages;
 	Rect2 burn_rect;
 	int burn_nx = 0;
@@ -709,6 +716,7 @@ public:
 	float get_season_green() const { return season_green; }
 	float get_effective_dryness() const { return _dryness(); }
 	static float season_greenness(const Dictionary &p_season);
+	static float season_height_for(const Dictionary &p_season);
 	void set_color_variation(float p_amount);
 	float get_color_variation() const { return color_variation; }
 	void set_radius(float p_radius);
@@ -733,6 +741,7 @@ public:
 	Color get_ground_tint() const { return ground_tint; }
 	void set_ground_tint_enabled(bool p_enabled);
 	bool is_ground_tint_enabled() const { return ground_tint_enabled; }
+	static String get_snow_sward_shader_code(); // grass_snow_cover(), grass_snow_coat(): thin snow on the sward (needs the snow functions).
 	static String get_ground_shader_code();
 	// grass_ground_opened(xz): what the ground's ruts, digs and puddles do to plants there (mud round 5): x lays them
 	// flat, y takes them away, z the ground's drop (m). Shared with PlantGenerator's plant shader.
@@ -741,6 +750,8 @@ public:
 	// its functions before the first function and, first in every fragment(), the discard outside the shadow pass.
 	static String add_camera_cutout(const String &p_code);
 
+	void set_editor_preview(bool p_enable);
+	bool is_editor_preview() const { return editor_preview; }
 	void set_trample_enabled(bool p_enabled);
 	bool is_trample_enabled() const { return trample_enabled; }
 	void set_trample_group(const StringName &p_group) { trample_group = p_group; }

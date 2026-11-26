@@ -37,6 +37,7 @@
 #include "tree_bark_detail.h"
 #include "tree_generator.h"
 #include "tree_wind_3d.h"
+#include "placed_plant_3d.h"
 #include "vegetation_field_3d.h"
 #include "vegetation_mist_3d.h"
 #include "vegetation_pollen_3d.h"
@@ -55,6 +56,7 @@ void initialize_vegetation_module(ModuleInitializationLevel p_level) {
 	GDREGISTER_CLASS(PlantSpecies);
 	GDREGISTER_CLASS(Biome);
 	GDREGISTER_CLASS(VegetationField3D);
+	GDREGISTER_CLASS(PlacedPlant3D);
 	GDREGISTER_CLASS(VegetationMist3D);
 	GDREGISTER_CLASS(VegetationPollen3D);
 	GDREGISTER_CLASS(LeafFall3D);
@@ -111,6 +113,10 @@ void initialize_vegetation_module(ModuleInitializationLevel p_level) {
 		{ "grass_wind", "vec4" },
 		{ "forest_floor_map", "sampler2D" },
 		{ "forest_floor_rect", "vec4" },
+		{ "forest_scan_leaves", "sampler2D" },
+		{ "forest_scan_needles", "sampler2D" },
+		{ "forest_scan_moss", "sampler2D" },
+		{ "forest_scan_tile", "vec4" },
 		{ "vegetation_far_map", "sampler2D" },
 		{ "vegetation_far_rect", "vec4" },
 		{ "vegetation_far_range", "float" },
@@ -134,4 +140,5 @@ void uninitialize_vegetation_module(ModuleInitializationLevel p_level) {
 	TreeGenerator::free_climber_leaves();
 	PlantGenerator::free_shaders();
 	GrassField3D::free_gpu_fill();
+	VegetationField3D::free_floor_scans();
 }

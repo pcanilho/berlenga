@@ -5918,6 +5918,9 @@ RID RenderingDevice::render_pipeline_create(RID p_shader, FramebufferFormatID p_
 	}
 
 	RenderPipeline pipeline;
+	if (_cpu_device_serializes_pipelines()) {
+		cpu_device_pipeline_compile_lock.read_lock();
+	}
 	pipeline.driver_id = driver->render_pipeline_create(
 			shader->driver_id,
 			driver_vertex_format,
@@ -5931,6 +5934,9 @@ RID RenderingDevice::render_pipeline_create(RID p_shader, FramebufferFormatID p_
 			fb_format.render_pass,
 			p_for_render_pass,
 			p_specialization_constants);
+	if (_cpu_device_serializes_pipelines()) {
+		cpu_device_pipeline_compile_lock.read_unlock();
+	}
 
 	// Don't print error when it's expected.
 	if (unlikely(!pipeline.driver_id && driver->get_driver_workarounds().dont_print_on_render_pipeline_creation_failure)) {
@@ -6024,7 +6030,13 @@ RID RenderingDevice::compute_pipeline_create(RID p_shader, const Vector<Pipeline
 	}
 
 	ComputePipeline pipeline;
+	if (_cpu_device_serializes_pipelines()) {
+		cpu_device_pipeline_compile_lock.read_lock();
+	}
 	pipeline.driver_id = driver->compute_pipeline_create(shader->driver_id, p_specialization_constants);
+	if (_cpu_device_serializes_pipelines()) {
+		cpu_device_pipeline_compile_lock.read_unlock();
+	}
 	ERR_FAIL_COND_V(!pipeline.driver_id, RID());
 
 	if (pipeline_cache_enabled) {
@@ -6278,6 +6290,9 @@ RID RenderingDevice::raytracing_pipeline_create(Span<PipelineShader> p_raygen_sh
 
 	// ===== Region 2: unlocked driver raytracing_pipeline_create =====
 	RaytracingPipeline pipeline;
+	if (_cpu_device_serializes_pipelines()) {
+		cpu_device_pipeline_compile_lock.write_lock();
+	}
 	pipeline.driver_id = driver->raytracing_pipeline_create(
 			shaders,
 			VectorView(raygen_and_miss_shader_indices.ptr(), p_raygen_shaders.size()),
@@ -6285,6 +6300,9 @@ RID RenderingDevice::raytracing_pipeline_create(Span<PipelineShader> p_raygen_sh
 			hit_groups,
 			p_max_trace_recursion_depth,
 			layout_defining_shader_driver_id);
+	if (_cpu_device_serializes_pipelines()) {
+		cpu_device_pipeline_compile_lock.write_unlock();
+	}
 
 	ERR_FAIL_COND_V(!pipeline.driver_id, RID());
 

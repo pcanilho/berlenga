@@ -31,8 +31,15 @@
 
 #include "terrain_material_3d.h"
 
+#include "core/io/config_file.h"
+#include "core/io/dir_access.h"
+#include "core/io/file_access.h"
+#include "core/io/image.h"
 #include "core/object/callable_mp.h"
 #include "core/object/class_db.h"
+#include "scene/resources/image_texture.h"
+#include "servers/rendering/rendering_server.h"
+#include "servers/rendering/scan_texture_limit.h"
 
 #include "modules/terrain_deform/terrain_generator_3d.h"
 #include "modules/vegetation/grass_field_3d.h"
@@ -172,6 +179,17 @@ void TerrainMaterialLayer::_bind_methods() {
 // --- TerrainMaterial3D --------------------------------------------------------------------------------------------
 
 static const char *LAYER_NAMES[TerrainMaterial3D::LAYER_MAX] = { "rock", "scree", "soil", "alluvium", "sand" };
+static const char *OVERLAY_NAMES[TerrainMaterial3D::OVERLAY_MAX] = { "rock_variant", "cliff", "cured", "bare_soil", "bare_alluvium", "bank", "trail", "bed", "beach", "mud", "burn", "snow" };
+// Which layers each overlay sits on and the mask (a component of the layer function's om or om2) that carries it.
+// Overlays apply in this order, so a later one wins where masks overlap (a cliff face over the rock variant, mud over a trail).
+#define TM_L(m_layer) (1 << TerrainMaterial3D::m_layer)
+static const int OVERLAY_PARENTS[TerrainMaterial3D::OVERLAY_MAX] = {
+	TM_L(LAYER_ROCK), TM_L(LAYER_ROCK), TM_L(LAYER_SOIL) | TM_L(LAYER_ALLUVIUM), TM_L(LAYER_SOIL), TM_L(LAYER_ALLUVIUM),
+	TM_L(LAYER_SOIL) | TM_L(LAYER_ALLUVIUM), TM_L(LAYER_SOIL) | TM_L(LAYER_ALLUVIUM), TM_L(LAYER_ALLUVIUM), TM_L(LAYER_SAND),
+	TM_L(LAYER_SOIL) | TM_L(LAYER_ALLUVIUM), TM_L(LAYER_SOIL) | TM_L(LAYER_ALLUVIUM), 0
+};
+#undef TM_L
+static const char *OVERLAY_MASK[TerrainMaterial3D::OVERLAY_MAX] = { "om.y", "om.x", "om.x", "om.y", "om.y", "om.w", "om2.y", "om2.x", "om.x", "om.z", "om2.z", "" };
 static const Color LAYER_DEFAULT_COLORS[TerrainMaterial3D::LAYER_MAX] = {
 	Color(0.36, 0.35, 0.33), Color(0.41, 0.40, 0.37), Color(0.2, 0.22, 0.1), Color(0.28, 0.27, 0.16), Color(0.7, 0.62, 0.46)
 };
@@ -278,6 +296,21 @@ vec3 tm_dune_tone(vec2 p_xz, float p_normal_y, float p_interdune) {
 	return t;
 }
 )";
+	// Soil bare of plants by the climate's dryness (WorldContracts::bare_share_for_precipitation, shared below): the soil
+	// and alluvium layers' colours are a vegetated topsoil (olive); in a dry climate most of it is bare soil.
+	c += R"(
+global uniform sampler2D terrain_climate_map : hint_default_black, filter_linear; // TerrainDataMap3D: g precipitation m a year
+global uniform vec4 terrain_climate_rect;
+global uniform vec4 weather_climate; // WeatherMap3D's season climate: x precipitation mm a year, y soil moisture, z air temperature C, w 1 when set
+uniform bool tm_bare_on = true;
+uniform vec4 tm_bare_soil_color : source_color = vec4(0.49, 0.40, 0.33, 1.0);
+uniform vec4 tm_bare_alluvium_color : source_color = vec4(0.60, 0.55, 0.49, 1.0);
+uniform vec4 tm_cured_cover_color : source_color = vec4(0.52, 0.45, 0.30, 1.0);
+)";
+	// The shared bare-soil rule and patches (WorldContracts::climate_bare_shader_code(): wc_climate_bare, wc_bare_patch,
+	// wc_climate_cured), the same the grass fields thin their blades by; before the grass ground code, whose turf cures
+	// by wc_climate_cured (it checks WC_CLIMATE_CODE).
+	c += WorldContracts::climate_bare_shader_code();
 	if (grass_tint_enabled) {
 		c += GrassField3D::get_ground_shader_code();
 	}
@@ -309,10 +342,10 @@ global uniform sampler2D terrain_frost_map : hint_default_black, filter_linear; 
 global uniform vec4 terrain_frost_rect; // its origin (x, z) and size (m); size 0 = none
 global uniform vec4 rock_far_cover_rect;
 global uniform vec4 rock_contact_rect;
-global uniform sampler2D terrain_stand_map : hint_default_black, filter_linear; // Landscape3D: r trail wear, g fresh rooting
+global uniform sampler2D terrain_stand_map : hint_default_black, filter_linear; // Landscape3D: r trail wear, g fresh rooting, b burn (1 - years / 10.2, 0 never)
 global uniform vec4 terrain_stand_rect;
 global uniform vec4 terrain_cliff_relief; // Landscape3D: cliff_relief (m), grid spacing (m), grid origin (x, z); x 0 = none
-global uniform vec4 terrain_bank_relief; // Landscape3D: bank_relief (m) in x; 0 = none
+global uniform vec4 terrain_bank_relief; // Landscape3D: bank_relief (m) in x (0 = none), terracette_relief (share) in y
 uniform float tm_far_start = 300.0;
 uniform float tm_far_fade = 150.0;
 )";
@@ -462,6 +495,26 @@ float tm_gc_grain(vec2 p_world, float s, float cover, out float tone, out vec3 g
 			c += vformat("uniform sampler2D tm_%s_height_tex : hint_default_black, filter_linear_mipmap, repeat_enable;\n", LAYER_NAMES[i]);
 		}
 	}
+	for (int i = 0; i < OVERLAY_MAX; i++) {
+		const Ref<TerrainMaterialLayer> &l = overlays[i];
+		if (l.is_null()) {
+			continue;
+		}
+		const String n = String("ov_") + OVERLAY_NAMES[i];
+		c += vformat("uniform float tm_%s_normal = 1.0;\nuniform float tm_%s_scale = 0.25;\n", n, n);
+		if (l->get_albedo_texture().is_valid()) {
+			c += vformat("uniform sampler2D tm_%s_albedo_tex : source_color, filter_linear_mipmap_anisotropic, repeat_enable;\nuniform vec3 tm_%s_albedo_mean = vec3(1.0);\n", n, n);
+		}
+		if (l->get_normal_texture().is_valid()) {
+			c += vformat("uniform sampler2D tm_%s_normal_tex : hint_normal, filter_linear_mipmap_anisotropic, repeat_enable;\n", n);
+		}
+		if (l->get_roughness_texture().is_valid()) {
+			c += vformat("uniform sampler2D tm_%s_roughness_tex : hint_default_white, filter_linear_mipmap_anisotropic, repeat_enable;\nuniform float tm_%s_roughness_mean = 1.0;\n", n, n);
+		}
+		if (l->get_height_texture().is_valid()) {
+			c += vformat("uniform sampler2D tm_%s_height_tex : hint_default_black, filter_linear_mipmap, repeat_enable;\n", n);
+		}
+	}
 	// World-space texturing: plain XZ on gentle ground, biplanar (Quilez 2020: the two dominant axes, two fetches)
 	// past the cliff slope so steep faces do not stretch.
 	c += R"(
@@ -580,7 +633,10 @@ float tm_ros_dens(vec2 c, float w3, float shift) {
 	return 0.97 * smoothstep(0.5 - shift, 0.58 - shift, 0.7 * tm_vn(vec3(c * 0.22, w3 * 0.22) + 13.0) + 0.3 * tm_vn(vec3(c * 0.8, w3 * 0.8) + 19.0));
 }
 vec4 tm_rosettes(vec2 q, float w3, float shift, float yellow_bias, float fp) {
-	const float S = 0.4; // one thallus a cell at most (the small thalli crowd closer than the old 0.6 m ones)
+	// One thallus a cell at most, cells of 15 cm: inside a colony thalli of 5 to 11 cm crowd until they touch and fuse into
+	// a mosaic with gaps (Armstrong 2011, crustose colonies). Cells of 0.4 m with mostly 3 to 6 cm thalli scattered
+	// lone round dots evenly 40 cm apart, which read as a regular pattern of white spots across a face.
+	const float S = 0.15;
 	vec2 g = q / S;
 	vec2 i = floor(g);
 	float aa = max(fp, 0.002);
@@ -601,14 +657,14 @@ vec4 tm_rosettes(vec2 q, float w3, float shift, float yellow_bias, float fp) {
 				float h2 = tm_vn_hash(vec3(c, 95.0));
 				float h3 = tm_vn_hash(vec3(c, 97.0));
 				vec2 d = (g - (c + 0.15 + 0.7 * vec2(h1, h2))) * S;
-				// Radii 2.5 cm to 0.22 m, most under 6 cm (thalli of every age; diameter grows about linearly with age, a
-				// fraction of a millimetre a year, so even centuries-old thalli of map lichen stay within 10 to 30 cm across;
-				// Innes 1985, "Lichenometry"). Up to 0.6 m they read as flat painted discs across a face.
-				float rad = 0.025 + 0.2 * h3 * h3 * h3;
+				// Radii 5 to 11 cm, touching their neighbours in 15 cm cells (thalli of every age; diameter grows about linearly with age, a fraction of a
+				// millimetre a year, so even centuries-old thalli of map lichen stay within 10 to 30 cm across; Innes 1985,
+				// "Lichenometry"). Up to 0.6 m they read as flat painted discs across a face.
+				float rad = 0.05 + 0.06 * h3;
 				float ei = length(d) - rad + lobe * min(rad * 2.5, 1.0);
-				// Fuse (smooth minimum over 8 cm).
-				float hk = clamp(0.5 + 0.5 * (e - ei) / 0.08, 0.0, 1.0);
-				e = mix(e, ei, hk) - 0.08 * hk * (1.0 - hk);
+				// Fuse (smooth minimum over 4 cm).
+				float hk = clamp(0.5 + 0.5 * (e - ei) / 0.04, 0.0, 1.0);
+				e = mix(e, ei, hk) - 0.04 * hk * (1.0 - hk);
 				if (ei < best) {
 					best = ei;
 					yel = step(1.0 - yellow_bias, fract(h0 * 17.3 + h3)) * step(0.35, h3);
@@ -626,7 +682,7 @@ vec4 tm_rosettes(vec2 q, float w3, float shift, float yellow_bias, float fp) {
 	vec4 r = vec4(cov, yel, band, tone);
 	// Past the cell's size the thalli average out to their mean cover.
 	float far = smoothstep(0.15, 0.6, fp / S);
-	return far > 0.0 ? mix(r, vec4(0.35 * tm_ros_dens(q, w3, shift), yellow_bias * 0.6, 0.0, 1.0), far) : r;
+	return far > 0.0 ? mix(r, vec4(0.55 * tm_ros_dens(q, w3, shift), yellow_bias * 0.6, 0.0, 1.0), far) : r; // a colony's crowded cover
 }
 
 // Sand glitter (docs/ideas/terrain-material.md, "Sand glitter"): a few of the quartz grains (clean cleavage and
@@ -722,20 +778,6 @@ vec2 tm_hex_hash(ivec2 v) {
 	return vec2(float(h & 0xFFFFu), float(h >> 16u)) / 65535.0;
 }
 )";
-	// Soil bare of plants by the climate's dryness (WorldContracts::bare_share_for_precipitation, shared below): the soil
-	// and alluvium layers' colours are a vegetated topsoil (olive); in a dry climate most of it is bare soil.
-	c += R"(
-global uniform sampler2D terrain_climate_map : hint_default_black, filter_linear; // TerrainDataMap3D: g precipitation m a year
-global uniform vec4 terrain_climate_rect;
-global uniform vec4 weather_climate; // WeatherMap3D's season climate: x precipitation mm a year, w 1 when set
-uniform bool tm_bare_on = true;
-uniform vec4 tm_bare_soil_color : source_color = vec4(0.49, 0.40, 0.33, 1.0);
-uniform vec4 tm_bare_alluvium_color : source_color = vec4(0.60, 0.55, 0.49, 1.0);
-uniform vec4 tm_cured_cover_color : source_color = vec4(0.52, 0.45, 0.30, 1.0);
-)";
-	// The shared bare-soil rule and patches (WorldContracts::climate_bare_shader_code(): wc_climate_bare, wc_bare_patch),
-	// the same the grass fields thin their blades by.
-	c += WorldContracts::climate_bare_shader_code();
 	c += R"(
 // The share of the soil bare at p, 0 with no climate (the shared rule, wc_climate_bare above).
 float tm_climate_bare(vec3 p) {
@@ -744,6 +786,70 @@ float tm_climate_bare(vec3 p) {
 // The share of the soil's plant cover cured to straw by the dry season (wc_climate_cured above).
 float tm_climate_cured(vec3 p) {
 	return tm_bare_on ? wc_climate_cured(p) : 0.0;
+}
+// Burn scars. The stand map's burn channel b is 1 - years since the fire / 10.2 (0 never burnt). Burnt ground is char
+// and ash over the soil: fresh char has an albedo of about 0.04 to 0.06 and white ash of a complete burn 0.3 or more,
+// which wind and the first rains strip within months (Roy and Landmann 2005; Pereira et al. 2015, "Ash and soil
+// properties after fire"). The surface darkening of a burn then fades over one to three years as the field layer
+// regrows through it, in patches from surviving roots and seed, not as one even fade (Lentile et al. 2006; MODIS
+// burn albedo recovery, Gatebe et al. 2014). Returns the share of the pixel still reading burnt.
+float tm_burn_cover(vec3 p, float b) {
+	float age = (1.0 - b) * 10.2;
+	// Regrowth patches about 1.5 m and 5 m across: some ground closes over in the first season, some lies black for three.
+	float n = 0.6 * tm_vn(p * 0.67 + 131.0) + 0.4 * tm_vn(p * 0.2 + 137.0);
+	float left = 1.0 - smoothstep(0.4, 3.0, age + (n - 0.5) * 2.2);
+	// The scar's edge breaks up over a few metres (the fire went out in tongues and unburnt islands).
+	float edge = smoothstep(0.35, 0.6, b * 6.0 * (0.75 + 0.5 * tm_vn(p * 0.33 + 139.0)));
+	return clamp(left * edge, 0.0, 1.0);
+}
+// The burnt ground's colour: char, with grey-white ash in drifts in the first months.
+vec3 tm_burn_tint(vec3 p, float b) {
+	float age = (1.0 - b) * 10.2;
+	float ash = (1.0 - smoothstep(0.05, 0.4, age)) * smoothstep(0.45, 0.7, tm_vn(p * 0.9 + 149.0));
+	vec3 char_col = vec3(0.052, 0.047, 0.042) * (0.8 + 0.4 * tm_vn(p * 3.1 + 151.0));
+	return mix(char_col, vec3(0.32, 0.31, 0.29), ash);
+}
+// The cured cover's colour at p (its mean tm_cured_cover_color): a dry sward is not one straw tone but standing straw,
+// grey weathered litter (dead grass greys within a season as it weathers) and soil between the tussocks, a quarter of
+// the ground or so in a semi-arid sward. Tussocks about 0.35 m, blades and gaps under them at 0.1 m, fresher and greyer
+// patches over 1.4 m; each scale fades to its mean once a pixel covers it.
+vec3 tm_cured_cover(vec3 p, float fp, vec3 soil) {
+	float t1 = tm_vn(p * 2.8 + 71.0);
+	float t2 = tm_vn(p * 9.0 + 83.0);
+	float t3 = tm_vn(p * 0.7 + 97.0);
+	float t4 = tm_vn(p * 0.3 + 113.0);
+	// Each octave fades to its mean once a pixel spans a quarter of its size (a 0.36 m tussock by 0.14 m pixels): faded
+	// at a pixel's size, as before, it aliased into smooth bands under the temporal filter from 30 m on.
+	float n1 = 1.0 - smoothstep(0.04, 0.14, fp);
+	float n2 = 1.0 - smoothstep(0.012, 0.045, fp);
+	float n3 = 1.0 - smoothstep(0.15, 0.5, fp);
+	vec3 straw = tm_cured_cover_color.rgb * vec3(1.16, 1.14, 1.04);
+	vec3 litter = tm_cured_cover_color.rgb * vec3(0.8, 0.88, 1.08);
+	vec3 c = mix(straw, litter, clamp(0.4 + (t3 - 0.5) * 1.6 * n3 + (t2 - 0.5) * 0.7 * n2, 0.0, 1.0));
+	// Clumps and swales a few metres across, fuller and sparser, what a dry sward shows from afar where the tussocks
+	// have faded to their mean (one flat colour there read as paint).
+	c *= 0.72 + 0.56 * t4;
+	// Each tussock lit on top and shaded at its base (the clump's own self-shadow, the grain of a bunchgrass sward from
+	// a few metres), the bare ground between them showing through: at 0.28 the cover read as flat mustard blobs.
+	float tuft = 1.0 - smoothstep(0.36, 0.66, t1);
+	c *= mix(0.96, 0.62 + 0.68 * tuft, n1) * mix(1.0, 0.75 + 0.5 * t2, n2);
+	float gap = mix(0.32 + 0.4 * (0.5 - t4), smoothstep(0.48, 0.6, t1 + (t2 - 0.5) * 0.3 * n2), n1);
+	return mix(c, soil, gap * 0.95);
+}
+)";
+	// Terracettes as relief: the shared step (WorldContracts::terracette_step, which Landscape3D and the plants' roots
+	// read too), gated to open soil by the generator's geology.
+	c += WorldContracts::terracette_shader_code();
+	c += R"(
+// At p (world, the undisplaced ground's height in y) on ground of gradient grad: x the steps' height over the ground
+// (m), y the change of the slope's steepness, box-filtered over width metres along the fall line. Its share is
+// terrain_bank_relief.y (Landscape3D.terracette_relief).
+vec2 tm_terracette(vec3 p, vec2 grad, float width) {
+	float share = terrain_bank_relief.y;
+	if (share > 0.0 && tm_geology && terrain_geology_rect.z > 0.0) {
+		share *= wc_terracette_soil(terrain_geology(p));
+	}
+	return wc_terracette_step(p, grad, width, share);
 }
 )";
 	// Godot passes a sampler to a function only with one filter/repeat/hint setting per function, so the hex sampler
@@ -786,40 +892,98 @@ float tm_climate_cured(vec3 p) {
 			c += hex.replace("vec4 tm_hex(", String("vec4 tm_hex_") + kinds[k] + "(");
 		}
 	}
-	// Per layer: albedo, roughness, normal perturbation and height at this point.
+	// A scan's detail at this point (detail_only: albedo and roughness as ratios to their means), written into sd (albedo
+	// ratio), sr (roughness ratio), sdn (normal perturbation) and sh (height), for a layer (tm_<name>) or an overlay
+	// (tm_ov_<name>).
+	auto scan_code = [](const String &p_n, const Ref<TerrainMaterialLayer> &p_l, bool p_macro) -> String {
+		String o;
+		const bool a = p_l.is_valid() && p_l->get_albedo_texture().is_valid();
+		const bool nn = p_l.is_valid() && p_l->get_normal_texture().is_valid();
+		const bool r = p_l.is_valid() && p_l->get_roughness_texture().is_valid();
+		const bool h = p_l.is_valid() && p_l->get_height_texture().is_valid();
+		o += vformat("\tTmProj pr = tm_projection(p, n, tm_%s_scale, cliff);\n", p_n);
+		o += "\tsd = vec3(1.0);\n\tsr = 1.0;\n\tsdn = vec3(0.0);\n\tsh = 0.5;\n";
+		if (!(a || nn || r || h)) {
+			return o;
+		}
+		// The pixel's footprint in each projection's texture coordinates, for the hex-tiled samples' mips.
+		o += vformat("\tvec2 dx0 = vec2(dpx[pr.axes0.x], dpx[pr.axes0.y]) * tm_%s_scale, dy0 = vec2(dpy[pr.axes0.x], dpy[pr.axes0.y]) * tm_%s_scale;\n", p_n, p_n);
+		o += vformat("\tvec2 dx1 = vec2(dpx[pr.axes1.x], dpx[pr.axes1.y]) * tm_%s_scale, dy1 = vec2(dpy[pr.axes1.x], dpy[pr.axes1.y]) * tm_%s_scale;\n", p_n, p_n);
+		if (a) {
+			// detail_only: the scan gives the detail around the layer's colour (divided by its own mean), so any scan
+			// keeps the colour the geology and the layer set.
+			o += vformat("\tsd = (tm_hex_a(tm_%s_albedo_tex, pr.uv0, dx0, dy0, false).rgb * pr.w0 + (pr.w1 > 0.0 ? tm_hex_a(tm_%s_albedo_tex, pr.uv1, dx1, dy1, false).rgb * pr.w1 : vec3(0.0))) / tm_%s_albedo_mean;\n", p_n, p_n, p_n);
+		}
+		if (r) {
+			// detail_only: around the layer's roughness too (scans' roughness maps follow no common scale: some wet mud
+			// at 0.5, some dry rock at 0.95), so a dry layer is not glossy because its scan's map is.
+			o += vformat("\tsr = (tm_hex_r(tm_%s_roughness_tex, pr.uv0, dx0, dy0, false).g * pr.w0 + (pr.w1 > 0.0 ? tm_hex_r(tm_%s_roughness_tex, pr.uv1, dx1, dy1, false).g * pr.w1 : 0.0)) / tm_%s_roughness_mean;\n", p_n, p_n, p_n);
+		}
+		if (nn) {
+			o += vformat("\tvec3 n0 = tm_hex_n(tm_%s_normal_tex, pr.uv0, dx0, dy0, true).xyz * 2.0 - 1.0;\n", p_n);
+			o += vformat("\tsdn = tm_perturb(n0.xy * tm_%s_normal, pr.axes0) * pr.w0;\n", p_n);
+			o += vformat("\tif (pr.w1 > 0.0) {\n\t\tvec3 n1 = tm_hex_n(tm_%s_normal_tex, pr.uv1, dx1, dy1, true).xyz * 2.0 - 1.0;\n\t\tsdn += tm_perturb(n1.xy * tm_%s_normal, pr.axes1) * pr.w1;\n\t}\n", p_n, p_n);
+		}
+		if (p_macro && (a || nn)) {
+			// The same scan again at six times its size (UE's landscape "macro variation", Far Cry 5's colour and detail
+			// variation): a scan only holds the structure of its own tile, so from tens of metres a face or slope showed
+			// its 2 m detail filtered to an even tone, with nothing at the metres scale (soft, flat walls). The macro
+			// sample adds that scale's tone and relief; hex tiling keeps its repeats apart. Rock only: bare rock is near
+			// self-similar over these scales (joints and fractures at every size), loose grains and stones are not (a
+			// scree scan six times over is a field of flat boulders).
+			o += vformat("\tTmProj pm = tm_projection(p, n, tm_%s_scale * 0.1667, cliff);\n", p_n);
+			o += vformat("\tvec2 mx0 = vec2(dpx[pm.axes0.x], dpx[pm.axes0.y]) * tm_%s_scale * 0.1667, my0 = vec2(dpy[pm.axes0.x], dpy[pm.axes0.y]) * tm_%s_scale * 0.1667;\n", p_n, p_n);
+			o += vformat("\tvec2 mx1 = vec2(dpx[pm.axes1.x], dpx[pm.axes1.y]) * tm_%s_scale * 0.1667, my1 = vec2(dpy[pm.axes1.x], dpy[pm.axes1.y]) * tm_%s_scale * 0.1667;\n", p_n, p_n);
+			if (a) {
+				o += vformat("\tvec3 macro_a = (tm_hex_a(tm_%s_albedo_tex, pm.uv0 + 0.37, mx0, my0, false).rgb * pm.w0 + (pm.w1 > 0.0 ? tm_hex_a(tm_%s_albedo_tex, pm.uv1 + 0.37, mx1, my1, false).rgb * pm.w1 : vec3(0.0))) / tm_%s_albedo_mean;\n", p_n, p_n, p_n);
+				o += "\tsd *= mix(vec3(1.0), macro_a, 0.6);\n";
+			}
+			if (nn) {
+				o += vformat("\tvec3 mn0 = tm_hex_n(tm_%s_normal_tex, pm.uv0 + 0.37, mx0, my0, true).xyz * 2.0 - 1.0;\n", p_n);
+				o += vformat("\tsdn += tm_perturb(mn0.xy * tm_%s_normal * 0.7, pm.axes0) * pm.w0;\n", p_n);
+				o += vformat("\tif (pm.w1 > 0.0) {\n\t\tvec3 mn1 = tm_hex_n(tm_%s_normal_tex, pm.uv1 + 0.37, mx1, my1, true).xyz * 2.0 - 1.0;\n\t\tsdn += tm_perturb(mn1.xy * tm_%s_normal * 0.7, pm.axes1) * pm.w1;\n\t}\n", p_n, p_n);
+			}
+		}
+		if (h) {
+			o += vformat("\tsh = tm_hex_h(tm_%s_height_tex, pr.uv0, dx0, dy0, false).r * pr.w0 + (pr.w1 > 0.0 ? tm_hex_h(tm_%s_height_tex, pr.uv1, dx1, dy1, false).r * pr.w1 : 0.0);\n", p_n, p_n);
+		}
+		return o;
+	};
+	// Overlay scans (docs/ideas/scan-textures.md): the same detail, for the layer functions to blend over their own.
+	for (int i = 0; i < OVERLAY_MAX; i++) {
+		if (overlays[i].is_null()) {
+			continue;
+		}
+		const String n = String("ov_") + OVERLAY_NAMES[i];
+		c += vformat("\nvoid tm_%s(vec3 p, vec3 n, bool cliff, vec3 dpx, vec3 dpy, out vec3 sd, out float sr, out vec3 sdn, out float sh) {\n", n);
+		c += scan_code(n, overlays[i], i == OVERLAY_CLIFF || i == OVERLAY_ROCK_VARIANT);
+		c += "}\n";
+	}
+	// Per layer: albedo, roughness, normal perturbation and height at this point. om: the masks of the overlays on
+	// this layer (OVERLAY_MASK), 0 where only the layer's own scan shows.
 	for (int i = 0; i < LAYER_MAX; i++) {
 		const Ref<TerrainMaterialLayer> &l = layers[i];
 		const String n = LAYER_NAMES[i];
 		const bool has_a = l.is_valid() && l->get_albedo_texture().is_valid();
-		const bool has_n = l.is_valid() && l->get_normal_texture().is_valid();
-		const bool has_r = l.is_valid() && l->get_roughness_texture().is_valid();
-		const bool has_h = l.is_valid() && l->get_height_texture().is_valid();
-		c += vformat("\nvoid tm_%s(vec3 p, vec3 n, bool cliff, vec3 dpx, vec3 dpy, out vec3 albedo, out float rough, out vec3 dn, out float h) {\n", n);
-		c += vformat("\tTmProj pr = tm_projection(p, n, tm_%s_scale, cliff);\n", n);
-		if (has_a || has_n || has_r || has_h) {
-			// The pixel's footprint in each projection's texture coordinates, for the hex-tiled samples' mips.
-			c += vformat("\tvec2 dx0 = vec2(dpx[pr.axes0.x], dpx[pr.axes0.y]) * tm_%s_scale, dy0 = vec2(dpy[pr.axes0.x], dpy[pr.axes0.y]) * tm_%s_scale;\n", n, n);
-			c += vformat("\tvec2 dx1 = vec2(dpx[pr.axes1.x], dpx[pr.axes1.y]) * tm_%s_scale, dy1 = vec2(dpy[pr.axes1.x], dpy[pr.axes1.y]) * tm_%s_scale;\n", n, n);
+		c += vformat("\nvoid tm_%s(vec3 p, vec3 n, bool cliff, vec3 dpx, vec3 dpy, vec4 om, vec4 om2, out vec3 albedo, out float rough, out vec3 dn, out float h) {\n", n);
+		c += "\tvec3 sd;\n\tfloat sr;\n\tvec3 sdn;\n\tfloat sh;\n\t{\n";
+		c += scan_code(n, l, i == LAYER_ROCK).replace("\n\t", "\n\t\t").replace("\tTmProj", "\t\tTmProj");
+		c += "\t}\n";
+		for (int k = 0; k < OVERLAY_MAX; k++) {
+			if (overlays[k].is_null() || !(OVERLAY_PARENTS[k] & (1 << i))) {
+				continue;
+			}
+			// Each overlay over the layer's own scan by its mask, height blended at the edge (Mishkinis 2013): where the
+			// mask is part way the scan standing higher in its height map wins, so cracked crust or straw ends in clumps
+			// and plates, not a soft cross-fade.
+			c += vformat("\tif (%s > 1e-3) {\n", OVERLAY_MASK[k]);
+			c += vformat("\t\tvec3 od;\n\t\tfloat orr;\n\t\tvec3 odn;\n\t\tfloat oh;\n\t\ttm_ov_%s(p, n, cliff, dpx, dpy, od, orr, odn, oh);\n", OVERLAY_NAMES[k]);
+			c += vformat("\t\tfloat m = clamp(%s, 0.0, 1.0);\n", OVERLAY_MASK[k]);
+			c += "\t\tfloat a1 = m + oh * tm_blend_depth;\n\t\tfloat a0 = 1.0 - m + sh * tm_blend_depth;\n\t\tfloat tp = max(a0, a1) - tm_blend_depth;\n";
+			c += "\t\tfloat b1 = max(a1 - tp, 0.0);\n\t\tfloat b0 = max(a0 - tp, 0.0);\n\t\tfloat mm = b1 / max(b0 + b1, 1e-5);\n";
+			c += "\t\tsd = mix(sd, od, mm);\n\t\tsr = mix(sr, orr, mm);\n\t\tsdn = mix(sdn, odn, mm);\n\t\tsh = mix(sh, oh, mm);\n\t}\n";
 		}
-		c += vformat("\talbedo = tm_%s_color.rgb;\n\trough = tm_%s_roughness;\n\tdn = vec3(0.0);\n\th = 0.5;\n", n, n);
-		if (has_a) {
-			// detail_only: the scan gives the detail around the layer's colour (divided by its own mean), so any scan
-			// keeps the colour the geology and the layer set.
-			c += vformat("\talbedo *= (tm_hex_a(tm_%s_albedo_tex, pr.uv0, dx0, dy0, false).rgb * pr.w0 + (pr.w1 > 0.0 ? tm_hex_a(tm_%s_albedo_tex, pr.uv1, dx1, dy1, false).rgb * pr.w1 : vec3(0.0))) / tm_%s_albedo_mean;\n", n, n, n);
-		}
-		if (has_r) {
-			// detail_only: around the layer's roughness too (scans' roughness maps follow no common scale: some wet mud
-			// at 0.5, some dry rock at 0.95), so a dry layer is not glossy because its scan's map is.
-			c += vformat("\trough = min(rough * (tm_hex_r(tm_%s_roughness_tex, pr.uv0, dx0, dy0, false).g * pr.w0 + (pr.w1 > 0.0 ? tm_hex_r(tm_%s_roughness_tex, pr.uv1, dx1, dy1, false).g * pr.w1 : 0.0)) / tm_%s_roughness_mean, 1.0);\n", n, n, n);
-		}
-		if (has_n) {
-			c += vformat("\tvec3 n0 = tm_hex_n(tm_%s_normal_tex, pr.uv0, dx0, dy0, true).xyz * 2.0 - 1.0;\n", n);
-			c += vformat("\tdn = tm_perturb(n0.xy * tm_%s_normal, pr.axes0) * pr.w0;\n", n);
-			c += vformat("\tif (pr.w1 > 0.0) {\n\t\tvec3 n1 = tm_hex_n(tm_%s_normal_tex, pr.uv1, dx1, dy1, true).xyz * 2.0 - 1.0;\n\t\tdn += tm_perturb(n1.xy * tm_%s_normal, pr.axes1) * pr.w1;\n\t}\n", n, n);
-		}
-		if (has_h) {
-			c += vformat("\th = tm_hex_h(tm_%s_height_tex, pr.uv0, dx0, dy0, false).r * pr.w0 + (pr.w1 > 0.0 ? tm_hex_h(tm_%s_height_tex, pr.uv1, dx1, dy1, false).r * pr.w1 : 0.0);\n", n, n);
-		}
+		c += vformat("\talbedo = tm_%s_color.rgb * sd;\n\trough = min(tm_%s_roughness * sr, 1.0);\n\tdn = sdn;\n\th = sh;\n", n, n);
 		if (has_a || i == LAYER_SAND) {
 			// A scan repeats every tile_size (hex tiling hides the seams, not the sameness over tens of metres): the same
 			// 9 m and 2.2 m tone patches as the untextured layers below break it up. Sand takes them with or without a
@@ -875,12 +1039,16 @@ float tm_climate_cured(vec3 p) {
 			float bed = tm_vn(vec3(p.x / 40.0, p.y / 0.9, p.z / 40.0) + 5.0);
 			// The scan (rock seen from above) drew soft wrinkles that read as draped cloth on a face: half its tone and
 			// most of its bump give way there, the face's relief (Landscape3D cliff relief and its joint steps) shapes it.
-			albedo = mix(albedo, tm_rock_color.rgb, 0.5 * face);
+			// With a face scan (the cliff overlay, om.x) the detail is a face's own (beds, joints, fractures, photographed
+			// facing the wall), so none of it gives way: easing it left walls flat paint with streaks.
+			float ease = face * (1.0 - TM_CLIFF_SCAN);
+			albedo = mix(albedo, tm_rock_color.rgb, 0.5 * ease);
 			albedo *= mix(1.0, (1.1 - 0.5 * sk) * (0.86 + 0.28 * bed) * (0.85 + 0.3 * tm_vn(p / 18.0 + 3.0)), face);
-			dn *= 1.0 - 0.85 * face;
+			dn *= 1.0 - 0.85 * ease;
 		}
 	}
 )";
+			c = c.replace("TM_CLIFF_SCAN", overlays[OVERLAY_CLIFF].is_valid() ? "clamp(om.x, 0.0, 1.0)" : "0.0"); // the cliff overlay's mask (OVERLAY_MASK)
 		}
 		c += "}\n";
 	}
@@ -944,6 +1112,8 @@ varying vec4 tm_cl_p; // the undisplaced point (landscape space), w the cliff re
 varying vec4 tm_cl_n; // the heightfield normal, w the bank relief's scale
 varying float tm_cl_kj; // the joint steps' scale (CUSTOM2.x)
 varying vec3 tm_proj_n; // the heightfield's central-difference normal (CUSTOM2.yzw), for the texture projection
+varying vec4 tm_tc_p; // the terracettes: xyz the undisplaced ground (world), w 1 where they are drawn
+varying vec2 tm_tc_g; // and the heightfield's gradient there
 float tm_cl_hash(int a, int b, int c) {
 	uint h = uint(a) * 0x8DA6B343u ^ uint(b) * 0xD8163841u ^ uint(c) * 0xCB1AB31Fu;
 	h ^= h >> 13u;
@@ -1355,6 +1525,22 @@ vec2 tm_cl_weights_at(vec2 xz) {
 )";
 	}
 	c += "\nvoid vertex() {\n\ttm_cl_p = CUSTOM0;\n\ttm_cl_n = CUSTOM1;\n\ttm_cl_kj = CUSTOM2.x;\n\ttm_proj_n = CUSTOM2.yzw;\n";
+	// Terracettes on the landscape's mesh (CUSTOM0 its undisplaced point, CUSTOM1 the heightfield normal), filtered to
+	// twice its vertex spacing (and wider with distance, where coarser levels draw): narrower, a grid of a metre or so
+	// sampled each 3 m step at two or three vertices and drew them as a sawtooth along contours across its diagonals.
+	c += R"(	tm_tc_p = vec4(0.0);
+	tm_tc_g = vec2(0.0);
+	if (terrain_bank_relief.y > 0.0 && dot(CUSTOM1.xyz, CUSTOM1.xyz) > 0.5) {
+		vec3 tc_p = (MODEL_MATRIX * vec4(CUSTOM0.xyz, 1.0)).xyz;
+		vec3 tc_n = normalize(mat3(MODEL_MATRIX) * CUSTOM1.xyz);
+		vec2 tc_g = -tc_n.xz / max(tc_n.y, 0.05);
+		tm_tc_p = vec4(tc_p, 1.0);
+		tm_tc_g = tc_g;
+		float tc_w = 2.0 * max(terrain_cliff_relief.y > 0.0 ? terrain_cliff_relief.y : 1.0, distance(tc_p, CAMERA_POSITION_WORLD) / 64.0);
+		float tc_o = tm_terracette(tc_p, tc_g, tc_w).x;
+		VERTEX += inverse(mat3(MODEL_MATRIX)) * vec3(0.0, tc_o, 0.0);
+	}
+)";
 	if (ground_deform_enabled) {
 		// Prints in the ground (GroundSurface3D): the terrain sinks under the printed patch, and the patch, drawn
 		// with a copy of this material, takes the printed surface.
@@ -1362,6 +1548,18 @@ vec2 tm_cl_weights_at(vec2 xz) {
 		// Read, so the path tracer counts the parameter among what its capture depends on (GroundSurface3D bumps it
 		// when the field's texture is rewritten in place, which alone recaptures nothing).
 		c += "\tVERTEX.y += 0.0 * ground_deform_serial;\n";
+		// The near patch takes the terracettes at its own grid, from the landscape's heightfield normal as the
+		// landscape does (the patch's own follows prints).
+		c += R"(	if (ground_deform_patch && terrain_bank_relief.y > 0.0 && terrain_cliff_relief.y > 0.0 && ground_deform_rect.z > 0.0) {
+		vec3 tc_p = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
+		vec3 tc_n = tm_cl_land_n(tc_p.xz);
+		vec2 tc_g = -tc_n.xz / max(tc_n.y, 0.05);
+		tm_tc_p = vec4(tc_p, 1.0);
+		tm_tc_g = tc_g;
+		float tc_o = tm_terracette(tc_p, tc_g, 2.0 * max(ground_deform_rect.w, 0.05)).x;
+		VERTEX += inverse(mat3(MODEL_MATRIX)) * vec3(0.0, tc_o, 0.0);
+	}
+)";
 		// The patch carries no relief data of its own, so it takes the landscape's here: the same face weight, scale
 		// and offset as Landscape3D::_cliff_point, its vertices pushed out as the landscape's are, and CUSTOM0 /
 		// CUSTOM1's data for the pixel normal and ledge shadows. Without it the patch drew smooth faces near the camera over relief cliffs.
@@ -1849,7 +2047,11 @@ void fragment() {
 		vec3 pn = normalize(mat3(MODEL_MATRIX) * tm_proj_n);
 		tm_pn = normalize(mix(wn, pn, smoothstep(0.0, 0.15, wn.y - pn.y)));
 	}
-	bool cliff = tm_pn.y < tm_cliff_cos;
+	// Biplanar projection from 35 degrees (cos 0.82), not the cliff slope (50): below that both of Quilez's weights
+	// fall on the top axis anyway (the second axis's weight is zero under 35 degrees, so gentle ground costs no second
+	// fetch), and plain XZ on a 40 to 50 degree slope stretched the scans by up to 1.6 along the fall line, with a
+	// seam where the projection switched at 50.
+	bool cliff = tm_pn.y < 0.82;
 	// The pixel's footprint on the ground for the layers' texture gradients, as a ray cone's ellipse (Akenine-Moller
 	// et al. 2019), as the rock detail takes it: the path tracer has no screen derivatives.
 	vec3 tm_dpx, tm_dpy;
@@ -1882,8 +2084,10 @@ void fragment() {
 	float beach_sand = -1.0;
 	float tm_till = 0.0;
 	float tm_gully = 0.0;
+	float tm_drain = -1e9; // the generator's log10 drainage area here (m2), for the channel beds' scan
 	if (tm_geology && terrain_geology_rect.z > 0.0) {
 		vec4 g = terrain_geology(wp);
+		tm_drain = g.w;
 		beach_sand = clamp(-g.x, 0.0, 1.0);
 		// The generator knows where soil holds (Heimsath soil on slopes up to its repose); below its cells only
 		// faces past the cliff slope are forced bare.
@@ -1932,7 +2136,10 @@ void fragment() {
 			scree += rest * wall;
 			rest *= 1.0 - wall;
 		}
-		float alluvium = smoothstep(tm_alluvium_area, tm_alluvium_area + 1.0, g.w) * smoothstep(0.88, 0.95, tm_cn.y);
+		// Fines settle only where the gradient falls off: floodplains and fan surfaces of a few degrees (fluvial fans
+		// mostly under 5 degrees, debris-flow fans to about 15; Blair and McPherson 1994). Taken to 32 degrees, slopes
+		// of 25 drew flat pale slabs of bare alluvium with hard edges on dry hillsides. The edge noise breaks the rim.
+		float alluvium = smoothstep(tm_alluvium_area, tm_alluvium_area + 1.0, g.w) * smoothstep(0.92, 0.97, tm_cn.y + tm_edge_n * 0.15);
 		// Rills and gullies (the droplet erosion's channels): the flow strips a channel's floor of its fines and soil
 		// to a gravel lag (Poesen et al. 2003), the scree layer's stones and grit; below the slope break its load
 		// settles as a fan of fresh fines (the alluvium layer). Rock floors stay rock.
@@ -1941,7 +2148,7 @@ void fragment() {
 		tm_gully = clamp(tm_gully, 0.0, 1.0);
 		scree += rest * tm_gully;
 		rest *= 1.0 - tm_gully;
-		alluvium = max(alluvium, smoothstep(0.15, 0.8, tm_gl.y) * smoothstep(0.85, 0.93, tm_cn.y));
+		alluvium = max(alluvium, smoothstep(0.15, 0.8, tm_gl.y) * smoothstep(0.95, 0.985, tm_cn.y + tm_edge_n * 0.15));
 		w[0] = rock;
 		w[1] = scree;
 		w[2] = rest * (1.0 - alluvium);
@@ -1968,6 +2175,21 @@ void fragment() {
 		w[i] *= 1.0 - sand;
 	}
 	w[4] = sand;
+	// Faces the surface itself stands steep on (cliff relief walls, joint and ledge risers, cut banks: the displaced
+	// faces' normal past some 55 degrees) are rock, whatever the heightfield under them says: no loose layer holds
+	// past its angle of repose (sand 34, scree 35 to 40, soil and alluvium less), and a riser drawn as the tread's
+	// alluvium or beach sand read as flat tan walls with no rock in them. The treads keep the heightfield's layer.
+	{
+		float tm_riser = 1.0 - smoothstep(0.5, 0.62, tm_pn.y);
+		if (tm_riser > 0.0) {
+			float moved = 0.0;
+			for (int i = 1; i < 5; i++) {
+				moved += w[i] * tm_riser;
+				w[i] *= 1.0 - tm_riser;
+			}
+			w[0] += moved;
+		}
+	}
 	// Each layer present, then height blending (Mishkinis 2013): near a transition the layer standing higher in its
 	// height map wins, so stones poke through sand instead of a soft cross-fade.
 	vec3 alb[5];
@@ -1982,12 +2204,18 @@ void fragment() {
 		dns[i] = vec3(0.0);
 		hb[i] = -1e9;
 	}
+	// The overlay scans' masks (docs/ideas/scan-textures.md): rock faces past some 45 degrees take the face scan, and a
+	// second rock scan in 25 m patches.
+	vec4 tm_om_rock = vec4(1.0 - smoothstep(0.55, 0.8, tm_pn.y), smoothstep(0.38, 0.62, 0.7 * tm_vn(wp / 25.0 + 71.0) + 0.3 * tm_vn(wp / 8.0 + 5.0)), 0.0, 0.0);
+	vec4 tm_om2_rock = vec4(0.0);
+	vec4 tm_om_scree = vec4(0.0);
+	vec4 tm_om2_scree = vec4(0.0);
 	if (w[0] > 1e-3) {
 		vec3 a;
 		float r;
 		vec3 d;
 		float h;
-		tm_rock(wp, tm_pn, cliff, tm_dpx, tm_dpy, a, r, d, h);
+		tm_rock(wp, tm_pn, cliff, tm_dpx, tm_dpy, tm_om_rock, tm_om2_rock, a, r, d, h);
 		alb[0] = a;
 		rgh[0] = r;
 		dns[0] = d;
@@ -1998,7 +2226,7 @@ void fragment() {
 		float r;
 		vec3 d;
 		float h;
-		tm_scree(wp, tm_pn, cliff, tm_dpx, tm_dpy, a, r, d, h);
+		tm_scree(wp, tm_pn, cliff, tm_dpx, tm_dpy, tm_om_scree, tm_om2_scree, a, r, d, h);
 		// Patches of fresher and older, lichened blocks: a tone that varies by about a fifth over 10 to 30 m (mean
 		// kept), so a talus slope is not one flat colour at a distance (world coordinates, unrotated, as above).
 		{
@@ -2017,13 +2245,43 @@ void fragment() {
 	// The cover between the bare patches: the soil layer's colour is a green vegetated topsoil, which in a summer-dry
 	// climate is straw through the dry season (the grasses cure), not the olive of a humid sward.
 	float tm_cured = w[2] + w[3] > 1e-3 ? tm_climate_cured(wp) : 0.0;
+	// Straw over the cover between the bare patches, the bare patches' own crust, and the turned soil of ruts and prints.
+	float tm_om_mud = TM_OM_MUD;
+	// Soil faces too steep for a sward to close over them (42 to 53 degrees by the surface's own normal: banks, slump
+	// scarps, cut edges) show the soil's cut face.
+	float tm_om_bank = 1.0 - smoothstep(0.6, 0.74, tm_pn.y);
+	// Trails walked bare (the stand map's wear, before the trail's own tint and tread below).
+	float tm_om_trail = 0.0;
+	// Burn scars (the stand map's burn channel): char and ash over the soil, fading as the cover regrows.
+	float tm_om_burn = 0.0;
+	float tm_burn_b = 0.0;
+	if (terrain_stand_rect.z > 0.0) {
+		vec2 suv = (wp.xz - terrain_stand_rect.xy) / terrain_stand_rect.zw;
+		if (all(greaterThan(suv, vec2(0.0))) && all(lessThan(suv, vec2(1.0)))) {
+			vec4 tm_st = textureLod(terrain_stand_map, suv, 0.0);
+			tm_om_trail = smoothstep(0.28, 0.48, tm_st.r + (tm_vn(wp * vec3(2.2, 0.0, 2.2) + 31.0) - 0.5) * 0.4);
+			if (tm_st.b > 0.01) {
+				tm_burn_b = tm_st.b;
+				tm_om_burn = tm_burn_cover(wp, tm_st.b);
+			}
+		}
+	}
+	vec4 tm_om_soil = vec4(tm_cured * (1.0 - tm_bare_k), tm_bare_k, tm_om_mud, tm_om_bank);
+	vec4 tm_om2_soil = vec4(0.0, tm_om_trail, tm_om_burn, 0.0);
+	vec4 tm_om_alluvium = vec4(0.8 * tm_cured * (1.0 - tm_bare_k), tm_bare_k, tm_om_mud, tm_om_bank);
+	// Channel beds: where the drainage area is a hundred times the alluvium's threshold the flow keeps the fines moving
+	// and leaves a bed of rounded gravel (bedload channels; Church 2006), on gentle ground.
+	vec4 tm_om2_alluvium = vec4(tm_drain > -1e8 ? smoothstep(tm_alluvium_area + 1.5, tm_alluvium_area + 2.5, tm_drain) * smoothstep(0.9, 0.96, tm_cn.y) : 0.0, tm_om_trail, tm_om_burn, 0.0);
+	// The beach: sand within a few metres of the sea (the swash, berm and seabed); dunes inland keep the sand's own.
+	vec4 tm_om_sand = vec4(1.0 - smoothstep(tm_beach_height, tm_beach_height + 4.0, wp.y - tm_sea_level), 0.0, 0.0, 0.0);
+	vec4 tm_om2_sand = vec4(0.0);
 	if (w[2] > 1e-3) {
 		vec3 a;
 		float r;
 		vec3 d;
 		float h;
-		tm_soil(wp, tm_pn, cliff, tm_dpx, tm_dpy, a, r, d, h);
-		a *= mix(mix(tm_soil_color.rgb, tm_cured_cover_color.rgb, tm_cured), tm_bare_soil_color.rgb, tm_bare_k) / max(tm_soil_color.rgb, vec3(1e-3));
+		tm_soil(wp, tm_pn, cliff, tm_dpx, tm_dpy, tm_om_soil, tm_om2_soil, a, r, d, h);
+		a *= mix(mix(mix(tm_soil_color.rgb, tm_cured_cover(wp, tm_fp0, tm_bare_soil_color.rgb), tm_cured), tm_bare_soil_color.rgb, tm_bare_k), tm_burn_tint(wp, tm_burn_b), tm_om_burn) / max(tm_soil_color.rgb, vec3(1e-3));
 		alb[2] = a;
 		rgh[2] = r;
 		dns[2] = d;
@@ -2034,8 +2292,8 @@ void fragment() {
 		float r;
 		vec3 d;
 		float h;
-		tm_alluvium(wp, tm_pn, cliff, tm_dpx, tm_dpy, a, r, d, h);
-		a *= mix(mix(tm_alluvium_color.rgb, tm_cured_cover_color.rgb, 0.8 * tm_cured), tm_bare_alluvium_color.rgb, tm_bare_k) / max(tm_alluvium_color.rgb, vec3(1e-3));
+		tm_alluvium(wp, tm_pn, cliff, tm_dpx, tm_dpy, tm_om_alluvium, tm_om2_alluvium, a, r, d, h);
+		a *= mix(mix(mix(tm_alluvium_color.rgb, tm_cured_cover(wp, tm_fp0, tm_bare_alluvium_color.rgb), 0.8 * tm_cured), tm_bare_alluvium_color.rgb, tm_bare_k), tm_burn_tint(wp, tm_burn_b), tm_om_burn) / max(tm_alluvium_color.rgb, vec3(1e-3));
 		alb[3] = a;
 		rgh[3] = r;
 		dns[3] = d;
@@ -2046,7 +2304,7 @@ void fragment() {
 		float r;
 		vec3 d;
 		float h;
-		tm_sand(wp, tm_pn, cliff, tm_dpx, tm_dpy, a, r, d, h);
+		tm_sand(wp, tm_pn, cliff, tm_dpx, tm_dpy, tm_om_sand, tm_om2_sand, a, r, d, h);
 		d += tm_sand_grain(wp, tm_fp0, a);
 		// The dune field's colour at this scale: redder old sand, coarse dark interdune flats, pale slip faces.
 		float tm_sdepth = terrain_sand_interdune(wp);
@@ -2076,6 +2334,7 @@ void fragment() {
 	float por[5] = float[5](tm_rock_porosity, tm_scree_porosity, tm_soil_porosity, tm_alluvium_porosity, tm_sand_porosity);
 	float tm_sand_b = 0.0; // the sand's share of the blend, for its glitter
 	float tm_stone_b = 0.0; // rock and scree's share, for the salt bloom
+	float tm_rock_b = 0.0; // the rock layer's share, for the snow's facet rule
 	float tm_sand_dry = 1.0;
 	// The height blend's band widens with the pixel's footprint (about 0.1 m at 70 m to 1 m at 700 m at 1080p): a
 	// pixel far off spans many of the stones and patches whose heights decide the blend, so it takes their mix. A
@@ -2092,10 +2351,12 @@ void fragment() {
 		porosity += por[i] * b;
 		tm_sand_b = i == 4 ? b : tm_sand_b;
 		tm_stone_b += i < 2 ? b : 0.0;
+		tm_rock_b = i == 0 ? b : tm_rock_b;
 	}
 	total = max(total, 1e-5);
 	tm_sand_b /= total;
 	tm_stone_b /= total;
+	tm_rock_b /= total;
 	albedo /= total;
 	rough /= total;
 	dn /= total;
@@ -2124,6 +2385,18 @@ void fragment() {
 )";
 	}
 	c += R"(	}
+)";
+	// Terracettes per pixel: the steps' slope, filtered over the pixel's footprint (the geometry carries them as far as
+	// its vertices resolve; this draws the tread edges finer and fades them out where a pixel covers a step).
+	c += R"(	if (tm_tc_p.w > 0.5) {
+		vec2 tc = tm_terracette(tm_tc_p.xyz, tm_tc_g, tm_fp0);
+		if (tc.y != 0.0) {
+			vec3 tc_n0 = normalize(vec3(-tm_tc_g.x, 1.0, -tm_tc_g.y));
+			vec3 tc_n1 = normalize(vec3(-tm_tc_g.x * (1.0 + tc.y), 1.0, -tm_tc_g.y * (1.0 + tc.y)));
+			sn = normalize(sn + tc_n1 - tc_n0);
+			tm_macro_n = normalize(tm_macro_n + tc_n1 - tc_n0);
+		}
+	}
 )";
 	// Rock faces weathered by aspect (docs/ideas/terrain-material.md, "Rock faces weather by aspect"): lichen and moss
 	// cover follows how little sun a face gets over the year, the heat load index's idea (McCune and Keon 2002: a
@@ -2165,7 +2438,8 @@ void fragment() {
 			float lc = ros.x * fw_face;
 			float yellow = ros.y;
 			float fw_l = dot(albedo, vec3(0.3, 0.59, 0.11));
-			vec3 lcol = mix(vec3(0.86, 0.88, 0.8) * max(fw_l * 1.15, 0.2), vec3(0.38, 0.4, 0.17), yellow);
+			// The map lichen a dull yellow-green (Rhizocarpon geographicum, about 5Y 6/6), not a bright yellow fleck.
+			vec3 lcol = mix(vec3(0.86, 0.88, 0.8) * max(fw_l * 1.15, 0.2), vec3(0.36, 0.37, 0.24), yellow);
 			lcol *= ros.w * (0.9 + 0.2 * mix(0.5, tm_vn(wp * 9.0 + 5.0), fw_k));
 			// Close up a crust is a mosaic of areoles split by fine dark cracks (black between the map lichen's yellow ones).
 			float fw_ar = (1.0 - smoothstep(0.0, 0.07, abs(tm_vn(wp * 28.0 + 3.0) - 0.5))) * (1.0 - smoothstep(0.006, 0.02, tm_fp0));
@@ -2669,12 +2943,38 @@ void fragment() {
 		// Held or shed by the projection's normal (tm_pn): on a wall one cell across the vertex normal is flat at
 		// both rows and held snow down the wall's height in white smears.
 		vec3 snow_face = tm_pn.y < tm_cn.y ? tm_pn : tm_cn;
-		snow = snow_cover_weight(snow_s.x * tm_snow, tm_snow_max_slope, tm_pn, sn, wp, snow_face);
+		// Bare soil's relief is millimetres to a couple of centimetres (crumbs, crust, raindrop pits), finer than its
+		// scan's detail normal draws it at this scale, so a fresh pack of a centimetre or two buries it about as soon
+		// as it buries a sward: the thin pack's flattest-facets rule took the scan's normal for bare relief and left
+		// bare patches brown under 1.6 cm of fresh snow while the turf round them was white. Taken by the bare share.
+		// Gentle bedrock the same: a slab's relief is joints and pits of a few centimetres that a fresh pack fills
+		// first (snow smooths the ground it lands on, depressions before knobs: Veitinger et al. 2014), while the
+		// rule read the walls of the scan's joints (and of its macro variation's, a metre across) as steep facets and
+		// left them bare, black cracks through 2 cm of snow. Faces keep the rule and their broken patches.
+		float snow_slab = tm_rock_b * smoothstep(0.8, 0.92, tm_cn.y);
+		vec3 snow_n = normalize(mix(sn, wn, 0.75 * max(tm_bare_g, snow_slab)));
+		snow = snow_cover_weight(snow_s.x * tm_snow, tm_snow_max_slope, tm_pn, snow_n, wp, snow_face);
 		snow_wet = snow_s.z;
 		snow_cover_apply(snow, snow_s.y, snow_wet, albedo, rough, metallic, specular);
-		sn = normalize(mix(sn, wn, snow));
-	}
 )";
+		if (overlays[OVERLAY_SNOW].is_valid()) {
+			// The pack's own grain and crust from a scan (snow_02, docs/ideas/scan-textures.md): its normal over the
+			// snow's smooth one and its roughness as a ratio round the pack's, both by the snow's share. Detail only:
+			// the colour, sparkle and wetness stay the snow model's.
+			c += R"(		vec3 snow_dn = vec3(0.0);
+		if (snow > 1e-3) {
+			vec3 sv_d;
+			float sv_r;
+			float sv_h;
+			tm_ov_snow(wp, tm_pn, cliff, tm_dpx, tm_dpy, sv_d, sv_r, snow_dn, sv_h);
+			rough = clamp(rough * mix(1.0, sv_r, snow * (1.0 - snow_wet)), 0.02, 1.0);
+		}
+		sn = normalize(mix(sn, normalize(wn + snow_dn), snow));
+)";
+		} else {
+			c += "\t\tsn = normalize(mix(sn, wn, snow));\n";
+		}
+		c += "\t}\n";
 	}
 	c += R"(	ALBEDO = albedo;
 	ROUGHNESS = rough;
@@ -2810,6 +3110,9 @@ void fragment() {
 )";
 	}
 	c += "}\n";
+	// The mud overlay's mask: GroundSurface3D's own mud (ruts, digs, wallows and laid mud where the soil is wet
+	// enough to be mud; material.cpp ground_deform_mud()), where the ground deforms at all.
+	c = c.replace("TM_OM_MUD", ground_deform_enabled ? "ground_deform_mud(wp)" : "0.0");
 	return c;
 }
 
@@ -2882,6 +3185,42 @@ void TerrainMaterial3D::_update_params() {
 			}
 		}
 	}
+	for (int i = 0; i < OVERLAY_MAX; i++) {
+		const Ref<TerrainMaterialLayer> &l = overlays[i];
+		if (l.is_null()) {
+			continue;
+		}
+		const String n = String("tm_ov_") + OVERLAY_NAMES[i];
+		set_shader_parameter(n + "_normal", l->get_normal_strength());
+		set_shader_parameter(n + "_scale", 1.0f / l->get_tile_size());
+		if (l->get_albedo_texture().is_valid()) {
+			set_shader_parameter(n + "_albedo_tex", l->get_albedo_texture());
+			const Color m = l->is_detail_only() ? l->get_albedo_mean() : Color(1, 1, 1);
+			set_shader_parameter(n + "_albedo_mean", Vector3(m.r, m.g, m.b));
+		}
+		if (l->get_normal_texture().is_valid()) {
+			set_shader_parameter(n + "_normal_tex", l->get_normal_texture());
+		}
+		if (l->get_roughness_texture().is_valid()) {
+			set_shader_parameter(n + "_roughness_tex", l->get_roughness_texture());
+			set_shader_parameter(n + "_roughness_mean", l->is_detail_only() ? l->get_roughness_mean() : 1.0f);
+		}
+		if (l->get_height_texture().is_valid()) {
+			set_shader_parameter(n + "_height_tex", l->get_height_texture());
+		}
+	}
+	// The snow scan for every snow drawer (SnowSurface3D reads these globals; one scan, no private copies): its normal,
+	// roughness and (1 / tile, normal strength, roughness mean, 1). A material without one leaves them as they are.
+	const Ref<TerrainMaterialLayer> &snow_scan = overlays[OVERLAY_SNOW];
+	if (snow_scan.is_valid() && snow_scan->get_normal_texture().is_valid()) {
+		RenderingServer *rs = RenderingServer::get_singleton();
+		rs->global_shader_parameter_set("snow_grain_normal", snow_scan->get_normal_texture()->get_rid());
+		if (snow_scan->get_roughness_texture().is_valid()) {
+			rs->global_shader_parameter_set("snow_grain_roughness", snow_scan->get_roughness_texture()->get_rid());
+		}
+		const float rm = snow_scan->get_roughness_texture().is_valid() ? snow_scan->get_roughness_mean() : 0.0f;
+		rs->global_shader_parameter_set("snow_grain_params", Vector4(1.0f / snow_scan->get_tile_size(), snow_scan->get_normal_strength(), rm, 1.0f));
+	}
 	// Copies of this material (GroundSurface3D's near patch) follow its parameters through this signal.
 	emit_changed();
 }
@@ -2920,6 +3259,125 @@ void TerrainMaterial3D::set_layer(Layer p_layer, const Ref<TerrainMaterialLayer>
 Ref<TerrainMaterialLayer> TerrainMaterial3D::get_layer(Layer p_layer) const {
 	ERR_FAIL_INDEX_V(p_layer, LAYER_MAX, Ref<TerrainMaterialLayer>());
 	return layers[p_layer];
+}
+
+void TerrainMaterial3D::set_overlay(Overlay p_overlay, const Ref<TerrainMaterialLayer> &p_value) {
+	ERR_FAIL_INDEX(p_overlay, OVERLAY_MAX);
+	const Callable cb = callable_mp(this, &TerrainMaterial3D::_layer_changed);
+	if (overlays[p_overlay].is_valid() && overlays[p_overlay]->is_connected(CoreStringName(changed), cb)) {
+		overlays[p_overlay]->disconnect(CoreStringName(changed), cb);
+	}
+	overlays[p_overlay] = p_value;
+	if (p_value.is_valid() && !p_value->is_connected(CoreStringName(changed), cb)) {
+		p_value->connect(CoreStringName(changed), cb);
+	}
+	_queue_update();
+}
+
+Ref<TerrainMaterialLayer> TerrainMaterial3D::get_overlay(Overlay p_overlay) const {
+	ERR_FAIL_INDEX_V(p_overlay, OVERLAY_MAX, Ref<TerrainMaterialLayer>());
+	return overlays[p_overlay];
+}
+
+// A scan's map from a file (no import: the art folders are .gdignore'd), mipmapped; grey keeps only its luminance
+// (a green grass scan as the fibre detail of straw, whose colour the layer sets).
+static Ref<Texture2D> _tm_scan_texture(const String &p_path, bool p_normal, bool p_grey) {
+	if (!FileAccess::exists(p_path)) {
+		return Ref<Texture2D>();
+	}
+	Ref<Image> img = Image::load_from_file(p_path);
+	if (img.is_null() || img->is_empty()) {
+		return Ref<Texture2D>();
+	}
+	scan_texture_limit(img);
+	if (p_grey && !p_normal) {
+		img->convert(Image::FORMAT_RGB8);
+		const int w = img->get_width();
+		const int h = img->get_height();
+		for (int y = 0; y < h; y++) {
+			for (int x = 0; x < w; x++) {
+				const Color c = img->get_pixel(x, y);
+				const float l = c.get_luminance();
+				img->set_pixel(x, y, Color(l, l, l));
+			}
+		}
+	}
+	img->generate_mipmaps(p_normal);
+	return ImageTexture::create_from_image(img);
+}
+
+int TerrainMaterial3D::load_scan_set(const String &p_dir, const PackedStringArray &p_slots, const String &p_maps) {
+	const String cfg_path = p_dir.path_join("scans.cfg");
+	Ref<ConfigFile> cfg;
+	cfg.instantiate();
+	if (!DirAccess::dir_exists_absolute(p_dir) || cfg->load(cfg_path) != OK) {
+		WARN_PRINT(vformat("TerrainMaterial3D: no scan set at '%s' (fetch the art first): every ground layer is drawn flat.", cfg_path));
+		return 0;
+	}
+	int n = 0;
+	const Vector<String> sections = cfg->get_sections();
+	for (const String &sec : sections) {
+		int layer = -1;
+		int overlay = -1;
+		for (int i = 0; i < LAYER_MAX; i++) {
+			if (sec == LAYER_NAMES[i]) {
+				layer = i;
+			}
+		}
+		for (int i = 0; i < OVERLAY_MAX; i++) {
+			if (sec == OVERLAY_NAMES[i]) {
+				overlay = i;
+			}
+		}
+		if (cfg->has_section_key(sec, "system")) {
+			continue; // another system's scan (system="rocks": stones and caves), read by that system's own loader
+		}
+		if (layer < 0 && overlay < 0) {
+			WARN_PRINT(vformat("TerrainMaterial3D: unknown slot [%s] in %s.", sec, cfg_path));
+			continue;
+		}
+		if (!p_slots.is_empty() && !p_slots.has(sec)) {
+			continue;
+		}
+		const String scan = cfg->get_value(sec, "scan", "");
+		const String maps = p_maps.is_empty() ? String(cfg->get_value(sec, "maps", "anrh")) : p_maps;
+		const bool grey = cfg->get_value(sec, "grey", false);
+		const String base = p_dir.path_join(scan).path_join(scan);
+		Ref<TerrainMaterialLayer> l;
+		if (layer >= 0 && layers[layer].is_valid()) {
+			l = layers[layer]->duplicate();
+		} else {
+			l.instantiate();
+			if (layer >= 0) {
+				l->set_color(LAYER_DEFAULT_COLORS[layer]);
+			}
+		}
+		if (maps.contains("a")) {
+			l->set_albedo_texture(_tm_scan_texture(base + "_albedo.jpg", false, grey));
+		}
+		if (maps.contains("n")) {
+			l->set_normal_texture(_tm_scan_texture(base + "_normal.jpg", true, false));
+		}
+		if (maps.contains("r")) {
+			l->set_roughness_texture(_tm_scan_texture(base + "_roughness.jpg", false, false));
+		}
+		if (maps.contains("h")) {
+			l->set_height_texture(_tm_scan_texture(base + "_height.jpg", false, false));
+		}
+		if (l->get_albedo_texture().is_null() && l->get_normal_texture().is_null()) {
+			WARN_PRINT(vformat("TerrainMaterial3D: scan '%s' for [%s] not found under %s.", scan, sec, p_dir));
+			continue;
+		}
+		l->set_tile_size(cfg->get_value(sec, "tile", l->get_tile_size()));
+		l->set_normal_strength(cfg->get_value(sec, "normal", l->get_normal_strength()));
+		if (layer >= 0) {
+			set_layer(Layer(layer), l);
+		} else {
+			set_overlay(Overlay(overlay), l);
+		}
+		n++;
+	}
+	return n;
 }
 
 #define MAT_SETTER(m_type, m_name, m_expr) \
@@ -3044,13 +3502,13 @@ Color TerrainMaterial3D::contract_ground_albedo_at(const Vector3 &p_position) co
 		const float bare_near = steep * MAX(Math::smoothstep(0.02f, 0.2f, CLAMP(g.g, 0.0f, 1.0f)), Math::smoothstep(0.02f, 0.2f, sg));
 		scree += rest * bare_near;
 		rest *= 1.0f - bare_near;
-		float alluvium = Math::smoothstep(alluvium_area, alluvium_area + 1.0f, g.a) * Math::smoothstep(0.88f, 0.95f, ny);
+		float alluvium = Math::smoothstep(alluvium_area, alluvium_area + 1.0f, g.a) * Math::smoothstep(0.92f, 0.97f, ny);
 		// Rill and gully floors (as the shader, without its noise): gravel lag, fans of fines below.
 		const Vector2 gl = gen->get_gully_at(p_position, ny);
 		const float gully = gl.x * (1.0f - rock);
 		scree += rest * gully;
 		rest *= 1.0f - gully;
-		alluvium = MAX(alluvium, float(Math::smoothstep(0.15f, 0.8f, float(gl.y)) * Math::smoothstep(0.85f, 0.93f, ny)));
+		alluvium = MAX(alluvium, float(Math::smoothstep(0.15f, 0.8f, float(gl.y)) * Math::smoothstep(0.95f, 0.985f, ny)));
 		w[LAYER_ROCK] = rock;
 		w[LAYER_SCREE] = scree;
 		w[LAYER_SOIL] = rest * (1.0f - alluvium);
@@ -3101,7 +3559,11 @@ void TerrainMaterial3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_shader_code"), &TerrainMaterial3D::get_shader_code);
 	ClassDB::bind_method(D_METHOD("set_layer", "layer", "value"), &TerrainMaterial3D::set_layer);
 	ClassDB::bind_method(D_METHOD("get_layer", "layer"), &TerrainMaterial3D::get_layer);
+	ClassDB::bind_method(D_METHOD("set_overlay", "overlay", "value"), &TerrainMaterial3D::set_overlay);
+	ClassDB::bind_method(D_METHOD("get_overlay", "overlay"), &TerrainMaterial3D::get_overlay);
+	ClassDB::bind_method(D_METHOD("load_scan_set", "dir", "slots", "maps"), &TerrainMaterial3D::load_scan_set, DEFVAL(PackedStringArray()), DEFVAL(String()));
 	ClassDB::bind_method(D_METHOD("use_generator", "generator"), &TerrainMaterial3D::use_generator);
+	ClassDB::bind_method(D_METHOD("get_generator"), &TerrainMaterial3D::get_generator);
 	ClassDB::bind_method(D_METHOD("get_ground_albedo_at", "position"), &TerrainMaterial3D::get_ground_albedo_at);
 #define BIND_PROP(m_type, m_name, m_get, m_hint, m_hint_str) \
 	ClassDB::bind_method(D_METHOD("set_" #m_name, "value"), &TerrainMaterial3D::set_##m_name); \
@@ -3111,6 +3573,11 @@ void TerrainMaterial3D::_bind_methods() {
 	for (int i = 0; i < LAYER_MAX; i++) {
 		ADD_PROPERTYI(PropertyInfo(Variant::OBJECT, String(LAYER_NAMES[i]) + "_layer", PROPERTY_HINT_RESOURCE_TYPE, "TerrainMaterialLayer"), "set_layer", "get_layer", i);
 	}
+	ADD_GROUP("Overlay scans", "");
+	for (int i = 0; i < OVERLAY_MAX; i++) {
+		ADD_PROPERTYI(PropertyInfo(Variant::OBJECT, String(OVERLAY_NAMES[i]) + "_scan", PROPERTY_HINT_RESOURCE_TYPE, "TerrainMaterialLayer"), "set_overlay", "get_overlay", i);
+	}
+	ADD_GROUP("", "");
 	BIND_PROP(Variant::BOOL, geology_enabled, is_geology_enabled, PROPERTY_HINT_NONE, "")
 	BIND_PROP(Variant::BOOL, sand_dune_tone, is_sand_dune_tone, PROPERTY_HINT_NONE, "")
 	BIND_PROP(Variant::BOOL, sand_granule_ripples, is_sand_granule_ripples, PROPERTY_HINT_NONE, "")
@@ -3151,6 +3618,19 @@ void TerrainMaterial3D::_bind_methods() {
 	BIND_ENUM_CONSTANT(LAYER_ALLUVIUM);
 	BIND_ENUM_CONSTANT(LAYER_SAND);
 	BIND_ENUM_CONSTANT(LAYER_MAX);
+	BIND_ENUM_CONSTANT(OVERLAY_ROCK_VARIANT);
+	BIND_ENUM_CONSTANT(OVERLAY_CLIFF);
+	BIND_ENUM_CONSTANT(OVERLAY_CURED);
+	BIND_ENUM_CONSTANT(OVERLAY_BARE_SOIL);
+	BIND_ENUM_CONSTANT(OVERLAY_BARE_ALLUVIUM);
+	BIND_ENUM_CONSTANT(OVERLAY_BANK);
+	BIND_ENUM_CONSTANT(OVERLAY_TRAIL);
+	BIND_ENUM_CONSTANT(OVERLAY_BED);
+	BIND_ENUM_CONSTANT(OVERLAY_BEACH);
+	BIND_ENUM_CONSTANT(OVERLAY_MUD);
+	BIND_ENUM_CONSTANT(OVERLAY_BURN);
+	BIND_ENUM_CONSTANT(OVERLAY_SNOW);
+	BIND_ENUM_CONSTANT(OVERLAY_MAX);
 }
 
 TerrainMaterial3D::TerrainMaterial3D() {

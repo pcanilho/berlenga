@@ -185,3 +185,12 @@ and path tracer from one source (raytracing_rain_inc.glsl), in this order:
    instead of the vertical rain alone; until then they read the vertical rain times the face's upward share.
 
 Each step lands with a raster and path-traced pair from the rain bench (docs/bench/rain) at 100% crop.
+
+Built (22 Nov): 1 (`weather_rain_fallback`, rt_param 87), 2 (GroundWaterImpacts, `water_impacts`, rt_param 88; rain
+bench pond, ground bench `--test=puddles`), 3 (`wetness_standing_water`, relief `rain_standing_relief()`: value noise
+at 2.6, 0.8 and 0.25 m, since built surfaces pond in broad settlement hollows first; a heightmap's own relief is not
+read yet) and 4 (`rain_glass()`; rain bench `--glass`). The glass reads world-links' `weather_surface_rain()` (catch,
+film, wind push) and, on moving bodies, `rain_slipstream` and `rain_wipe`. A drop in the path tracer is a water coat
+(clearcoat at half strength: water's F0 is half the coat's) whose normal the thin transmission lobe refracts through
+twice (`rain_drop_refract()`). Falling drops in the path tracer now use the raster's Garg and Nayar average: an IOR on
+the single camera-facing quad left rays inside a water volume past it.

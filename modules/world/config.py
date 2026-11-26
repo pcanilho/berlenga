@@ -12,6 +12,7 @@ def get_doc_classes():
         "WorldBeaverDam3D",
         "WorldBurnScar3D",
         "WorldContracts",
+        "WorldExclusion3D",
         "WorldFire",
         "WorldGround",
         "WorldSnow",

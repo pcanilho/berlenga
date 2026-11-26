@@ -961,6 +961,21 @@ float transmission_lobe_probability(MaterialProperties material, vec3 N, vec3 V)
 	return lum > 0.0 ? clamp(trans_lum / lum, 0.01, 0.99) : 0.0;
 }
 
+// Light through a drop on a thin pane (rain on glass, raytracing_rain_inc.glsl rain_glass()): in through the drop's curved surface (air to water, n 1.33), out through the
+// flat pane (water to glass to air: a thin parallel pane leaves only water to air). p_dir: the ray's direction;
+// p_drop: the drop's outward normal; p_flat: the pane's normal on the drop's side. Total internal reflection at the
+// pane sends the light back out (the dark rim a drop shows); then the result points to the drop's side.
+vec3 rain_drop_refract(vec3 p_dir, vec3 p_drop, vec3 p_flat) {
+	vec3 nd = dot(p_dir, p_drop) < 0.0 ? p_drop : -p_drop;
+	vec3 t1 = refract(p_dir, nd, 1.0 / 1.33);
+	if (dot(t1, t1) <= 0.0) {
+		return reflect(p_dir, nd);
+	}
+	vec3 nf = dot(t1, p_flat) < 0.0 ? p_flat : -p_flat;
+	vec3 t2 = refract(t1, nf, 1.33);
+	return dot(t2, t2) > 0.0 ? normalize(t2) : normalize(reflect(t1, nf));
+}
+
 // The reflection and back light lobes' density. The thin transmission lobe adds none: no light
 // sample draws its directions (a ray through it weighs what it finds in full).
 float base_continuation_pdf(vec3 N, vec3 V, vec3 L, MaterialProperties material) {
@@ -1207,6 +1222,7 @@ vec3 shade_local_surface(HitData h, MaterialResult m, vec3 N, vec3 V, bool p_is_
 }
 
 // A bounce ray off the coat, taken with probability p_coat. Counts as a specular bounce.
+// Only for sample_surface_lobe(), whose caller takes the density (surface_continuation_pdf()).
 bool sample_coat_continuation(HitData h, MaterialProperties material, vec3 N, vec3 V, float p_coat, inout PathState ps) {
 	vec3 next_dir;
 	vec3 weight;
@@ -1224,8 +1240,7 @@ bool sample_coat_continuation(HitData h, MaterialProperties material, vec3 N, ve
 	}
 	ps.offset_normal = h.geometry_normal;
 	ps.next_ray_dir = next_dir;
-	ps.bsdf_pdf = rt_emissive_count() > 0u ? surface_continuation_pdf(N, V, next_dir, material) : 0.0;
-	return true;
+	return true; // sample_surface_continuation() takes the density for next_dir.
 }
 
 // Subsurface scattering (docs/ideas/subsurface-scattering.md, Cycles' Random Walk): the diffuse lobe
@@ -1277,7 +1292,10 @@ void rt_sss_probe_hit() {
 	payload.packed_bounces_flags = SSS_PROBE_FLAG | (front ? 0u : SSS_PROBE_BACK_FACE_FLAG);
 }
 
-bool sample_surface_continuation(HitData h, MaterialResult m, vec3 N, vec3 V, inout PathState ps) {
+// The next ray's lobe and direction. r_continuation_pdf: sample_surface_continuation() still owes ps.bsdf_pdf, the
+// surface_continuation_pdf() of ps.next_ray_dir under r_material.
+bool sample_surface_lobe(HitData h, MaterialResult m, vec3 N, vec3 V, inout PathState ps, out MaterialProperties r_material, out bool r_continuation_pdf) {
+	r_continuation_pdf = false;
 	if (surface_is_unshaded(h.geometry_idx)) {
 		return false;
 	}
@@ -1288,6 +1306,7 @@ bool sample_surface_continuation(HitData h, MaterialResult m, vec3 N, vec3 V, in
 	}
 
 	MaterialProperties material = material_properties_from_result(h, m, N, V);
+	r_material = material;
 
 	// Hair fibres, with the share of the surface the hair mask gives them. Either choice weighs
 	// its own lobes in full: the mask's probability cancels the mask's share.
@@ -1301,7 +1320,7 @@ bool sample_surface_continuation(HitData h, MaterialResult m, vec3 N, vec3 V, in
 		ps.packed_bounces_flags = (inc_total_bounce(ps.packed_bounces_flags) & ~LAST_BOUNCE_DIFFUSE_FLAG) | NON_SINGULAR_PATH_FLAG;
 		ps.offset_normal = dot(hair_dir, h.geometry_normal) >= 0.0 ? h.geometry_normal : -h.geometry_normal;
 		ps.next_ray_dir = hair_dir;
-		ps.bsdf_pdf = rt_emissive_count() > 0u ? surface_continuation_pdf(N, V, hair_dir, material) : 0.0;
+		r_continuation_pdf = true;
 		return true;
 	}
 
@@ -1315,6 +1334,7 @@ bool sample_surface_continuation(HitData h, MaterialResult m, vec3 N, vec3 V, in
 	float p_coat = clearcoatLobeProbability(material, V);
 	if (p_coat > 0.0) {
 		if (rand(ps.rng_state) < p_coat) {
+			r_continuation_pdf = true;
 			return sample_coat_continuation(h, material, N, V, p_coat, ps);
 		}
 		float coat_fresnel = clearcoatFresnel(material.clearcoat, dot(material.coatNormal, V));
@@ -1338,6 +1358,12 @@ bool sample_surface_continuation(HitData h, MaterialResult m, vec3 N, vec3 V, in
 				}
 			} else if (!sampleThinTransmission(rand2(ps.rng_state), N, h.geometry_normal, V, material, trans_dir, trans_weight)) {
 				return false;
+			}
+			if (!volume && m.clearcoat > 0.0 && dot(m.coat_normal, m.coat_normal) > 0.5) {
+				// A raindrop (or glaze) on a thin pane bends the light twice (rain_drop_refract()); through total
+				// internal reflection it goes back out on the viewer's side.
+				trans_dir = rain_drop_refract(-V, m.coat_normal, h.geometry_normal);
+				refracted = dot(trans_dir, h.geometry_normal) < 0.0;
 			}
 			ps.throughput *= trans_weight / p_trans;
 			// Transmission after the path's first bounce is free (Cycles keeps transmission bounces apart the
@@ -1379,7 +1405,7 @@ bool sample_surface_continuation(HitData h, MaterialResult m, vec3 N, vec3 V, in
 			ps.packed_bounces_flags = inc_diffuse_bounce(ps.packed_bounces_flags) | LAST_BOUNCE_DIFFUSE_FLAG | NON_SINGULAR_PATH_FLAG;
 			ps.offset_normal = -h.geometry_normal;
 			ps.next_ray_dir = back_dir;
-			ps.bsdf_pdf = rt_emissive_count() > 0u ? surface_continuation_pdf(N, V, back_dir, material) : 0.0;
+			r_continuation_pdf = true;
 			return true;
 		}
 		ps.throughput /= 1.0 - p_back;
@@ -1430,10 +1456,22 @@ bool sample_surface_continuation(HitData h, MaterialResult m, vec3 N, vec3 V, in
 	}
 	ps.offset_normal = h.geometry_normal;
 	ps.next_ray_dir = next_dir;
-	// The density for weighing emission this ray finds against the emissive light sample
-	// shade_local_surface() took here (rt_emissive_hit_weight).
-	ps.bsdf_pdf = rt_emissive_count() > 0u ? surface_continuation_pdf(N, V, next_dir, material) : 0.0;
+	r_continuation_pdf = true;
 	return true;
+}
+
+// One call site for each of the two heavy steps (the lobe, the density): every call of a function is a copy of it in
+// the compiled hit shader, as drivers inline the whole call tree (docs/ideas/optimisation.md, "One call site").
+bool sample_surface_continuation(HitData h, MaterialResult m, vec3 N, vec3 V, inout PathState ps) {
+	MaterialProperties material;
+	bool continuation_pdf;
+	bool continued = sample_surface_lobe(h, m, N, V, ps, material, continuation_pdf);
+	if (continued && continuation_pdf) {
+		// The density for weighing emission this ray finds against the emissive light sample
+		// shade_local_surface() took here (rt_emissive_hit_weight).
+		ps.bsdf_pdf = rt_emissive_count() > 0u ? surface_continuation_pdf(N, V, ps.next_ray_dir, material) : 0.0;
+	}
+	return continued;
 }
 
 #ifdef DLSS_RR_ENABLED
@@ -1649,30 +1687,105 @@ void shade_and_bounce(HitData h, MaterialResult m) {
 	}
 #endif
 
-	if ((ps.packed_bounces_flags & PEEL_RAY_FLAG) != 0u) {
-		// Peel layer: shade like an opaque hit, apply its blend operation, no bounce.
-		// Raygen pre-scales throughput by the running transmittance and owns
-		// path continuation; this only reports (t, alpha) and its own light.
-		uint mat_flags = rt_entry_material_flags(h.geometry_idx);
-		uint bclass = (mat_flags & RT_MAT_BLEND_CLASS_MASK) >> RT_MAT_BLEND_CLASS_SHIFT;
-		bool depth_barrier = (mat_flags & RT_MAT_FLAG_DEPTH_DRAW_ALWAYS) != 0u;
-		float material_alpha = clamp(m.alpha, 0.0, 1.0);
-		float peel_alpha;
-		float continuation_alpha = 0.0;
+	// A transparency peel layer and an opaque hit run the same two heavy steps, surface light and the next ray, so
+	// each is called once below for both: drivers inline every call, and a second call site would be a second copy
+	// of the whole lighting code in the compiled hit shader (docs/ideas/optimisation.md, "One call site").
+	bool peel = (ps.packed_bounces_flags & PEEL_RAY_FLAG) != 0u;
+	bool shade = true;
+	bool shade_indirect = false;
+	// Peel layer: shade like an opaque hit, apply its blend operation, no bounce.
+	// Raygen pre-scales throughput by the running transmittance and owns
+	// path continuation; this only reports (t, alpha) and its own light.
+	uint mat_flags = 0u;
+	uint bclass = 0u;
+	bool depth_barrier = false;
+	float material_alpha = 0.0;
+	float peel_alpha = 0.0;
+	float continuation_alpha = 0.0;
+	vec3 branch_fog = vec3(0.0);
+	// Opaque hit.
+	uint total_bounces = 0u;
+	uint diffuse_bounces = 0u;
+	bool rc_training = false;
+	if (peel) {
+		mat_flags = rt_entry_material_flags(h.geometry_idx);
+		bclass = (mat_flags & RT_MAT_BLEND_CLASS_MASK) >> RT_MAT_BLEND_CLASS_SHIFT;
+		depth_barrier = (mat_flags & RT_MAT_FLAG_DEPTH_DRAW_ALWAYS) != 0u;
+		material_alpha = clamp(m.alpha, 0.0, 1.0);
 		vec3 fogged_throughput = ps.throughput;
-		vec3 branch_fog = vec3(0.0);
 		apply_segment_fog(gl_HitTEXT, mat_flags, get_total_bounces(ps.packed_bounces_flags) == 0u, branch_fog, fogged_throughput);
 		if (bclass == RT_BLEND_CLASS_MUL) {
 			// Mul contributes no light; its color folds into the scalar T.
 			peel_alpha = clamp(1.0 - luminance(m.albedo), 0.0, 1.0);
+			shade = false;
 		} else {
 			// Add/Sub scale their source by alpha but do not attenuate the
 			// destination. Premultiplied alpha already includes alpha in RGB.
 			peel_alpha = (bclass == RT_BLEND_CLASS_ADD || bclass == RT_BLEND_CLASS_SUB) ? 0.0 : material_alpha;
 			ps.throughput = fogged_throughput;
 			path_pack(payload, ps);
-			vec3 lit = shade_local_surface(h, m, N, V,
-					get_diffuse_bounces(ps.packed_bounces_flags) > 0u, ps.bsdf_pdf, ps.rng_state);
+			shade_indirect = get_diffuse_bounces(ps.packed_bounces_flags) > 0u;
+		}
+	} else {
+		total_bounces = get_total_bounces(ps.packed_bounces_flags);
+		diffuse_bounces = get_diffuse_bounces(ps.packed_bounces_flags);
+
+		// Indirect light reuse: the first bounce of a pixel whose first hit took the diffuse lobe
+		// reports this surface's normal (for the reconnection's cosine) and whether it is rough
+		// enough to be seen the same from nearby surfaces (enhanced: its roughness, for the footprint test).
+		if (total_bounces == 1u && (ps.packed_bounces_flags & RT_IR_DIFFUSE_FLAG) != 0u) {
+			ps.offset_normal = h.geometry_normal;
+			bool enhanced = rt_ir_enhanced();
+			if ((!enhanced && m.roughness < RT_IR_MIN_ROUGHNESS) || m.transmission > 0.0 || m.hair > 0.0) {
+				ps.packed_bounces_flags &= ~RT_IR_DIFFUSE_FLAG;
+			} else if (enhanced) {
+				// Raygen decides with the footprint test (rt_ir_reconnectable()).
+				rt_ir.data[rt_ir_record_base(ivec2(RT_LAUNCH_ID.xy)) + 6u] = floatBitsToUint(m.roughness);
+			}
+		}
+
+		// Environment fog for this ray segment (before surface contribution).
+		apply_segment_fog(gl_HitTEXT, rt_entry_material_flags(h.geometry_idx), total_bounces == 0u, ps.radiance, ps.throughput);
+
+		// Radiance cache: a rough surface a bounce reaches reads all it sends back, its own light
+		// included, from the cell around it, and the path ends. Training pixels shade and trace
+		// on, and raygen records what this surface sent back (raytracing_radiance_cache_inc.glsl).
+		// Points under water caustics shade on, since a cell would average the lines away.
+		bool rc_eligible = total_bounces == 1u && m.roughness >= RT_RC_MIN_ROUGHNESS && rt_rc_enabled();
+		rc_training = rc_eligible && rt_rc_is_training_pixel(RT_LAUNCH_ID.xy);
+		if (rc_eligible && !rc_training && !is_singular_path(ps.packed_bounces_flags) &&
+				gl_HitTEXT >= 0.5 * rt_rc_cell_size(h.hit_pos) && !rt_caustics_covers(h.hit_pos)) {
+			vec4 cached = rt_rc_read(h.hit_pos, h.geometry_normal);
+			if (cached.w > 0.0) {
+				ps.radiance += ps.throughput * cached.rgb;
+				ps.packed_bounces_flags = set_path_terminated(ps.packed_bounces_flags);
+				path_pack(payload, ps);
+				return;
+			}
+		}
+
+		path_pack(payload, ps);
+		// A camera ray's first hit reuses lights other pixels and frames found (raytracing_lights_inc.glsl).
+		// Only a pixel's first sample: its later ones would mostly resample the same stored light, so
+		// they keep their own independent choice.
+		light_reuse_here = total_bounces == 0u && is_sample_zero(ps.packed_bounces_flags);
+		if (light_reuse_here) {
+			light_reuse_first_sample = true;
+			light_reuse_prev_pos = rt_hit_prev_world_pos(h.hit_pos);
+			light_reuse_motion = rt_motion_vector(h.hit_pos, light_reuse_prev_pos);
+			light_reuse_eye = gl_WorldRayOriginEXT;
+		}
+		shade_indirect = diffuse_bounces > 0u;
+	}
+
+	vec3 lit = vec3(0.0);
+	if (shade) {
+		lit = shade_local_surface(h, m, N, V, shade_indirect, ps.bsdf_pdf, ps.rng_state);
+	}
+
+	bool sample_continuation = true;
+	if (peel) {
+		if (shade) {
 			float source_alpha = (bclass == RT_BLEND_CLASS_PREMULT) ? 1.0 : material_alpha;
 			vec3 contribution = ps.throughput * source_alpha * lit;
 			if (bclass == RT_BLEND_CLASS_SUB) {
@@ -1715,7 +1828,54 @@ void shade_and_bounce(HitData h, MaterialResult m) {
 		ps.packed_bounces_flags &= ~PEEL_HAS_CONTINUATION_FLAG;
 		// Continue with probability continuation_alpha rather than scaling throughput by
 		// it, so faint layers rarely spawn a full indirect path.
-		if (rand(ps.rng_state) < continuation_alpha && sample_surface_continuation(h, m, N, V, ps)) {
+		sample_continuation = rand(ps.rng_state) < continuation_alpha;
+	} else {
+		ps.radiance += ps.throughput * lit;
+		light_reuse_here = false;
+
+		// =================================================================
+		// DLSS Ray Reconstruction output (primary ray, sample 0 only)
+		// =================================================================
+#ifdef DLSS_RR_ENABLED
+		if (total_bounces == 0u && is_sample_zero(ps.packed_bounces_flags)) {
+			ivec2 pixel = ivec2(RT_LAUNCH_ID.xy);
+			dlss_rr_store_albedo_guides(m, NdotV);
+			float rr_roughness = dlss_rr_roughness(m);
+			imageStore(dlss_rr_normal_roughness, pixel, vec4(N, rr_roughness));
+			vec2 specular_mv = dlss_rr_specular_motion_vector(h.hit_pos, rt_hit_prev_world_pos(h.hit_pos), h.geometry_normal, V, rr_roughness, RT_VIS_MASK);
+			dlss_rr_write_specular_motion_vector(specular_mv);
+			// Metals show nothing of their own, so primary motion follows the reflection (which is the
+			// surface motion again past the spec MV roughness limit).
+			if (m.metalness >= DLSS_RR_SPECULAR_ONLY_METALNESS) {
+				imageStore(rt_velocity_image, pixel, vec4(specular_mv, 0.0, 0.0));
+			}
+			// The path's next hit (or raygen's fallback walk) replaces these guides with the surface seen through the mirror.
+			if (dlss_rr_is_replaceable_mirror(h, m)) {
+				ps.packed_bounces_flags |= DLSS_RR_REPLACE_PENDING_FLAG;
+			}
+		} else if (total_bounces == 1u && (ps.packed_bounces_flags & DLSS_RR_REPLACE_PENDING_FLAG) != 0u &&
+				is_sample_zero(ps.packed_bounces_flags) && is_singular_path(ps.packed_bounces_flags) &&
+				!dlss_rr_is_replaceable_mirror(h, m)) {
+			// Singular bounce off the replaceable primary mirror: this hit's image across the mirror plane
+			// stands in for the mirror. Exact even though the bounce direction was sampled. A second
+			// mirror leaves the flag set for raygen's walk.
+			vec4 mirror_normal_roughness = imageLoad(dlss_rr_normal_roughness, ivec2(RT_LAUNCH_ID.xy));
+			mat3 mirror_xform = dlss_rr_householder(mirror_normal_roughness.xyz);
+			vec3 mirror_pos = gl_WorldRayOriginEXT;
+			dlss_rr_write_replaced_guides(mirror_pos + mirror_xform * (h.hit_pos - mirror_pos),
+					mirror_xform * (rt_hit_prev_world_pos(h.hit_pos) - h.hit_pos), vec3(1.0),
+					dlss_rr_diffuse_guide(m), dlss_rr_compute_specular_albedo(m, NdotV));
+			ps.packed_bounces_flags &= ~DLSS_RR_REPLACE_PENDING_FLAG;
+		}
+#endif
+
+		rt_ir_diffuse_taken = false;
+	}
+
+	bool continued = sample_continuation && sample_surface_continuation(h, m, N, V, ps);
+
+	if (peel) {
+		if (continued) {
 			ps.packed_bounces_flags |= PEEL_HAS_CONTINUATION_FLAG;
 		}
 		path_pack(payload, ps);
@@ -1723,95 +1883,6 @@ void shade_and_bounce(HitData h, MaterialResult m) {
 		return;
 	}
 
-	uint total_bounces = get_total_bounces(ps.packed_bounces_flags);
-	uint diffuse_bounces = get_diffuse_bounces(ps.packed_bounces_flags);
-
-	// Indirect light reuse: the first bounce of a pixel whose first hit took the diffuse lobe
-	// reports this surface's normal (for the reconnection's cosine) and whether it is rough
-	// enough to be seen the same from nearby surfaces (enhanced: its roughness, for the footprint test).
-	if (total_bounces == 1u && (ps.packed_bounces_flags & RT_IR_DIFFUSE_FLAG) != 0u) {
-		ps.offset_normal = h.geometry_normal;
-		bool enhanced = rt_ir_enhanced();
-		if ((!enhanced && m.roughness < RT_IR_MIN_ROUGHNESS) || m.transmission > 0.0 || m.hair > 0.0) {
-			ps.packed_bounces_flags &= ~RT_IR_DIFFUSE_FLAG;
-		} else if (enhanced) {
-			// Raygen decides with the footprint test (rt_ir_reconnectable()).
-			rt_ir.data[rt_ir_record_base(ivec2(RT_LAUNCH_ID.xy)) + 6u] = floatBitsToUint(m.roughness);
-		}
-	}
-
-	// Environment fog for this ray segment (before surface contribution).
-	apply_segment_fog(gl_HitTEXT, rt_entry_material_flags(h.geometry_idx), total_bounces == 0u, ps.radiance, ps.throughput);
-
-	// Radiance cache: a rough surface a bounce reaches reads all it sends back, its own light
-	// included, from the cell around it, and the path ends. Training pixels shade and trace
-	// on, and raygen records what this surface sent back (raytracing_radiance_cache_inc.glsl).
-	// Points under water caustics shade on, since a cell would average the lines away.
-	bool rc_eligible = total_bounces == 1u && m.roughness >= RT_RC_MIN_ROUGHNESS && rt_rc_enabled();
-	bool rc_training = rc_eligible && rt_rc_is_training_pixel(RT_LAUNCH_ID.xy);
-	if (rc_eligible && !rc_training && !is_singular_path(ps.packed_bounces_flags) &&
-			gl_HitTEXT >= 0.5 * rt_rc_cell_size(h.hit_pos) && !rt_caustics_covers(h.hit_pos)) {
-		vec4 cached = rt_rc_read(h.hit_pos, h.geometry_normal);
-		if (cached.w > 0.0) {
-			ps.radiance += ps.throughput * cached.rgb;
-			ps.packed_bounces_flags = set_path_terminated(ps.packed_bounces_flags);
-			path_pack(payload, ps);
-			return;
-		}
-	}
-
-	path_pack(payload, ps);
-	// A camera ray's first hit reuses lights other pixels and frames found (raytracing_lights_inc.glsl).
-	// Only a pixel's first sample: its later ones would mostly resample the same stored light, so
-	// they keep their own independent choice.
-	light_reuse_here = total_bounces == 0u && is_sample_zero(ps.packed_bounces_flags);
-	if (light_reuse_here) {
-		light_reuse_first_sample = true;
-		light_reuse_prev_pos = rt_hit_prev_world_pos(h.hit_pos);
-		light_reuse_motion = rt_motion_vector(h.hit_pos, light_reuse_prev_pos);
-		light_reuse_eye = gl_WorldRayOriginEXT;
-	}
-	ps.radiance += ps.throughput * shade_local_surface(h, m, N, V, diffuse_bounces > 0u, ps.bsdf_pdf, ps.rng_state);
-	light_reuse_here = false;
-
-	// =================================================================
-	// DLSS Ray Reconstruction output (primary ray, sample 0 only)
-	// =================================================================
-#ifdef DLSS_RR_ENABLED
-	if (total_bounces == 0u && is_sample_zero(ps.packed_bounces_flags)) {
-		ivec2 pixel = ivec2(RT_LAUNCH_ID.xy);
-		dlss_rr_store_albedo_guides(m, NdotV);
-		float rr_roughness = dlss_rr_roughness(m);
-		imageStore(dlss_rr_normal_roughness, pixel, vec4(N, rr_roughness));
-		vec2 specular_mv = dlss_rr_specular_motion_vector(h.hit_pos, rt_hit_prev_world_pos(h.hit_pos), h.geometry_normal, V, rr_roughness, RT_VIS_MASK);
-		dlss_rr_write_specular_motion_vector(specular_mv);
-		// Metals show nothing of their own, so primary motion follows the reflection (which is the
-		// surface motion again past the spec MV roughness limit).
-		if (m.metalness >= DLSS_RR_SPECULAR_ONLY_METALNESS) {
-			imageStore(rt_velocity_image, pixel, vec4(specular_mv, 0.0, 0.0));
-		}
-		// The path's next hit (or raygen's fallback walk) replaces these guides with the surface seen through the mirror.
-		if (dlss_rr_is_replaceable_mirror(h, m)) {
-			ps.packed_bounces_flags |= DLSS_RR_REPLACE_PENDING_FLAG;
-		}
-	} else if (total_bounces == 1u && (ps.packed_bounces_flags & DLSS_RR_REPLACE_PENDING_FLAG) != 0u &&
-			is_sample_zero(ps.packed_bounces_flags) && is_singular_path(ps.packed_bounces_flags) &&
-			!dlss_rr_is_replaceable_mirror(h, m)) {
-		// Singular bounce off the replaceable primary mirror: this hit's image across the mirror plane
-		// stands in for the mirror. Exact even though the bounce direction was sampled. A second
-		// mirror leaves the flag set for raygen's walk.
-		vec4 mirror_normal_roughness = imageLoad(dlss_rr_normal_roughness, ivec2(RT_LAUNCH_ID.xy));
-		mat3 mirror_xform = dlss_rr_householder(mirror_normal_roughness.xyz);
-		vec3 mirror_pos = gl_WorldRayOriginEXT;
-		dlss_rr_write_replaced_guides(mirror_pos + mirror_xform * (h.hit_pos - mirror_pos),
-				mirror_xform * (rt_hit_prev_world_pos(h.hit_pos) - h.hit_pos), vec3(1.0),
-				dlss_rr_diffuse_guide(m), dlss_rr_compute_specular_albedo(m, NdotV));
-		ps.packed_bounces_flags &= ~DLSS_RR_REPLACE_PENDING_FLAG;
-	}
-#endif
-
-	rt_ir_diffuse_taken = false;
-	bool continued = sample_surface_continuation(h, m, N, V, ps);
 	if (!continued) {
 		ps.packed_bounces_flags = set_path_terminated(ps.packed_bounces_flags);
 		ps.offset_normal = h.geometry_normal;

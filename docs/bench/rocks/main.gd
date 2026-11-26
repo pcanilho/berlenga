@@ -13,11 +13,21 @@ extends Node3D
 #                         hoodoo or stack stood on end, side on)
 #   --clouds[=C]          the weather sky (clouds of cover C, atmosphere) instead of the plain gradient
 #   --shader-scree        the ground shader's parallax scree blocks under the real stones too (before frames)
+#   --terracette-spot     with --world: a 31-40 degree soil slope along its contour; --terracettes=k Landscape3D.terracette_relief
 #   --talus-slope         with --view=scree: the fullest talus on a 25-38 degree slope above the beaches
 #   --exposure=x          the tonemapper's exposure (1): more for a dark cave seen from inside
 #   --gen-prop=name:value[,...]  any TerrainGenerator3D property before it generates (A/B one stage)
+#   --mat-prop=name:value[;...]  any TerrainMaterial3D property or tm_ shader uniform (tm_sand_color:Color(1,0,1) marks a layer)
 #   --hide=Node[,Node...]  hide those children of the bench (A/B which object draws something)
 #   --lod-error=px        Landscape3D.lod_error
+#   --no-cliff-kit        RockField3D.cliff_kit off (the fluted walls bare of their pillars: a before frame)
+#   --recess-probe=cx,cz,half,step  print the share of the 45 degree and steeper face the cliff kit recesses there
+#   --pick=x0,y0,x1,y1    print the cliff layer's stones whose centre the saved frame shows in that pixel rectangle
+#   --no-cliff-recess     RockField3D.cliff_recess off (the pillars stand proud of the ridges; no recess published)
+#   --recess-stub=x,y,z,nx,nz,w,h,d  a WorldGround stub answering recess_at alone: a w by h box (m, up and across the
+#                         face) centred at x,y,z whose face (horizontal outward normal nx,nz) steps back d m, fading
+#                         over its outline's last 0.5 m (the landscape's recess tested without a stone field: --no-rocks)
+#   --slope-map=cx,cz,half,step  print the terrain slope round that point (tens of degrees, '#' past 80)
 #   --face-spot=north|south  a rock wall facing that way, from its foot with the sky over it (--view=cliff);
 #                         --face-side=k moves the camera along the wall (k times --dist)
 #   --taa                 temporal antialiasing as in play (24 frames settle before a sea-cave still); on by default
@@ -29,6 +39,7 @@ extends Node3D
 #   --type=granite|limestone|sandstone|basalt|slate   the world's rock (default granite; soft beds limestone)
 #   --stand-ins           with --world: the old grey spheres at the rockfall blocks instead of the field (before shots)
 #   --no-rocks            with --world: no rocks at all
+#   --burn=years[,r]      with --world: a burn scar that old, r m round (6), 2 m beyond the spot (the terrain's char overlay)
 #   --cell=m              with --world: the generator's cell size (8; 4 for close shore and cliff shots)
 #   --form=stack|arch     with --view=coast: frame the biggest stack or arch; --form=ledge with --view=cliff: the ledge slabs; --form=ledge-run: their longest run along a lip; --form=pavement|fin|hoodoo|pothole|goblin|cave_mouth with --view=landform
 #   --seaward [--side=f --cam-height=m --look-height=m] with --view=coast: from the land side, looking out to sea
@@ -104,7 +115,8 @@ extends Node3D
 #   --rain-climate[=P]    with --world: a mild climate of P mm a year (350) for RockField3D.rain_pedestals (stones on rain
 #                         splash pedestals on bare soil); --pedestal-spot the tallest near the centre; --no-rain-pedestals off
 #   --snow[=CM]           with --world: an even settled pack of CM cm (8) round the spot with its deep snow surface, for
-#                         RockField3D.snow_burial (stones under the pack left out); --no-snow-burial off
+#                         RockField3D.snow_burial (stones under the pack left out); --no-snow-burial off;
+#                         --no-snow-surface leaves the deep snow surface out (the ground material's snow only)
 #   --no-cliff-relief     with --world: Landscape3D.cliff_relief off (the bare heightfield faces; a before frame)
 #   --no-patch-relief     with --world: the beach GroundSurface3D patch without the landscape's cliff relief (a before
 #                         frame; the landscape keeps it)
@@ -123,6 +135,31 @@ extends Node3D
 
 # A swell at the sea cave's mouth for the sea surge check: still sea plus 1 m amplitude, 12 s period, open water only
 # (it answers outside the cliff, as the ocean does).
+# The landscape's recess on its own (WorldGround.recess_at, RockField3D's contract): one box on a cliff face whose
+# drawn face steps back d m, share 1 inside and fading to 0 over its outline's last 0.5 m.
+class RecessBoxStub extends WorldGround:
+	var centre := Vector3.ZERO
+	var normal := Vector3(0, 0, 1) # horizontal, outward
+	var half := Vector2(2, 3) # across, up
+	var depth := 1.0
+
+	func _recess_at(p: Vector3) -> Vector2:
+		var along := Vector3.UP.cross(normal).normalized()
+		var d := p - centre
+		var v := absf(d.dot(along))
+		var u := absf(d.y)
+		var t := d.dot(normal)
+		if v > half.x or u > half.y or t < -depth - 6.0 or t > 4.0:
+			return Vector2.ZERO
+		var share := clampf((half.x - v) / 0.5, 0.0, 1.0) * clampf((half.y - u) / 0.5, 0.0, 1.0)
+		return Vector2(depth, share)
+
+	func _recess_vector_at(p: Vector3) -> Vector4:
+		var r := _recess_at(p)
+		var off := -normal * r.x * r.y
+		return Vector4(off.x, off.y, off.z, r.y)
+
+
 class SwellStub extends WorldWater:
 	var sea := 0.0
 	var t := 0.0
@@ -155,6 +192,12 @@ var form_stone := {} # the stone --form framed
 var spot_pos := Vector3.ZERO # the view's spot (--roll)
 var bank_side := Vector3.ZERO # --bank-spot: along the bank's contour, for a raking view down its length
 
+func _exit_tree() -> void:
+	# A script stub held by the engine singleton outlives the script language at shutdown (abort): drop it first.
+	if args.has("recess-stub"):
+		WorldContracts.set_ground(null)
+
+
 func _ready() -> void:
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--"):
@@ -166,6 +209,15 @@ func _ready() -> void:
 		# biotite flakes and facets point-sample into salt-and-pepper speckle (a fringe on the shaded side) that TAA
 		# resolves into the stone's real texture. --no-taa: the single-sample frame.
 		args["taa"] = "1"
+	if args.has("recess-stub"):
+		var rs: PackedStringArray = str(args["recess-stub"]).split(",")
+		var stub := RecessBoxStub.new()
+		stub.centre = Vector3(float(rs[0]), float(rs[1]), float(rs[2]))
+		stub.normal = Vector3(float(rs[3]), 0, float(rs[4])).normalized()
+		stub.half = Vector2(float(rs[5]), float(rs[6])) * 0.5
+		stub.depth = float(rs[7])
+		WorldContracts.set_ground(stub) # before the landscape builds: its drawn face reads the recess
+		print("recess stub: %s" % [rs])
 	WORLD = float(args.get("world-size", "2048"))
 	spp = int(args.get("spp", "16"))
 	out = args.get("out", "")
@@ -229,40 +281,20 @@ func _ready() -> void:
 # Real ground scans (Poly Haven CC0, art repository terrain/layers, fetched by docs/bench/landscape/fetch_art.sh into
 # docs/bench/landscape/art/terrain_layers). Each layer keeps the geology's colour (detail_only: the scan adds detail
 # only, to colour and roughness) and tiles at the scan's real size. Loaded from the files directly (the folder is .gdignore'd, no import step).
-const GROUND_SCANS := {"rock": ["dark_rock_02", 2.0], "scree": ["rocks_ground_02", 2.0], "soil": ["forest_ground_06", 2.11], "alluvium": ["gravelly_sand", 2.48], "sand": ["sand_03", 2.0]}
-
-func _ground_scan_tex(path: String, normal := false) -> Texture2D:
-	var img := Image.load_from_file(path)
-	if img == null or img.is_empty():
-		return null
-	img.generate_mipmaps(normal)
-	return ImageTexture.create_from_image(img)
+# The scan set's folder (the stones' and caves' sections in it too: RockField3D and CaveNetwork3D load_scan_set).
+func _rock_scan_dir() -> String:
+	return ProjectSettings.globalize_path("res://").path_join("../landscape/art/terrain_layers")
 
 func _apply_ground_scans(tm: TerrainMaterial3D, dir: String, only := "1") -> int:
-	var n := 0
-	for layer_name in GROUND_SCANS:
-		if only != "1" and not (layer_name in only.split(",")):
-			continue # --ground-scans=rock,scree: those layers only
-		var scan: String = GROUND_SCANS[layer_name][0]
-		var base := dir.path_join(scan).path_join(scan)
-		if not FileAccess.file_exists(base + "_albedo.jpg"):
-			continue
-		var l := TerrainMaterialLayer.new()
-		var maps: String = args.get("scan-maps", "anrh") # --scan-maps=an: only the albedo and normal maps (A/B)
-		if "a" in maps:
-			l.albedo_texture = _ground_scan_tex(base + "_albedo.jpg")
-		if "n" in maps:
-			l.normal_texture = _ground_scan_tex(base + "_normal.jpg", true)
-		if "r" in maps:
-			l.roughness_texture = _ground_scan_tex(base + "_roughness.jpg")
-		if "h" in maps:
-			l.height_texture = _ground_scan_tex(base + "_height.jpg")
-		l.tile_size = GROUND_SCANS[layer_name][1]
-		var c: Color = tm.get_shader_parameter("tm_%s_color" % layer_name) if tm.get_shader_parameter("tm_%s_color" % layer_name) is Color else Color.WHITE
-		l.color = c # the geology's colour: the scan's mean is divided out (detail_only)
-		tm.set("%s_layer" % layer_name, l)
-		n += 1
-	return n
+	# The whole scan set (layers and overlay scans) from the art folder's scans.cfg (TerrainMaterial3D.load_scan_set).
+	# --ground-scans=rock,scree: scans on those slots only; --overlay-scans=0: the five layers' scans only (A/B);
+	# --scan-maps=an: only the albedo and normal maps.
+	var slots := PackedStringArray()
+	if only != "1":
+		slots = only.split(",")
+	elif args.get("overlay-scans", "1") == "0":
+		slots = PackedStringArray(["rock", "scree", "soil", "alluvium", "sand"])
+	return tm.load_scan_set(dir, slots, args.get("scan-maps", ""))
 
 func check(ok: bool, what: String) -> void:
 	print("%s  %s" % ["PASS" if ok else "FAIL", what])
@@ -462,6 +494,7 @@ func _one_rock() -> void:
 func _world() -> void:
 	var t0 := Time.get_ticks_msec()
 	gen = TerrainGenerator3D.new()
+	gen.generate_on_ready = false # this bench generates itself, with its own settings
 	gen.name = "Generator"
 	# Heavy generator options are on by default; this bench keeps its own fast choices.
 	gen.glacial_enabled = false
@@ -505,6 +538,17 @@ func _world() -> void:
 	add_child(gen)
 	gen.generate()
 	print("world generated in %d ms" % (Time.get_ticks_msec() - t0))
+	if args.has("geo-at"): # --geo-at=x,z: the generator's geology (beach sand, rock, talus, drainage) on a 2 m grid round x,z, then quit
+		var c: PackedStringArray = str(args["geo-at"]).split(",")
+		for dz in range(-10, 12, 4):
+			var row := ""
+			for dx in range(-10, 12, 4):
+				var p := Vector3(float(c[0]) + dx, 0, float(c[1]) + dz)
+				var g: Color = gen.get_geology_at(p)
+				row += "(%5.2f %4.2f %4.2f h%5.1f) " % [g.r, g.g, g.b, gen.get_height(p)]
+			print(row)
+		get_tree().quit()
+		return
 	if args.has("height-check"):
 		_height_check()
 		return
@@ -525,20 +569,42 @@ func _world() -> void:
 	tm.use_generator(gen)
 	tm.rock_detail_enabled = args.get("rock-detail", "1") != "0" # --rock-detail=0: the ground without its joints and stones
 	tm.cliff_self_shadow = args.get("ledge-shadow", "1") != "0" # --ledge-shadow=0: cliff relief ledges without their per-pixel shadows
+	# --mat-prop=name:value[;...]: any TerrainMaterial3D property (A/B one feature, or a layer's colour as a marker).
+	for kv in str(args.get("mat-prop", "")).split(";", false):
+		var mp: PackedStringArray = kv.split(":")
+		if not mp[0].begins_with("tm_"):
+			tm.set(mp[0], str_to_var(mp[1]))
 	if args.has("detail-octaves"):
 		tm.detail_octaves = int(args["detail-octaves"]) # --detail-octaves=N: erosion detail octaves in the normal (0: none, A/B)
 	if args.get("far-shadows", "1") == "0":
 		tm.far_shadow_start = 0.0 # --far-shadows=0: no far sun shadows from the ground's horizon
 	tm.update_shader()
 	if args.get("ground-scans", "1") != "0" and not args.has("test"): # --ground-scans=0: plain ground layers
-		if _apply_ground_scans(tm, ProjectSettings.globalize_path("res://").path_join("../landscape/art/terrain_layers"), args.get("ground-scans", "1")) > 0:
+		var nscan := _apply_ground_scans(tm, ProjectSettings.globalize_path("res://").path_join("../landscape/art/terrain_layers"), args.get("ground-scans", "1"))
+		print("ground scans: %d slots" % nscan)
+		if nscan > 0:
 			tm.update_shader()
+		if args.has("scan-check"):
+			var code := tm.get_shader_code()
+			print("scan-check: rock tex %s cliff scan %s, code has tm_ov_cliff %s, rock_albedo_tex %s" % [tm.rock_layer != null and tm.rock_layer.albedo_texture != null, tm.cliff_scan != null, code.contains("tm_ov_cliff("), code.contains("tm_rock_albedo_tex")])
+			get_tree().quit()
+			return
 	if args.has("hide"):
 		get_tree().process_frame.connect(func():
 			for nm in str(args["hide"]).split(","):
 				var nd = get_node_or_null(nm)
 				if nd:
 					nd.visible = false)
+	# --layer-tint: each layer one flat colour (rock red, scree green, soil yellow, alluvium magenta, sand blue), diagnostics.
+	if args.has("layer-tint"):
+		var tints := {"rock": Color(1, 0, 0), "scree": Color(0, 1, 0), "soil": Color(1, 1, 0), "alluvium": Color(1, 0, 1), "sand": Color(0, 0, 1)}
+		for ln in tints:
+			var l: TerrainMaterialLayer = tm.get(ln + "_layer")
+			if l == null:
+				l = TerrainMaterialLayer.new()
+				tm.set(ln + "_layer", l)
+			l.color = tints[ln]
+		tm.update_shader()
 	if args.has("face-weathering"):
 		tm.set_shader_parameter("tm_face_weathering", float(args["face-weathering"]))
 	var land := Landscape3D.new()
@@ -546,6 +612,8 @@ func _world() -> void:
 	# smooth white spur flanks); the checks measure the bare heightfield, and --no-cliff-relief gives a before frame.
 	if args.has("bank-relief"):
 		land.bank_relief = float(args["bank-relief"])
+	if args.has("terracettes"):
+		land.terracette_relief = float(args["terracettes"]) # --terracettes=0: no terracette steps (a before frame)
 	if args.has("test"):
 		land.bank_relief = 0.0
 	if args.has("test") or args.has("no-cliff-relief"):
@@ -608,6 +676,14 @@ func _world() -> void:
 		rocks.generator = rocks.get_path_to(gen)
 		rocks.follow_target = rocks.get_path_to(focus)
 		rocks.ground_material = tm # the stones' feet blend into these layers
+		if args.has("no-cliff-kit"):
+			rocks.cliff_kit = false # --no-cliff-kit: the fluted walls without their kit pieces (the before frame)
+		if args.has("no-cliff-recess"):
+			rocks.cliff_recess = false # --no-cliff-recess: the pillars proud of the ridges, the face drawn whole
+		if args.has("cliff-max"):
+			rocks.cliff_block_max_slope = float(args["cliff-max"]) # --cliff-max=76: the wall's courses stop there (the before frame)
+		if args.get("stone-scans", "1") != "0" and not args.has("test"): # --stone-scans=0: no scan detail on stones and caves (A/B)
+			print("stone scans: %d" % rocks.load_scan_set(_rock_scan_dir()))
 		# Real scree stones out to the layer's radius: the ground shader keeps only their bed there (--shader-scree
 		# for the old parallax blocks under them, a before frame).
 		if not args.has("shader-scree"):
@@ -840,7 +916,71 @@ func _world() -> void:
 		var bz := gen.get_height(spot + Vector3(0, 0, 2)) - gen.get_height(spot - Vector3(0, 0, 2))
 		bank_side = Vector3(-bz, 0, bx).normalized()
 		print("bank spot ", spot, " geology ", gen.get_geology_at(spot))
+	if args.has("terracette-spot"):
+		# --terracette-spot: a soil slope of 33 to 42 degrees (no rock exposure, not talus), where the grazing terracettes
+		# form most (WorldContracts::terracette_at; Landscape3D.terracette_relief), seen along its contour as --bank-spot.
+		var best_t := -INF
+		var found_t := spot
+		for zz in range(-800, 801, 6):
+			for xx in range(-800, 801, 6):
+				var p := Vector3(xx, 0, zz)
+				if gen.get_height(p) < gen.sea_level + 8.0:
+					continue
+				# The slope over 3 m and over 1 m (the near ground's own, which the steps go by) both in the band.
+				var gx := gen.get_height(p + Vector3(3, 0, 0)) - gen.get_height(p - Vector3(3, 0, 0))
+				var gz := gen.get_height(p + Vector3(0, 0, 3)) - gen.get_height(p - Vector3(0, 0, 3))
+				var sl := rad_to_deg(atan(Vector2(gx, gz).length() / 6.0))
+				if sl < 31.0 or sl > 40.0:
+					continue
+				var fx := gen.get_height(p + Vector3(1, 0, 0)) - gen.get_height(p - Vector3(1, 0, 0))
+				var fz := gen.get_height(p + Vector3(0, 0, 1)) - gen.get_height(p - Vector3(0, 0, 1))
+				var fsl := rad_to_deg(atan(Vector2(fx, fz).length() / 2.0))
+				if fsl < 31.0 or fsl > 40.0:
+					continue
+				var g := gen.get_material_geology_at(p)
+				if g.r < 0.25 or g.g > 0.0 or absf(g.b) > 0.0:
+					continue
+				# Facing the sun's side (south, +z; north is -z) so the treads catch the light.
+				var down := Vector2(-gx, -gz).normalized()
+				if down.y < 0.5:
+					continue
+				# Where the layout's bands are strong (its patch fade): the most tread over one step's height.
+				var grad := Vector2(fx, fz) / 2.0
+				var hp := gen.get_height(p)
+				var band := 0.0
+				for k in 10:
+					band = maxf(band, GrassField3D.get_terracette_at(Vector3(xx, hp - float(k) * 0.2, zz), grad).x)
+				if band < 0.8:
+					continue
+				var score := -absf(fsl - 35.0) / 10.0 + down.y * 0.5 - Vector2(xx, zz).length() / 4000.0
+				if score > best_t:
+					best_t = score
+					found_t = p
+		spot = found_t
+		var tx := gen.get_height(spot + Vector3(2, 0, 0)) - gen.get_height(spot - Vector3(2, 0, 0))
+		var tz := gen.get_height(spot + Vector3(0, 0, 2)) - gen.get_height(spot - Vector3(0, 0, 2))
+		bank_side = Vector3(-tz, 0, tx).normalized()
+		print("terracette spot ", spot, " geology ", gen.get_material_geology_at(spot))
 	var face_out := Vector3.ZERO
+	if args.has("slope-map"):
+		# --slope-map=cx,cz,half,step: a map of slope (tens of degrees, '#' past 80) round that point, x across, z down.
+		var sm: PackedStringArray = str(args["slope-map"]).split(",")
+		var smc := Vector3(float(sm[0]), 0, float(sm[1]))
+		var smh := float(sm[2])
+		var sms := float(sm[3])
+		var zz2 := -smh
+		while zz2 <= smh:
+			var row := "%7.1f " % (smc.z + zz2)
+			var xx2 := -smh
+			while xx2 <= smh:
+				var q := smc + Vector3(xx2, 0, zz2)
+				var sx := gen.get_height(q + Vector3(1, 0, 0)) - gen.get_height(q - Vector3(1, 0, 0))
+				var sz := gen.get_height(q + Vector3(0, 0, 1)) - gen.get_height(q - Vector3(0, 0, 1))
+				var dg := rad_to_deg(atan(Vector2(sx, sz).length() / 2.0))
+				row += "#" if dg >= 80.0 else str(int(dg / 10.0))
+				xx2 += sms
+			print(row)
+			zz2 += sms
 	if args.has("face-spot"):
 		# --face-spot=north|south: a rock wall of 60 degrees or more facing that way (outward within 30 degrees,
 		# north is -z) and 15 m high or more, the nearest; seen from its foot looking up with the sky over its top.
@@ -899,6 +1039,17 @@ func _world() -> void:
 	spot.y = gen.get_height(spot)
 	focus.global_position = spot
 	spot_pos = spot
+	if args.has("burn"):
+		# --burn=years[,r]: a burn scar that old (WorldBurnScar3D, r m round, 6) centred 2 m beyond the spot: the
+		# terrain's burn overlay (Landscape3D's stand map, TerrainMaterial3D's char) over the soil.
+		var bp: PackedStringArray = str(args["burn"]).split(",")
+		var scar := WorldBurnScar3D.new()
+		scar.age_years = float(bp[0])
+		var br := float(bp[1]) if bp.size() > 1 else 6.0
+		scar.size = Vector2(br, br) * 2.0
+		add_child(scar)
+		scar.global_position = spot + Vector3(0, 0, 2)
+		print("burn scar %.1f years, %.0f m across, burn age at the spot %.2f" % [scar.age_years, br * 2.0, WorldContracts.get_fire().burn_age_at(spot)])
 	if args.has("stand-test"):
 		var stand: WorldStand = WorldContracts.get_stand()
 		var at := spot
@@ -1051,7 +1202,7 @@ func _world() -> void:
 		sc.add_snow(cm * 0.01 * 250.0, 250.0) # settled: 250 kg/m3
 		sc.advance(1.0) # (publishes the pack: snow_map for the materials, the cells for the deep snow surface)
 		print("snow: %.3f m under the camera" % sc.get_depth_at(cam.position))
-	if has_node("SnowCover3D"):
+	if has_node("SnowCover3D") and not args.has("no-snow-surface"):
 		var ss := SnowSurface3D.new()
 		ss.name = "SnowSurface"
 		ss.snow_cover = NodePath("../SnowCover3D")
@@ -1060,7 +1211,25 @@ func _world() -> void:
 	if args.get("focus", "") == "camera":
 		focus.global_position = cam.position # --focus=camera: the field streams and thins round the camera, not the spot
 	print("spot %s, camera %s" % [spot, cam.position])
+	if args.has("rain-climate"):
+		# The season the cured cover reads (WorldContracts::cured_share_for_season): soil moisture and temperature.
+		var ss: Dictionary = WorldContracts.get_weather().season_at(spot)
+		print("season at the spot: soil_moisture %s, temperature %s, cured %.2f" % [ss.get("soil_moisture"), ss.get("temperature"), 1.0 - clampf(smoothstep(0.1, 0.4, float(ss.get("soil_moisture", 0.0))) * smoothstep(-8.0, 2.0, float(ss.get("temperature", 0.0))), 0.0, 1.0)])
+	# --mat-prop's shader uniforms (tm_sand_color:Color(1,0,1), a layer marked), set last so the material's own setup
+	# does not overwrite them.
+	for kv in str(args.get("mat-prop", "")).split(";", false):
+		var mu: PackedStringArray = kv.split(":")
+		if mu[0].begins_with("tm_"):
+			land.material.set_shader_parameter(mu[0], str_to_var(mu[1]))
 	print("ground at the spot: generator %.2f, landscape %.2f; camera %s" % [gen.get_height(spot), land.get_height(spot), cam.position])
+	if args.has("terracette-spot"):
+		# The steps' relief down the fall line from the spot (WorldGround.relief_at, x the offset) every 0.5 m.
+		var fall := Vector3(gen.get_height(spot - Vector3(2, 0, 0)) - gen.get_height(spot + Vector3(2, 0, 0)), 0, gen.get_height(spot - Vector3(0, 0, 2)) - gen.get_height(spot + Vector3(0, 0, 2))).normalized()
+		var steps := PackedStringArray()
+		for i in range(0, 24):
+			var q := spot + fall * (float(i) * 0.5)
+			steps.append("%.2f" % WorldContracts.get_ground().relief_at(q).x)
+		print("terracette relief down the fall line: ", ", ".join(steps))
 	if rocks:
 		if args.has("only-layer"):
 			for i in LAYERS.size():
@@ -1119,8 +1288,35 @@ func _world() -> void:
 		if args.has("streaming"):
 			rocks.streaming = true # --streaming: the field streams and thins every frame as in play (stills draw every cell whole)
 		print("rocks: %d cells, %d stones in %d ms (shape libraries %.0f ms, %d library triangles)" % [built, rocks.get_stone_count(), Time.get_ticks_msec() - tb, rocks.get_last_library_msec(), rocks.get_library_triangle_count()])
+		if args.has("recess-probe"):
+			# --recess-probe=cx,cz,half,step: over that square, how much of the steep face the cliff kit recesses (WorldGround.recess_at at the unrecessed drawn face).
+			var rp: PackedStringArray = str(args["recess-probe"]).split(",")
+			var wg2: WorldGround = WorldContracts.get_ground()
+			var n_face := 0
+			var n_cov := 0
+			var dsum := 0.0
+			var hist := [0, 0, 0, 0, 0]
+			var zz3 := -float(rp[2])
+			while zz3 <= float(rp[2]):
+				var xx3 := -float(rp[2])
+				while xx3 <= float(rp[2]):
+					var q := Vector3(float(rp[0]) + xx3, 0, float(rp[1]) + zz3)
+					var sx := gen.get_height(q + Vector3(1, 0, 0)) - gen.get_height(q - Vector3(1, 0, 0))
+					var sz := gen.get_height(q + Vector3(0, 0, 1)) - gen.get_height(q - Vector3(0, 0, 1))
+					if rad_to_deg(atan(Vector2(sx, sz).length() / 2.0)) >= 45.0:
+						var h := gen.get_height(q)
+						q.y = h + wg2.relief_at(Vector3(q.x, h, q.z), true, false).x
+						n_face += 1
+						var r := wg2.recess_at(q)
+						if r.y > 0.0:
+							n_cov += 1
+							dsum += r.x * r.y
+							hist[mini(int(r.x * r.y), 4)] += 1
+					xx3 += float(rp[3])
+				zz3 += float(rp[3])
+			print("recess probe: %d face points, %d covered (%.0f%%), mean step %.2f m, by metre %s" % [n_face, n_cov, 100.0 * n_cov / maxi(n_face, 1), dsum / maxi(n_cov, 1), str(hist)])
 		if args.has("repetition"):
-			_repetition_audit(Rect2(spot.x - 120, spot.z - 120, 240, 240))
+			_repetition_audit(Rect2(spot_pos.x - 120, spot_pos.z - 120, 240, 240))
 		if rocks.far_radius > 0.0:
 			# The far tier: big stones and landmarks past each layer's radius, to far_radius (streaming is off here).
 			var tfar := Time.get_ticks_msec()
@@ -1171,6 +1367,8 @@ func _world() -> void:
 func _caves(cam: Camera3D) -> void:
 	var net := CaveNetwork3D.new()
 	net.name = "Caves"
+	if args.get("stone-scans", "1") != "0":
+		print("cave scans: %d" % net.load_scan_set(_rock_scan_dir()))
 	if args.has("scallops"):
 		net.scallops = float(args["scallops"]) # --scallops=k: the walls' dish hollows (0 off, a before frame)
 	add_child(net)
@@ -1875,7 +2073,7 @@ func _live_falls(spot: Vector3, land: Landscape3D) -> void:
 	land.load_all_heights()
 	rocks.collision_enabled = true
 	rocks.rebuild()
-	rocks.build_area(Rect2(spot.x - 120, spot.z - 120, 240, 240))
+	rocks.build_area(Rect2(spot_pos.x - 120, spot_pos.z - 120, 240, 240))
 	breaking = true
 	var n := [0]
 	var cb := func(p: Vector3, m: float) -> void:
@@ -2535,6 +2733,8 @@ func _test() -> void:
 	# and joins its key points; the same seed gives the same cave.
 	var net := CaveNetwork3D.new()
 	net.rimstone_water = false # the pools' live water costs frames and checks nothing here
+	if args.get("stone-scans", "1") != "0":
+		net.load_scan_set(_rock_scan_dir())
 	add_child(net)
 	net.generator = net.get_path_to(gen)
 	net.rock_field = net.get_path_to(rocks)
@@ -3334,6 +3534,15 @@ func _render_later() -> void:
 		if rd:
 			print("acceleration structures: %d MB" % [rd.get_memory_usage(RenderingDevice.MEMORY_ACCELERATION_STRUCTURES) >> 20])
 			print(rd.get_driver_and_device_memory_report())
+	if args.has("pick"):
+		# --pick=x0,y0,x1,y1: the cliff layer's stones whose centre the frame shows in that pixel rectangle.
+		var pk: PackedStringArray = str(args["pick"]).split(",")
+		var pr := Rect2(float(pk[0]), float(pk[1]), float(pk[2]) - float(pk[0]), float(pk[3]) - float(pk[1]))
+		var pcam := get_viewport().get_camera_3d()
+		for st in rocks.get_stones(RockField3D.LAYER_CLIFF, Rect2(spot_pos.x - 120, spot_pos.z - 120, 240, 240)):
+			var sp: Vector3 = st["position"]
+			if not pcam.is_position_behind(sp) and pr.has_point(pcam.unproject_position(sp)):
+				print("pick: ", st)
 	get_viewport().get_texture().get_image().save_png(out)
 	print("saved ", out)
 	get_tree().quit(0)

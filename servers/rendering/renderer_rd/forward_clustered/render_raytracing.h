@@ -285,7 +285,8 @@ struct alignas(16) RT_MaterialData {
 		uint32_t direction : 2; // BaseMaterial3D::HairDirection.
 		uint32_t melanin : 1; // HAIR_COLOR_MELANIN: absorption from `absorption`, else from the albedo.
 		uint32_t cards : 1; // hair_cards: light passes through, no folding back.
-		uint32_t unused : 4;
+		uint32_t standing_water : 1; // BaseMaterial3D wetness_standing_water: puddles in the relief (any material).
+		uint32_t standing_relief : 3; // its wetness_standing_relief, (n + 1) * 4 mm
 	} hair;
 	uint32_t hair_absorption; // rt_medium_code() of the melanin absorption per fibre diameter.
 	struct { // texture_hair_mask: where the surface is hair; 0 (white) = everywhere.
@@ -619,11 +620,15 @@ enum {
 	RT_RADIANCE_CACHE_UINTS = RT_RADIANCE_CACHE_ENTRIES * 16,
 	// Water caustics map (binding 46, raytracing_caustics_inc.glsl): three cascades of three slots,
 	// RES x RES texels for cascade 0 and RES_OUTER x RES_OUTER for the other two, 3 uints a texel,
-	// then 4 uints a slot of header. Must match the shader's. 13.5 MiB.
+	// then 4 uints a slot of header. Must match the shader's. 13.5 MiB, and 9 MiB more for the lamp maps.
 	RT_CAUSTICS_RES = 512,
 	RT_CAUSTICS_RES_OUTER = 256,
 	RT_CAUSTICS_CASCADES = 3,
-	RT_CAUSTICS_UINTS = RT_CAUSTICS_RES * RT_CAUSTICS_RES * 3 * 3 + (RT_CAUSTICS_CASCADES - 1) * RT_CAUSTICS_RES_OUTER * RT_CAUSTICS_RES_OUTER * 3 * 3 + 12,
+	// The sun's cascades and header, then three slots of four lamp maps (256 texels across) and their headers
+	// (raytracing_caustics_inc.glsl).
+	RT_CAUSTICS_LAMPS = 4,
+	RT_CAUSTICS_LAMP_RES = 256,
+	RT_CAUSTICS_UINTS = RT_CAUSTICS_RES * RT_CAUSTICS_RES * 3 * 3 + (RT_CAUSTICS_CASCADES - 1) * RT_CAUSTICS_RES_OUTER * RT_CAUSTICS_RES_OUTER * 3 * 3 + 12 + 3 * RT_CAUSTICS_LAMPS * RT_CAUSTICS_LAMP_RES * RT_CAUSTICS_LAMP_RES * 3 + 3 * RT_CAUSTICS_LAMPS * 4,
 	// Emissive surfaces sampled as lights (appended to the light grid buffer, header [9]): at
 	// most this many per frame, the strongest at the camera; the rest are found by bounce rays only.
 	RT_EMISSIVE_MAX = 1024,

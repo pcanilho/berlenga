@@ -164,6 +164,8 @@ private:
 	int season_cache_day = 0;
 	float season_cache_anomaly = 0.0f;
 	WeatherSeason::State season_cache;
+	Vector4 climate_published; // weather_climate as last set (_publish_season_global)
+	void _publish_season_global();
 	float humidity = 0.7f; // relative, 0..1
 	float surface_storage = 0.5f; // mm a surface holds before water pools
 	float puddle_max_depth = 20.0f; // mm
@@ -202,6 +204,7 @@ private:
 	float cloud_shadow_extent = 6144.0f; // m
 	int cloud_shadow_resolution = 256;
 	float cloud_shadow_interval = 1.0f; // real seconds between bakes
+	bool cloud_sky_occlusion = true; // the clouds dim the surfaces' sky light (the cloud sky map)
 
 	// The eased base state (what the cells see; the settings above are its targets).
 	float cur_wind_speed = 5.0f;
@@ -396,6 +399,13 @@ private:
 		// texture blurs into the light the clouds round a point bounce onto it.
 		Vector<float> lit;
 		float *lit_w = nullptr;
+		// The cloud sky map's inputs: each voxel's extinction (as tau), and per column the thin sheets' and wave
+		// clouds' optical depth straight up and its first moment in height (baked with the bottom level).
+		Vector<float> sigma;
+		float *sigma_w = nullptr;
+		Vector<float> sheets; // tau, tau * height, per column
+		float *sheets_w = nullptr;
+		float ground_y = 0.0f; // the height the sky visibility is for (the followed point's)
 		float above(int p_level, float p_x, float p_z) const;
 		void row(uint32_t p_row, void *);
 	};
@@ -407,6 +417,11 @@ private:
 	float light_grid_y0 = 0.0f;
 	float light_grid_y1 = 1.0f;
 	Ref<ImageTexture3D> light_grid_texture;
+	// The clouds' sky visibility (WeatherMap3D._build_cloud_sky_map()), over the light grid's box: published as
+	// weather_cloud_sky_map and weather_cloud_sky_rect for the surfaces' sky light, raster and path traced.
+	Ref<ImageTexture> cloud_sky_texture;
+	float cloud_sky_ground_y = 0.0f;
+	void _build_cloud_sky_map();
 	void _start_light_grid_bake();
 	void _launch_light_grid_level();
 	void _step_light_grid_bake();
@@ -945,6 +960,8 @@ public:
 	int get_cloud_shadow_resolution() const { return cloud_shadow_resolution; }
 	void set_cloud_shadow_interval(float p_seconds);
 	float get_cloud_shadow_interval() const { return cloud_shadow_interval; }
+	void set_cloud_sky_occlusion(bool p_enabled);
+	bool get_cloud_sky_occlusion() const { return cloud_sky_occlusion; }
 
 	void set_terrain_wind_enabled(bool p_enabled);
 	bool is_terrain_wind_enabled() const { return terrain_wind_enabled; }

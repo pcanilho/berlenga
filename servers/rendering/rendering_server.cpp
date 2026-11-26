@@ -2292,6 +2292,7 @@ void RenderingServer::_bind_methods() {
 
 	ClassDB::bind_method(D_METHOD("texture_set_path", "texture", "path"), &RenderingServer::texture_set_path);
 	ClassDB::bind_method(D_METHOD("texture_get_path", "texture"), &RenderingServer::texture_get_path);
+	ClassDB::bind_method(D_METHOD("get_texture_debug_usage"), &RenderingServer::_texture_debug_usage_bind);
 
 	ClassDB::bind_method(D_METHOD("texture_get_format", "texture"), &RenderingServer::texture_get_format);
 
@@ -3742,6 +3743,8 @@ void RenderingServer::init() {
 
 	GLOBAL_DEF(PropertyInfo(Variant::INT, "rendering/textures/webp_compression/compression_method", PROPERTY_HINT_RANGE, "0,6,1"), 2);
 	GLOBAL_DEF(PropertyInfo(Variant::FLOAT, "rendering/textures/webp_compression/lossless_compression_factor", PROPERTY_HINT_RANGE, "0,100,1"), 25);
+	// Scans systems load from files at run time, on a CPU (software) rendering device only (scan_texture_limit.h); 0: full size.
+	GLOBAL_DEF(PropertyInfo(Variant::INT, "rendering/textures/scans/cpu_device_max_size", PROPERTY_HINT_RANGE, "0,16384,1"), 1024);
 
 	GLOBAL_DEF(PropertyInfo(Variant::FLOAT, "rendering/limits/time/time_rollover_secs", PROPERTY_HINT_RANGE, "1,10000,1,or_greater,suffix:s"), 3600);
 
@@ -3956,6 +3959,8 @@ void RenderingServer::init() {
 	GLOBAL_DEF_RST(PropertyInfo(Variant::INT, "rendering/pathtracing/multimesh_blas_cache_ttl_frames", PROPERTY_HINT_RANGE, "1,18000,1"), 3600);
 	GLOBAL_DEF_RST(PropertyInfo(Variant::INT, "rendering/pathtracing/multimesh_merged_blas_max_triangles", PROPERTY_HINT_RANGE, "256,1048576,1"), 65536);
 	GLOBAL_DEF_RST(PropertyInfo(Variant::INT, "rendering/pathtracing/max_samples_per_dispatch", PROPERTY_HINT_RANGE, "65536,268435456,1"), 4194304);
+	// The time one path tracing dispatch may take, from the cost the last frames measured (under 2 s: Windows TDR).
+	GLOBAL_DEF(PropertyInfo(Variant::FLOAT, "rendering/pathtracing/max_dispatch_time_ms", PROPERTY_HINT_RANGE, "1,1000,1,suffix:ms"), 100.0);
 	// Per-frame budgets of the dynamic BLAS scheduler (particles, camera-dependent MultiMesh), shared by all viewports.
 	GLOBAL_DEF(PropertyInfo(Variant::INT, "rendering/pathtracing/dynamic_blas_max_operations", PROPERTY_HINT_RANGE, "1,100000,1"), 2000);
 	GLOBAL_DEF(PropertyInfo(Variant::INT, "rendering/pathtracing/dynamic_blas_build_triangle_budget", PROPERTY_HINT_RANGE, "0,100000000,1"), 500000);

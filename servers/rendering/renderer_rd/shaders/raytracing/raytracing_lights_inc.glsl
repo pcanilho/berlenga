@@ -550,8 +550,36 @@ vec3 lights_projector_color(RTLightData light, vec3 p_dir) {
 	return projector.rgb * projector.a;
 }
 
+// The sun through the clouds past the cloud shadow map, from WeatherMap3D's cloud sky map (its columns' optical depth
+// straight up in green, height in blue): the column where the sun's ray from p_pos (relative to rt_origin) reaches
+// the clouds' height, its slant depth tau / sun.y, and the diffuse transmission 1 / (1 + 3/4 (1 - g) tau) (g 0.85), as
+// the rasterizer's cloud_far_sun().
+float lights_cloud_far_sun(vec3 p_pos, vec3 p_to_sun) {
+	uint map = uint(get_rt_param(RT_PARAM_CLOUD_SKY_MAP));
+	if (map == 0u || p_to_sun.y < 0.02) {
+		return 1.0;
+	}
+	vec3 w = p_pos + rt_origin.xyz;
+	vec2 corner = vec2(get_rt_param(RT_PARAM_CLOUD_SKY_X), get_rt_param(RT_PARAM_CLOUD_SKY_Z));
+	vec2 uv = (w.xz - corner) / RT_CLOUD_SKY_EXTENT;
+	if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) {
+		// Past the map: the clouds' mean transmission straight up, the map's last level (cloud_far_sun()).
+		int last = textureQueryLevels(sampler2D(bindless_textures[nonuniformEXT(map)], rt_light_projector_sampler)) - 1;
+		float t_up = texelFetch(sampler2D(bindless_textures[nonuniformEXT(map)], rt_light_projector_sampler), ivec2(0), last).a;
+		return 1.0 / (1.0 + (1.0 / max(t_up, 1e-3) - 1.0) / p_to_sun.y);
+	}
+	float h = textureLod(sampler2D(bindless_textures[nonuniformEXT(map)], rt_light_projector_sampler), uv, 0.0).b;
+	if (w.y >= h) {
+		return 1.0;
+	}
+	vec2 q = (w.xz + p_to_sun.xz / p_to_sun.y * (h - w.y) - corner) / RT_CLOUD_SKY_EXTENT;
+	float tau = textureLod(sampler2D(bindless_textures[nonuniformEXT(map)], rt_light_projector_sampler), clamp(q, vec2(0.0), vec2(1.0)), 0.0).g;
+	return 1.0 / (1.0 + 0.75 * (1.0 - 0.85) * tau / p_to_sun.y);
+}
+
 // A directional light's projector at p_pos, projected along the light over a rect in its plane
-// (the rasterizer's directional_projector_color()). White without one or outside the rect.
+// (the rasterizer's directional_cloud_projector()). White without one or outside the rect; for the weather's cloud
+// map (alpha 254), the far cloud shadow past it, blended over the map's outer tenth.
 vec3 lights_directional_projector_color(RTLightData light, vec3 p_pos) {
 	if (light.projector_texture == RT_LIGHT_NO_PROJECTOR) {
 		return vec3(1.0);
@@ -559,11 +587,19 @@ vec3 lights_directional_projector_color(RTLightData light, vec3 p_pos) {
 	vec3 axis_u = lights_rotate(light.orientation, vec3(1.0, 0.0, 0.0));
 	vec3 axis_v = -lights_rotate(light.orientation, vec3(0.0, 1.0, 0.0));
 	vec2 uv = (vec2(dot(p_pos, axis_u), dot(p_pos, axis_v)) - light.projector_corner) / light.projector_size;
-	if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) {
-		return vec3(1.0);
+	bool inside = all(greaterThanEqual(uv, vec2(0.0))) && all(lessThanEqual(uv, vec2(1.0)));
+	vec4 projector = textureLod(sampler2D(bindless_textures[nonuniformEXT(light.projector_texture)], rt_light_projector_sampler), clamp(uv, vec2(0.005), vec2(0.995)), 0.0);
+	if (abs(projector.a * 255.0 - 254.0) >= 0.25) {
+		return inside ? projector.rgb * projector.a : vec3(1.0);
 	}
-	vec4 projector = textureLod(sampler2D(bindless_textures[nonuniformEXT(light.projector_texture)], rt_light_projector_sampler), uv, 0.0);
-	return projector.rgb * projector.a;
+	vec2 e = abs(uv * 2.0 - 1.0);
+	float far_w = inside ? smoothstep(0.8, 1.0, max(e.x, e.y)) : 1.0;
+	vec3 near = projector.rgb * projector.a;
+	if (far_w <= 0.0) {
+		return near;
+	}
+	vec3 to_sun = lights_rotate(light.orientation, vec3(0.0, 0.0, 1.0));
+	return mix(near, vec3(lights_cloud_far_sun(p_pos, to_sun) * projector.a), far_w);
 }
 
 // The sun's direct beam through the clouds at p_pos. WeatherMap3D's cloud map holds the clouds' diffuse
@@ -1181,6 +1217,10 @@ vec3 lights_evaluate_positional(RTLightData light, vec3 hit_pos, vec3 N, vec3 V,
 
 	vec3 shadow_transmittance = lights_shadow_transmittance(light, hit_pos, L, shadow_dist, p_receiver_shadow_mask, rng_state);
 	r_visible = max(shadow_transmittance.r, max(shadow_transmittance.g, shadow_transmittance.b)) > 0.5 ? 1.0 : 0.0;
+	if (max(shadow_transmittance.r, max(shadow_transmittance.g, shadow_transmittance.b)) > 0.0 && rt_caustics_enabled()) {
+		// Under water, a lamp's light bent at the surface and gathered by its waves (raytracing_caustics_inc.glsl).
+		shadow_transmittance *= rt_caustics_lamp_ratio(light, hit_pos);
+	}
 
 	// Evaluate BRDF (diffuse incl. backlight, specular separately for specular_amount control).
 	vec3 brdf_diffuse, brdf_specular;

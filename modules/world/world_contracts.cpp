@@ -30,6 +30,7 @@
 /**************************************************************************/
 
 #include "world_contracts.h"
+#include "core/config/engine.h"
 
 #include "core/math/geometry_2d.h"
 #include "core/templates/hash_set.h"
@@ -41,6 +42,11 @@
 #include "servers/physics_3d/physics_server_3d.h"
 #include "scene/resources/3d/world_3d.h"
 #include "scene/main/window.h"
+#include "scene/3d/camera_3d.h"
+#include "scene/main/viewport.h"
+#ifdef TOOLS_ENABLED
+#include "editor/editor_interface.h"
+#endif
 #include "scene/main/scene_tree.h"
 #include "scene/3d/physics/collision_shape_3d.h"
 #include "scene/3d/physics/character_body_3d.h"
@@ -1155,8 +1161,15 @@ void WorldGround::_bind_methods() {
 	GDVIRTUAL_BIND(_stones_near, "rect");
 	ClassDB::bind_method(D_METHOD("albedo_at", "position"), &WorldGround::albedo_at);
 	GDVIRTUAL_BIND(_albedo_at, "position");
-	ClassDB::bind_method(D_METHOD("relief_at", "position"), &WorldGround::relief_at);
+	ClassDB::bind_method(D_METHOD("relief_at", "position", "steps", "recess"), &WorldGround::relief_at, DEFVAL(true), DEFVAL(true));
 	GDVIRTUAL_BIND(_relief_at, "position");
+	ClassDB::bind_method(D_METHOD("recess_at", "position"), &WorldGround::recess_at);
+	ClassDB::bind_method(D_METHOD("has_recess"), &WorldGround::has_recess);
+	GDVIRTUAL_BIND(_recess_at, "position");
+	ClassDB::bind_method(D_METHOD("recess_vector_at", "position"), &WorldGround::recess_vector_at);
+	GDVIRTUAL_BIND(_recess_vector_at, "position");
+	ClassDB::bind_method(D_METHOD("notify_recess_changed", "box"), &WorldGround::notify_recess_changed);
+	ADD_SIGNAL(MethodInfo("recess_changed", PropertyInfo(Variant::AABB, "box")));
 	ClassDB::bind_method(D_METHOD("notify_relief_changed", "area"), &WorldGround::notify_relief_changed);
 	ADD_SIGNAL(MethodInfo("relief_changed", PropertyInfo(Variant::RECT2, "area")));
 	ClassDB::bind_method(D_METHOD("add_runoff_load", "position", "mineral_kg", "ash_kg"), &WorldGround::add_runoff_load);
@@ -1199,6 +1212,26 @@ void WorldGround::_bind_methods() {
 }
 
 WorldContracts *WorldContracts::singleton = nullptr;
+
+bool WorldContracts::is_editor_preview(const Node *p_node) {
+	return p_node && Engine::get_singleton()->is_editor_hint() && p_node->is_inside_tree();
+}
+
+Camera3D *WorldContracts::get_view_camera(const Node *p_node) {
+	if (!p_node || !p_node->is_inside_tree()) {
+		return nullptr;
+	}
+#ifdef TOOLS_ENABLED
+	if (Engine::get_singleton()->is_editor_hint() && EditorInterface::get_singleton()) {
+		SubViewport *vp = EditorInterface::get_singleton()->get_editor_viewport_3d(0);
+		if (vp && vp->get_camera_3d()) {
+			return vp->get_camera_3d();
+		}
+	}
+#endif
+	Viewport *vp = p_node->get_viewport();
+	return vp ? vp->get_camera_3d() : nullptr;
+}
 
 WorldWeather *WorldContracts::weather() {
 	static Ref<WorldWeather> fallback; // before the singleton exists or after it goes
@@ -1313,11 +1346,23 @@ float WorldContracts::cured_share_for_precipitation(float p_mm) {
 	return 1.0f - Math::smoothstep(500.0f, 1000.0f, p_mm);
 }
 
+float WorldContracts::greenness_for_season(float p_soil_moisture, float p_temperature) {
+	return CLAMP(Math::smoothstep(0.1f, 0.4f, p_soil_moisture) * Math::smoothstep(-8.0f, 2.0f, p_temperature), 0.0f, 1.0f);
+}
+
+float WorldContracts::cured_share_for_season(float p_soil_moisture, float p_temperature) {
+	return 1.0f - greenness_for_season(p_soil_moisture, p_temperature);
+}
+
 float WorldContracts::climate_cured_share_at(const Vector3 &p_position) {
 	WeatherSeason::Climate cl;
 	const WorldWeather *w = weather();
 	if (!w || !w->season_climate(cl)) {
 		return -1.0f;
+	}
+	const Dictionary s = w->season_at(p_position);
+	if (s.has("soil_moisture")) {
+		return cured_share_for_season(float(s["soil_moisture"]), float(s.get("temperature", 10.0f)));
 	}
 	return cured_share_for_precipitation(cl.precipitation * climate_precipitation_factor_at(p_position));
 }
@@ -1372,13 +1417,51 @@ Vector3 WorldContracts::terracette_at(const Vector3 &p_position, const Vector2 &
 	const float x = p_position.x;
 	const float z = p_position.z;
 	const float sin_s = steep / Math::sqrt(1.0f + steep * steep);
-	const float rise = TERRACETTE_SPACING * sin_s;
+	const float rise = TERRACETTE_RISE;
 	const float wander = (wc_vn(Vector3(x * 0.09f + 41.0f, 5.3f, z * 0.09f)) - 0.5f) * 0.9f + (wc_vn(Vector3(x * 0.37f + 7.0f, 9.1f, z * 0.37f)) - 0.5f) * 0.25f;
 	const float v = float(p_position.y) / rise + wander * sin_s / rise;
 	const float ph = v - Math::floor(v);
-	float tread = Math::smoothstep(0.0f, 0.05f, ph) * (1.0f - Math::smoothstep(0.15f, 0.22f, ph));
+	float tread = Math::smoothstep(0.0f, 0.05f, ph) * (1.0f - Math::smoothstep(TERRACETTE_TREAD - 0.04f, TERRACETTE_TREAD + 0.03f, ph));
 	tread *= form * Math::smoothstep(0.25f, 0.45f, wc_vn(Vector3(x * 0.05f + 13.0f, 2.9f, z * 0.05f)));
 	return Vector3(tread, ph, form);
+}
+
+// The step profile in units of the rise: -ph over the tread, back to 0 over the riser, less its mean; and its integral.
+static float wc_tc_o(float p_ph) {
+	const float t = WorldContracts::TERRACETTE_TREAD;
+	const float ph = p_ph - Math::floor(p_ph);
+	return (ph < t ? -ph : -t * (1.0f - ph) / (1.0f - t)) + 0.5f * t;
+}
+static float wc_tc_int(float p_x) {
+	const float t = WorldContracts::TERRACETTE_TREAD;
+	const float ph = p_x - Math::floor(p_x);
+	return ph < t ? -0.5f * ph * ph + 0.5f * t * ph : t / (2.0f * (1.0f - t)) * ((1.0f - ph) * (1.0f - ph) - (1.0f - t) * (1.0f - t)) + 0.5f * t * (ph - t);
+}
+
+Vector2 WorldContracts::terracette_step(const Vector3 &p_position, const Vector2 &p_gradient, float p_width, float p_share) {
+	if (p_share <= 0.0f) {
+		return Vector2();
+	}
+	const Vector3 t = terracette_at(p_position, p_gradient);
+	if (t.z <= 0.0f) {
+		return Vector2();
+	}
+	const float steep = p_gradient.length();
+	// The step's strength: the layout's tread at the middle of this step's tread (its fade along the slope included).
+	const float k = terracette_at(Vector3(p_position.x, p_position.y - (t.y - 0.5f * TERRACETTE_TREAD) * TERRACETTE_RISE, p_position.z), p_gradient).x * p_share;
+	const float d = MAX(0.5f * p_width * steep / TERRACETTE_RISE, 0.004f);
+	if (k <= 0.0f || d >= 0.5f) {
+		return Vector2();
+	}
+	const float f = 1.0f - Math::smoothstep(0.3f, 0.5f, d); // the last of it fades rather than stops
+	return Vector2(TERRACETTE_RISE * k * (wc_tc_int(t.y + d) - wc_tc_int(t.y - d)), k * (wc_tc_o(t.y + d) - wc_tc_o(t.y - d))) * (f / (2.0f * d));
+}
+
+float WorldContracts::terracette_soil_share(const Color &p_geology) {
+	if (Math::is_nan(p_geology.r)) {
+		return 0.0f;
+	}
+	return Math::smoothstep(0.05f, 0.2f, p_geology.r) * (1.0f - Math::smoothstep(0.02f, 0.2f, MAX(CLAMP(p_geology.g, 0.0f, 1.0f), Math::abs(p_geology.b))));
 }
 
 String WorldContracts::terracette_shader_code() {
@@ -1391,12 +1474,45 @@ vec3 wc_terracette(vec3 p, vec2 grad) {
 		return vec3(0.0);
 	}
 	float sin_s = steep / sqrt(1.0 + steep * steep);
-	float rise = 3.4 * sin_s;
+	float rise = 2.0; // WorldContracts::TERRACETTE_RISE
 	float wander = (wc_vn(vec3(p.x * 0.09 + 41.0, 5.3, p.z * 0.09)) - 0.5) * 0.9 + (wc_vn(vec3(p.x * 0.37 + 7.0, 9.1, p.z * 0.37)) - 0.5) * 0.25;
 	float ph = fract(p.y / rise + wander * sin_s / rise);
-	float tread = smoothstep(0.0, 0.05, ph) * (1.0 - smoothstep(0.15, 0.22, ph));
+	float tread = smoothstep(0.0, 0.05, ph) * (1.0 - smoothstep(0.26, 0.33, ph)); // WorldContracts::TERRACETTE_TREAD 0.3
 	tread *= form * smoothstep(0.25, 0.45, wc_vn(vec3(p.x * 0.05 + 13.0, 2.9, p.z * 0.05)));
 	return vec3(tread, ph, form);
+}
+// WorldContracts::terracette_step's profile (the tread's share 0.3) and its integral.
+float wc_tc_o(float x) {
+	float ph = fract(x);
+	return (ph < 0.3 ? -ph : -0.3 * (1.0 - ph) / 0.7) + 0.15;
+}
+float wc_tc_int(float x) {
+	float ph = fract(x);
+	return ph < 0.3 ? -0.5 * ph * ph + 0.15 * ph : 0.3 / 1.4 * ((1.0 - ph) * (1.0 - ph) - 0.49) + 0.15 * (ph - 0.3);
+}
+// WorldContracts::terracette_step: x the steps' height over the smooth ground (m), y the change of its steepness,
+// box-filtered over width metres along the fall line; share the producer's (terrain_bank_relief.y) times
+// wc_terracette_soil. Blades, stones and decals call it at their roots to stand on the steps the ground draws.
+vec2 wc_terracette_step(vec3 p, vec2 grad, float width, float share) {
+	if (share <= 0.0) {
+		return vec2(0.0);
+	}
+	vec3 t = wc_terracette(p, grad);
+	if (t.z <= 0.0) {
+		return vec2(0.0);
+	}
+	float steep = length(grad);
+	float k = wc_terracette(vec3(p.x, p.y - (t.y - 0.15) * 2.0, p.z), grad).x * share;
+	float d = max(0.5 * width * steep / 2.0, 0.004);
+	if (k <= 0.0 || d >= 0.5) {
+		return vec2(0.0);
+	}
+	float f = 1.0 - smoothstep(0.3, 0.5, d);
+	return vec2(2.0 * k * (wc_tc_int(t.y + d) - wc_tc_int(t.y - d)), k * (wc_tc_o(t.y + d) - wc_tc_o(t.y - d))) * (f / (2.0 * d));
+}
+// WorldContracts::terracette_soil_share from the generator's geology (soil depth, rock, talus).
+float wc_terracette_soil(vec4 g) {
+	return smoothstep(0.05, 0.2, g.x) * (1.0 - smoothstep(0.02, 0.2, max(clamp(g.y, 0.0, 1.0), abs(g.z))));
 }
 )";
 }
@@ -1442,8 +1558,12 @@ float wc_climate_bare(vec3 p) {
 	float mm = wc_climate_mm(p);
 	return mm < 0.0 ? 0.0 : 0.9 * (1.0 - smoothstep(200.0, 700.0, mm));
 }
-// WorldContracts::cured_share_for_precipitation at p, from the same climate (0 with none).
+// WorldContracts::cured_share_for_season from the weather's season (weather_climate y soil moisture, z temperature),
+// else cured_share_for_precipitation from the climate map (0 with neither).
 float wc_climate_cured(vec3 p) {
+	if (weather_climate.w > 0.0) {
+		return 1.0 - clamp(smoothstep(0.1, 0.4, weather_climate.y) * smoothstep(-8.0, 2.0, weather_climate.z), 0.0, 1.0);
+	}
 	float mm = wc_climate_mm(p);
 	return mm < 0.0 ? 0.0 : 1.0 - smoothstep(500.0, 1000.0, mm);
 }
@@ -1490,7 +1610,88 @@ void WorldGround::notify_relief_changed(const Rect2 &p_area) {
 	emit_signal(SNAME("relief_changed"), p_area);
 }
 
-Vector2 WorldGround::relief_at(const Vector3 &p_position) const {
+void WorldContracts::register_recess(WorldRecessProvider *p_provider) {
+	if (singleton && p_provider && singleton->recess_providers.find(p_provider) < 0) {
+		singleton->recess_providers.push_back(p_provider);
+	}
+}
+
+void WorldContracts::unregister_recess(WorldRecessProvider *p_provider) {
+	if (singleton) {
+		singleton->recess_providers.erase(p_provider);
+	}
+}
+
+void WorldGround::notify_recess_changed(const AABB &p_box) {
+	emit_signal(SNAME("recess_changed"), p_box);
+}
+
+bool WorldGround::has_recess() const {
+	if (GDVIRTUAL_IS_OVERRIDDEN(_recess_at)) {
+		return true;
+	}
+	const LocalVector<WorldRecessProvider *> *list = WorldContracts::recess_providers_list();
+	return list && !list->is_empty();
+}
+
+Vector2 WorldGround::recess_at(const Vector3 &p_position) const {
+	Vector2 r;
+	if (GDVIRTUAL_CALL(_recess_at, p_position, r)) {
+		return Vector2(MAX(r.x, 0.0f), CLAMP(r.y, 0.0f, 1.0f));
+	}
+	Vector2 best;
+	const LocalVector<WorldRecessProvider *> *list = WorldContracts::recess_providers_list();
+	if (list) {
+		for (const WorldRecessProvider *p : *list) {
+			const Vector2 v = p->contract_recess_at(p_position);
+			if (Math::is_finite(v.x) && Math::is_finite(v.y) && v.x * v.y > best.x * best.y) {
+				best = Vector2(MAX(v.x, 0.0f), CLAMP(v.y, 0.0f, 1.0f));
+			}
+		}
+	}
+	return best;
+}
+
+Vector4 WorldGround::recess_vector_at(const Vector3 &p_position) const {
+	Vector4 r;
+	if (GDVIRTUAL_CALL(_recess_vector_at, p_position, r)) {
+		return r;
+	}
+	Vector4 best;
+	float best_len = 0.0f;
+	const LocalVector<WorldRecessProvider *> *list = WorldContracts::recess_providers_list();
+	if (list) {
+		for (const WorldRecessProvider *p : *list) {
+			const Vector4 v = p->contract_recess_vector_at(p_position);
+			if (!Math::is_finite(v.x) || !Math::is_finite(v.y) || !Math::is_finite(v.z) || !Math::is_finite(v.w)) {
+				continue;
+			}
+			const float l = Vector3(v.x, v.y, v.z).length() + 0.001f * v.w;
+			if (l > best_len) {
+				best_len = l;
+				best = Vector4(v.x, v.y, v.z, CLAMP(v.w, 0.0f, 1.0f));
+			}
+		}
+	}
+	return best;
+}
+
+void WorldGround::recess_points(const Vector3 *p_points, int p_count, Vector2 *r_recess) const {
+	const LocalVector<WorldRecessProvider *> *list = WorldContracts::recess_providers_list();
+	if (GDVIRTUAL_IS_OVERRIDDEN(_recess_at) || !list || list->size() != 1) {
+		for (int i = 0; i < p_count; i++) {
+			r_recess[i] = recess_at(p_points[i]);
+		}
+		return;
+	}
+	(*list)[0]->contract_recess_points(p_points, p_count, r_recess);
+	for (int i = 0; i < p_count; i++) {
+		const Vector2 v = r_recess[i];
+		r_recess[i] = (Math::is_finite(v.x) && Math::is_finite(v.y)) ? Vector2(MAX(v.x, 0.0f), CLAMP(v.y, 0.0f, 1.0f)) : Vector2();
+	}
+}
+
+Vector2 WorldGround::relief_at(const Vector3 &p_position, bool p_steps, bool p_recess) const {
 	Vector2 r;
 	if (GDVIRTUAL_CALL(_relief_at, p_position, r)) {
 		return r;
@@ -1498,7 +1699,7 @@ Vector2 WorldGround::relief_at(const Vector3 &p_position) const {
 	const LocalVector<WorldReliefProvider *> *list = WorldContracts::relief_providers_list();
 	if (list) {
 		for (const WorldReliefProvider *p : *list) {
-			const Vector2 v = p->contract_relief_at(p_position);
+			const Vector2 v = p->contract_relief_at(p_position, p_steps, p_recess);
 			if (Math::is_finite(v.x)) {
 				return Vector2(v.x, CLAMP(v.y, 0.0f, 1.0f));
 			}
@@ -2416,6 +2617,8 @@ Dictionary WorldContracts::describe_body_bind(Node *p_node) const {
 }
 
 void WorldContracts::_bind_methods() {
+	// A WorldExclusion3D came, went or changed over area (world x, z): placers lay what sits there again.
+	ADD_SIGNAL(MethodInfo("exclusions_changed", PropertyInfo(Variant::RECT2, "area")));
 	ClassDB::bind_static_method("WorldContracts", D_METHOD("climate_precipitation_factor_at", "position"), &WorldContracts::climate_precipitation_factor_at);
 	ClassDB::bind_method(D_METHOD("set_weather", "stub"), &WorldContracts::set_weather);
 	ClassDB::bind_method(D_METHOD("get_weather"), &WorldContracts::get_weather);

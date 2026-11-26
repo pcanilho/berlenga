@@ -1454,6 +1454,13 @@ func _contract_tests() -> void:
 	var a_new := fa.burn_age_at(Vector3(5, 0, 5))
 	var a_none := fa.burn_age_at(Vector3(200, 0, 0))
 	_check("contracts: burn age from authored scars, the latest burn wins", a_old == 12.0 and a_new == 2.0 and a_none == -1.0, "%.0f, %.0f, %.0f years" % [a_old, a_new, a_none])
+	# Burnt: a scar answers its burnt share over the same area (rocks, litter and debris flows weigh it by the age).
+	old_scar.burnt_share = 0.6
+	new_scar.burnt_share = 0.4
+	var b_old := fa.burnt_at(Vector3(-20, 0, -20))
+	var b_both := fa.burnt_at(Vector3(5, 0, 5))
+	var b_none := fa.burnt_at(Vector3(200, 0, 0))
+	_check("contracts: authored scars report burnt where they answer a burn age", is_equal_approx(b_old, 0.6) and is_equal_approx(b_both, 0.6) and b_none == 0.0, "%.2f, %.2f, %.2f" % [b_old, b_both, b_none])
 	old_scar.queue_free()
 	new_scar.queue_free()
 	m.queue_free()
@@ -3521,6 +3528,7 @@ func _ground_color_tests() -> void:
 		_skip("ground colour", "needs the terrain modules")
 		return
 	var gen := TerrainGenerator3D.new()
+	gen.generate_on_ready = false # this bench generates itself, with its own settings
 	gen.glacial_enabled = false
 	gen.glacial_converged = false
 	gen.tile_erosion_enabled = false

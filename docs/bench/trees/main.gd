@@ -80,6 +80,11 @@ var day := -1
 var fails := 0
 
 func _ready() -> void:
+	# Scanned bark detail (TreeGenerator.load_scan_set), from the art the landscape bench fetches (fetch_art.sh:
+	# art/trees_scans); --bark-scans=0 draws the generated bark alone.
+	if not ("--bark-scans=0" in OS.get_cmdline_user_args()):
+		var bdir := ProjectSettings.globalize_path("res://").path_join("../landscape/art/trees_scans").simplify_path()
+		print("bark scans: %d presets from %s" % [TreeGenerator.load_scan_set(bdir), bdir])
 	if OS.has_environment("CUTOUT"):
 		# env CUTOUT="x,y,z,radius[,floor]": the camera cut-out (BaseMaterial3D camera_cutout globals) to that target.
 		var cv := OS.get_environment("CUTOUT").split_floats(",")
@@ -746,6 +751,11 @@ func _build_scene() -> void:
 		cam.position = Vector3(xs[0] + cr * 0.9, h * 0.62, 4.0)
 		cam.look_at(Vector3(xs[0], h * 0.62, 0))
 		cam.fov = 30.0 if view == "crop" else 7.0
+		if OS.has_environment("CAM"): # "dx,y,z,lx,ly,lz,fov" from the first tree's stem: e.g. up into the crown against the sky.
+			var cv := OS.get_environment("CAM").split_floats(",")
+			cam.position = Vector3(xs[0] + cv[0], cv[1], cv[2])
+			cam.look_at(Vector3(xs[0] + cv[3], cv[4], cv[5]))
+			cam.fov = cv[6]
 	else:
 		var span: float = max(x, tallest * 1.6)
 		var dist := span * 0.5 / tan(deg_to_rad(cam.fov * 0.5)) * 0.62 + 6.0

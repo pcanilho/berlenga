@@ -2150,6 +2150,45 @@ cell (0.01 m), since the cell's spread of depths is now drawn by `snow_subgrid`:
 two thirds of a pixel's facets, not a third. The terrain material holds and sheds its snow by its projection
 normal (`tm_pn`, the heightfield's central difference), so a one-cell wall sheds it too.
 
+Bench fresh fall (25 Nov, asked by vegetation): `--snow-fall=CM` used a fixed 200 kg/m3 to turn CM into water.
+Fresh snow lands at 50-150 kg/m3, so it now uses the model's own new-snow density (`new_snow_density`, Hedstrom and
+Pomeroy 1998, about 80 kg/m3 at -4 C), and `--snow-fall-density` still overrides it. The pack settles during the
+fall and the weather lets only part of the rate through, so a fall short of CM at the camera is topped up by
+further falls scaled to the shortfall (up to three), and the frame shows about CM of fresh snow.
+
+Scanned grain (25 Nov, the CC0 texture audit, docs/ideas/scan-textures.md): the pack's surface had only the model's
+own relief (cups, sastrugi, ripples, strata) and a smooth normal between them, so close up fresh snow read as
+plaster. Poly Haven's Snow 02 (Rob Tuytel, CC0, 2 m) now gives its grain and crust, normal and roughness only (the
+colour, sparkle and wetness stay the model's). It is the terrain material's `snow_scan` overlay slot, loaded from
+scans.cfg's [snow] like every scan, hex tiled, drawn over the snow by its share and the roughness ratio held back by
+wetness. The terrain material publishes it as the `snow_grain_*` shader globals, and SnowSurface3D reads those (two
+samples turned 37 degrees and blended by a 3 m noise; trodden, slushy, pooled and glazed snow and the strata walls
+keep none). The source normal map leans about 9 degrees on average, so it is recentred before it goes in.
+
+Strata scout (25 Nov, scene): the 2 m pit at (264, -1560) showed a field of spikes with lumps on the floor. Three
+things: the season's avalanche and a roof slab's puff both ran PhysX Flow powder clouds through the scout (full
+block budgets, the cloud run out of memory before the frame), the pit's 2 m walls gave way (follow-up 54) and the
+failed blocks, cut along the field's axes on a wall turned to the sun's bearing, drew as jagged shards, and the
+thrown lumps were the dots. A study pit is read as soon as it is cut, so the scout now keeps avalanches, roof slabs
+and wall collapse off. The far wall still drew as a sawtooth while standing: not shadows and not the vertices'
+sampling, but the thin-pack discard (24 Nov), which read the field at the pixel (already the cut's floor) and cut
+the wall's triangles away. It now spares a deep pack's triangles standing over 10 cm above the ground, which keeps
+the 2 cm scree fix. Still open: collapse should cut its blocks along the face's own normal, not the nearest axis.
+
+Pit walls, round 2 (26 Nov, scene on build 174): ribs down the far wall, square steps along the near edge, the bands
+barely there. The ribs and steps were the print field's texels: the trench ran on the sun's bearing, about 11 degrees
+off the field's grid, and a press antialiases its edge over only half a 6.25 cm texel, so every 33 cm the wall
+stepped by a texel (the deform field is ground's; asked there for a full-texel edge). The scout now runs the trench
+along the field axis nearest the sun (--strata-snap=0 keeps the bearing). Its floor was held at the pit centre's
+ground level, which on the slope cut nothing at one end and left a ramp down half the trench; it is now pressed to
+the pack's compaction limit everywhere. The bands were few: the week's gale came last and packed the storm, crust and
+hoar into one slab, and the season's pack was one layer, so the wall had three bands, two of them in the top 25 cm.
+The week now runs storm, gale, crust, hoar, storm, fresh fall over a settled mid-winter storm and a faceted base.
+Research: on a brushed pit wall the layers read mostly by relief (SWAG; Fierz et al. 2009): brushing scours soft
+layers back and leaves hard ones standing, by hand hardness (F, 4F, 1F, P, K). The wall shader now sets each band
+back by its hardness (fist new snow and hoar furthest, a crust standing proud), draws the step at each boundary as
+a lit lip or an overhang's shadow line (which reads in shade too), and keeps only faint tool marks.
+
 ## Next round (proposed 19 Nov 2026, round 3): powder cloud, triggers, sharper flow
 
 **Triggers from people and vehicles.**

@@ -542,9 +542,40 @@ private:
 		PackedInt32Array indices;
 	};
 	static LocalVector<ClimberLeafShape> plant_climber_shapes[CLIMBER_MAX + 1];
+	// Per preset: the scan's detail (r: luminance over its local mean, x0.5; gb: normal slope over the local mean
+	// slope, +0.5), the metres one tile covers, and how strongly it applies (0: no scan).
+	static Ref<Texture2D> bark_scan_detail[PRESET_MAX];
+	static Vector2 bark_scan_tile[PRESET_MAX];
+	static float bark_scan_strength[PRESET_MAX];
+	static Ref<Texture2D> wood_scan_detail;
+	static Vector2 wood_scan_tile;
+	static float wood_scan_strength;
+	// Per preset: scanned leaves unwrapped into the blade's UV frame (docs/bench/trees/leaf_atlas.py), one leaf a
+	// column, multiplied over the procedural venation (_leaf_albedo); and the number of columns.
+	static Ref<Image> leaf_scan_image[PRESET_MAX];
+	static Ref<Texture2D> leaf_scan_composite[PRESET_MAX]; // The scan times the venation (_leaf_albedo).
+	static int leaf_scan_cols[PRESET_MAX];
+	static float leaf_scan_strength[PRESET_MAX];
+	static float leaf_scan_aspect[PRESET_MAX]; // Leaf cards: half-width over length (0: an unwrapped atlas, no cut).
+	static float leaf_scan_fill[PRESET_MAX]; // Leaf cards: the share of the card the leaf covers.
 
 public:
+	// Scanned bark and wood detail (docs/ideas/scan-textures.md): reads scans.cfg in p_dir (art repository
+	// trees/scans), one section per bark scan naming the presets it serves, and [wood] for the wood under lost bark;
+	// returns the presets given a bark scan, plus one for the wood; sections with leaf_atlas (and cols) give the presets
+	// scanned leaves and count one per preset. Call before generating.
+	static int load_scan_set(const String &p_dir, int p_max_size = 2048);
 	static void free_climber_leaves() {
+		for (Ref<Texture2D> &t : bark_scan_detail) {
+			t.unref();
+		}
+		wood_scan_detail.unref();
+		for (Ref<Image> &t : leaf_scan_image) {
+			t.unref();
+		}
+		for (Ref<Texture2D> &t : leaf_scan_composite) {
+			t.unref();
+		}
 		for (Array &a : plant_climber_cache) {
 			a.clear();
 		}
@@ -574,6 +605,9 @@ private:
 	// that builds the full-leaf mesh when a tree first comes within this range.
 	float near_leaf_range = 60.0f; // On by default (every feature on; the desktop tunes cost).
 	bool far_leaves = false; // _add_leaf(): species leaves as their simple twins only.
+	// Close-up leaves (trees.md 5bn): LOD 0 of the near leaves as curved blades (droop, cup, twist), flat from the first
+	// LOD level, a few metres off. On by default.
+	bool near_leaf_detail = true;
 	// Far meshes from LOD 1 (trees.md 8d): with near_leaf_range, every broadleaf's far mesh starts
 	// at the pruned, area-kept LOD 1 leaves; LOD 0 lives only in the near mesh.
 	bool far_lod1 = true;
@@ -1024,15 +1058,30 @@ private:
 	void _add_blade(Builder &r_b, const Vector3 &p_start, const Vector3 &p_along, const Vector3 &p_side, const Vector3 &p_n, float p_length, float p_half_width, int p_steps, int p_lobes, float p_depth, const Color &p_color, bool p_round = false, float p_shape = 0.75f);
 	Builder leaf_twins;
 	HashMap<int, Vector4i> leaf_twin_of; // Leaf part index -> its twin's indices and vertices in leaf_twins.
+	// Close-up leaves (trees.md 5bn): the near mesh's leaves curved at LOD 0, a flat copy of each for the LOD levels.
+	Builder leaf_flats;
+	HashMap<int, Vector4i> leaf_flat_of; // Leaf part index -> its flat copy's indices and vertices in leaf_flats.
+	Builder *detail_leaves = nullptr; // The builder whose leaves get the close-up blades (the build's own leaves).
+	bool blade_detail = false; // _add_blade(): the curved close-up blade.
+	bool blade_card = false; // _add_blade(): a leaf card, full width at every row, cut by the scan's alpha.
 	bool species_leaf_forms = true; // Off for climbers' leaves.
 	int twin_scale_preset = -1;
 	float twin_scale = 1.0f;
 	float twin_scale_width = 0.0f;
 	float _twin_area_scale();
+	int card_scale_preset = -1;
+	float card_scale = 1.0f;
+	float card_scale_width = 0.0f;
+	float _card_scale();
 	void _add_species_blade(Builder &r_b, const Vector3 &p_start, const Vector3 &p_along, const Vector3 &p_side, const Vector3 &p_n, float p_size, float p_hw, float p_slot_area, const Color &p_color);
 	uint32_t compound_slot = 0;
 	Ref<Texture2D> leaf_texture;
 	Ref<Texture2D> _leaf_texture();
+	static Ref<Image> _leaf_venation_image(); // _leaf_texture's venation factor, without mipmaps.
+	// The leaves' albedo: the preset's scanned leaf atlas, or the procedural venation.
+	Ref<Texture2D> _leaf_albedo();
+	// The atlas column the next blades take (_add_leaf sets it per leaf; -1: the whole texture).
+	int blade_col = -1;
 	Ref<Texture2D> leaflet_texture;
 	Ref<Texture2D> leaflet_entire_texture;
 	Ref<Texture2D> _leaflet_texture();
@@ -1214,6 +1263,12 @@ public:
 		near_sources.clear();
 	}
 	float get_near_leaf_range() const { return near_leaf_range; }
+	void set_near_leaf_detail(bool p_on) {
+		near_leaf_detail = p_on;
+		mesh_cache.clear();
+		near_sources.clear();
+	}
+	bool get_near_leaf_detail() const { return near_leaf_detail; }
 	void set_far_lod1(bool p_on) {
 		far_lod1 = p_on;
 		mesh_cache.clear();

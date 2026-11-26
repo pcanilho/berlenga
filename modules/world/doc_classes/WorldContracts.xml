@@ -115,4 +115,12 @@
 			</description>
 		</method>
 	</methods>
+	<signals>
+		<signal name="exclusions_changed">
+			<param index="0" name="area" type="Rect2" />
+			<description>
+				A [WorldExclusion3D] was added, moved, edited or removed; [param area] holds its old and new bounds in metres (x, z, width, depth).
+			</description>
+		</signal>
+	</signals>
 </class>

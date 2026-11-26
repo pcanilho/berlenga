@@ -128,6 +128,8 @@ class RainFall3D : public Node3D {
 	Vector3 source_center;
 
 	float cur_rate = 0.0f;
+	float published_fallback = -1.0f; // the weather_rain_fallback last set (-1 none)
+	void _publish_fallback(float p_rate);
 	float cur_share = 1.0f;
 	float cur_ratio = 0.0f;
 	float cur_weight = 1.0f;

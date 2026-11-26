@@ -216,6 +216,19 @@
 				It also gives [code]vegetation_far(world_pos, albedo, camera_pos)[/code]: call it after [code]grass_ground()[/code] with [code]CAMERA_POSITION_WORLD[/code]. Where plants with a [member PlantSpecies.far_color] grew, it blends their colour into the ground as the plant shader thins them away with distance, with the same curve: none up to 35% of the species' range, all of it at the range. It reads the [code]vegetation_far_map[/code], [code]vegetation_far_rect[/code] and [code]vegetation_far_range[/code] global shader parameters, published after each [method populate] that places such plants.
 			</description>
 		</method>
+		<method name="get_stream_pending" qualifiers="const">
+			<return type="int" />
+			<description>
+				While [member streaming]: the tiles still being placed or waiting to be swapped in, plus one for each change (a burn scar placed, moved or aged, holes, the stand) not yet sent to its tiles. [code]0[/code] once the field shows the world as it is now. A still shot taken right after a change (a [WorldBurnScar3D] added after the plants were built) waits for [code]0[/code] first, as for the path tracer's pending surfaces. Always [code]0[/code] when not streaming.
+			</description>
+		</method>
+		<method name="load_floor_scans" qualifiers="static">
+			<return type="int" />
+			<param index="0" name="dir" type="String" />
+			<description>
+				Loads the scanned forest floor detail named in [code]floor_scans.cfg[/code] under [param dir] (the art repository's terrain layers): sections [code][leaves][/code], [code][needles][/code] and [code][moss][/code], each with a [code]scan[/code] folder name and a [code]tile[/code] in metres. Each scan's luminance over its mean is used as detail only, so the floor keeps its own colours. Under broadleaves it textures the humus between the leaf sprites, under conifers the needle duff, and it gives the moss drifts their structure. Sets the [code]forest_scan_leaves[/code], [code]forest_scan_needles[/code], [code]forest_scan_moss[/code] and [code]forest_scan_tile[/code] global shader parameters read by [method get_floor_shader_code]. Returns the number of scans loaded; a missing folder warns and leaves the floor without scanned detail.
+			</description>
+		</method>
 		<method name="make_game_trails" qualifiers="static">
 			<return type="Array" />
 			<param index="0" name="data_map" type="Node" />
@@ -321,6 +334,27 @@
 			<param index="0" name="species" type="int" />
 			<description>
 				The range the biome's species [param species] is drawn to: its [member PlantSpecies.visibility_range], or for a small species ([member PlantSpecies.detail_size] above 0, with [member detail_reach] on) the distance where that size is still [member detail_pixels] tall, when that is further, up to [member detail_max_range].
+			</description>
+		</method>
+		<method name="get_biome_share_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The share of the ground at [param position] this field's [member biome_channel] holds in [member biome_map]: normalised when the painted channels sum past 1, and 1 outside the map.
+			</description>
+		</method>
+		<method name="notify_biome_map_changed">
+			<return type="void" />
+			<param index="0" name="area" type="Rect2" default="Rect2(0, 0, 0, 0)" />
+			<description>
+				Places again the tiles in [param area] (metres; empty for all) after [member biome_map] was painted.
+			</description>
+		</method>
+		<method name="notify_density_mask_changed">
+			<return type="void" />
+			<param index="0" name="area" type="Rect2" default="Rect2(0, 0, 0, 0)" />
+			<description>
+				Places again the tiles in [param area] (metres; empty for all) after [member density_mask] was painted.
 			</description>
 		</method>
 	</methods>
@@ -454,6 +488,24 @@
 		<member name="paths" type="Dictionary[]" setter="set_paths" getter="get_paths" default="[]">
 			Worn paths, each a [Dictionary] with [code]points[/code] ([PackedVector3Array], the path's centre line), [code]width[/code] (metres, default 1.0) and [code]passes[/code] (walkers a year, default 1000). Trampling falls off across a path as a Gaussian with sigma a quarter of its width, over a wider tail (15% of the walkers, three times the sigma), so plants shorten over a metre or so towards the tread. Plants with a [member PlantSpecies.trample_resistance] thin out and grow shorter where passes outweigh it, following Cole's trampling experiments; trees, logs and stone-top plants are never trampled. Changing it repopulates.
 			The world's game trails ([code]WorldStand.get_trails()[/code], published from [method VegetationField3D.make_game_trails]) are worn the same way, on top of these, and followed when they change.
+		</member>
+		<member name="biome_channel" type="int" setter="set_biome_channel" getter="get_biome_channel" default="-1">
+			The channel of [member biome_map] that holds this field's biome; -1 ignores the map.
+		</member>
+		<member name="biome_map" type="Texture2D" setter="set_biome_map" getter="get_biome_map">
+			A painted map shared by several fields, one biome a channel. A field's plants are kept by its channel's share, so overlapping paint splits the ground; outside the map the field grows everywhere.
+		</member>
+		<member name="biome_map_rect" type="Rect2" setter="set_biome_map_rect" getter="get_biome_map_rect" default="Rect2(0, 0, 0, 0)">
+			The ground [member biome_map] covers, in metres (x, z, width, depth).
+		</member>
+		<member name="clear_button" type="Callable" setter="" getter="get_clear_button" default="Callable()">
+			Clears the placed plants.
+		</member>
+		<member name="editor_preview" type="bool" setter="set_editor_preview" getter="is_editor_preview" default="true">
+			Places plants round the editor's 3D view in the scene being edited, as in the game, without the game-time systems. Nothing it places is saved.
+		</member>
+		<member name="populate_button" type="Callable" setter="" getter="get_populate_button" default="Callable()">
+			Places the plants again.
 		</member>
 	</members>
 	<signals>

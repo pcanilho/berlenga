@@ -35,6 +35,9 @@ extends Node3D
 #   --sun-off             no sun at all: what the sky alone lights
 #   --ground-scans=0      plain ground layers instead of the CC0 scans in art/terrain_layers (fetch_art.sh);
 #                         --ground-scans=rock,scree scans on those layers only
+#   --tex-report[=N]      after each memory line, the N (25) largest textures the renderer holds (size, format, path)
+#   --rt-report[=N]       every N (10) capture frames and while the path tracer settles: resident memory and its counters
+#                         (TLAS instances, BLAS builds and triangles, captured meshes, capture arena, scratch, pending)
 #   --far-shadows=0       no far sun shadows from the ground's horizon toward the sun (raster A/B)
 #   --sky-occlusion=0     ground ambient light without the hills' sky occlusion; --sky-light=0 an even sky for it
 #   --water-param=name:value[;...]   set water shader uniforms on the sea and lakes (floats, true/false, colours as r,g,b,a)
@@ -175,6 +178,12 @@ func _ready() -> void:
 	_phys_steps = Engine.max_physics_steps_per_frame
 	if not (args.has("test") or args.has("checks")):
 		Engine.max_physics_steps_per_frame = 1
+	# Scanned bark detail on the generated trees (art/trees_scans, fetch_art.sh); --bark-scans=0: generated bark alone.
+	if args.get("bark-scans", "1") != "0" and ClassDB.class_has_method("TreeGenerator", "load_scan_set"):
+		_log("bark scans: %d presets" % ClassDB.class_call_static("TreeGenerator", "load_scan_set", ProjectSettings.globalize_path("res://art/trees_scans")))
+	# Scanned forest floor detail (vegetation 81e3fda4, art terrain/layers); --floor-scans=0: generated floor alone.
+	if args.get("floor-scans", "1") != "0" and ClassDB.class_has_method("VegetationField3D", "load_floor_scans"):
+		_log("floor scans: %d" % ClassDB.class_call_static("VegetationField3D", "load_floor_scans", ProjectSettings.globalize_path("res://art/terrain_layers")))
 	if args.get("shadow-filter", "high") == "high":
 		# Stills have no TAA: soft-low shadow filtering leaves dithered penumbras in one frame; soft high does not.
 		RenderingServer.directional_soft_shadow_filter_set_quality(RenderingServer.SHADOW_QUALITY_SOFT_HIGH)
@@ -1039,6 +1048,18 @@ func _ready() -> void:
 		await _snow_strata()
 	if args.has("frost-sorted"):
 		_frost_sorted_cam()
+		if rocks != null:
+			# The stones were laid round the first camera: lay them again round the sorted ground (its border stones are
+			# ground detail, built round the camera), and wait for the detail cells.
+			var fcam := get_viewport().get_camera_3d()
+			if fcam:
+				var fc := fcam.global_position
+				rocks.build_area(Rect2(fc.x - 20.0, fc.z - 20.0, 40.0, 40.0)) # (the detail reaches only metres; more ran out of memory on top of the first build)
+				var fw := 0
+				while rocks.has_method("get_ground_detail_pending") and int(rocks.get_ground_detail_pending()) > 0 and fw < 1200:
+					await get_tree().process_frame
+					fw += 1
+				_log("frost sorted: stones laid round the camera (%d frames for the detail)" % fw)
 	if args.has("walker-snow"):
 		await _walker_snow()
 	if args.has("lodging"):
@@ -1048,6 +1069,15 @@ func _ready() -> void:
 	if args.has("sea-effect"):
 		await _sea_effect()
 	await _docs_links_setup()
+	if args.has("ped-burn") and veg != null and veg.has_method("get_stream_pending"):
+		# The pedestals' burn scar went in after the vegetation was built: its plants thin and shrink under it once
+		# the field has reprocessed the burnt cells (vegetation 201179c6).
+		var pbw := 0
+		await get_tree().process_frame
+		while int(veg.call("get_stream_pending")) > 0 and pbw < 1200:
+			await get_tree().process_frame
+			pbw += 1
+		_log("pedestal burn: vegetation settled after %d frames" % pbw)
 	# Raster: 160 frames, so the sky's reprojected clouds (one pixel of each 4x4 block a frame) have had ten
 	# samples a pixel; fewer leave the first frame's upsampled blocks and the march jitter in the picture
 	# (a game reaches that within a second or two of a cut).
@@ -1133,6 +1163,8 @@ func _ready() -> void:
 			pt_waited += 1
 		_log("path tracer: surfaces ready after %d frames (%d pending)" % [pt_waited, get_viewport().get_render_info(Viewport.RENDER_INFO_TYPE_VISIBLE, Viewport.RENDER_INFO_RT_PENDING_SURFACES)])
 	for i in frames:
+		if args.has("rt-report") and i % int(args.get("rt-report", "10")) == 0:
+			_rt_log("capture frame %d" % i)
 		if args.has("far-published") and (i == frames - 1 or i % 40 == 0):
 			# --far-published: the widest grass field's published far state through the capture (view match rounds).
 			for g in sward:
@@ -1180,6 +1212,8 @@ func _ready() -> void:
 		while can_ask and w < 400 and not RenderingServer.call("is_pathtracing_ready"):
 			await get_tree().process_frame
 			w += 1
+			if args.has("rt-report") and w % int(args.get("rt-report", "10")) == 1:
+				_rt_log("waiting for the path tracer, frame %d" % w)
 		for i in int(args.get("spp-frames", "4")):
 			await get_tree().process_frame
 	if args.has("strike"):
@@ -1246,6 +1280,50 @@ func _ready() -> void:
 			await RenderingServer.frame_post_draw
 			get_viewport().get_texture().get_image().save_png(args["rock-pair"])
 			_log("saved %s (rocks %s, paused)" % [args["rock-pair"], args.get("rock-pair-prop", "")])
+		if args.has("mat-pair") and landscape != null and landscape.material != null:
+			# --mat-pair=PATH --mat-pair-prop=name:value[;...]: the same moment with the ground's TerrainMaterial3D
+			# properties changed (e.g. mud_scan:null for the mud scan's before frame): paused, --mat-pair-frames (12) more.
+			process_mode = Node.PROCESS_MODE_ALWAYS
+			get_tree().paused = true
+			for kv in String(args.get("mat-pair-prop", "")).split(";", false):
+				var pv := kv.split(":")
+				landscape.material.set(pv[0], str_to_var(pv[1]))
+			for i in int(args.get("mat-pair-frames", "12")):
+				await get_tree().process_frame
+			await RenderingServer.frame_post_draw
+			get_viewport().get_texture().get_image().save_png(args["mat-pair"])
+			_log("saved %s (ground material %s, paused)" % [args["mat-pair"], args.get("mat-pair-prop", "")])
+		if args.has("land-pair") and landscape != null:
+			# --land-pair=PATH --land-pair-prop=name:value[;...]: the same moment with Landscape3D properties changed
+			# (e.g. terracette_relief:0.0): the scene paused, the landscape rebuilt over --land-pair-frames (90).
+			process_mode = Node.PROCESS_MODE_ALWAYS
+			get_tree().paused = true
+			landscape.process_mode = Node.PROCESS_MODE_ALWAYS
+			for kv in String(args.get("land-pair-prop", "")).split(";", false):
+				var pv := kv.split(":")
+				landscape.set(pv[0], str_to_var(pv[1]))
+			for i in int(args.get("land-pair-frames", "90")):
+				await get_tree().process_frame
+			await RenderingServer.frame_post_draw
+			get_viewport().get_texture().get_image().save_png(args["land-pair"])
+			_log("saved %s (landscape %s, paused)" % [args["land-pair"], args.get("land-pair-prop", "")])
+		if args.has("weather-pair") and weather != null:
+			# --weather-pair=PATH --weather-pair-prop=name:value[;...]: the same moment with WeatherMap3D properties
+			# changed (a docs on/off pair from one run): the scene paused, the weather maps refreshed, then
+			# --weather-pair-frames (24) more frames. After --pt-pair it is path traced too.
+			process_mode = Node.PROCESS_MODE_ALWAYS
+			get_tree().paused = true
+			weather.process_mode = Node.PROCESS_MODE_ALWAYS
+			for kv in String(args.get("weather-pair-prop", "")).split(";", false):
+				var pv := kv.split(":")
+				weather.set(pv[0], str_to_var(pv[1]))
+			if weather.has_method("update_cloud_shadow"):
+				weather.update_cloud_shadow()
+			for i in int(args.get("weather-pair-frames", "24")):
+				await get_tree().process_frame
+			await RenderingServer.frame_post_draw
+			get_viewport().get_texture().get_image().save_png(args["weather-pair"])
+			_log("saved %s (weather %s, paused)" % [args["weather-pair"], args.get("weather-pair-prop", "")])
 		if data_map != null and data_map.has_method("get_aridity_at"):
 			var cq: Camera3D = get_viewport().get_camera_3d()
 			var gq := cq.global_position - cq.global_basis.z * 6.0
@@ -1904,40 +1982,16 @@ func _forest_settle() -> void:
 # Real ground scans (Poly Haven CC0, art repository terrain/layers, fetched by docs/bench/landscape/fetch_art.sh into
 # docs/bench/landscape/art/terrain_layers). Each layer keeps the geology's colour (detail_only: the scan adds detail
 # only, to colour and roughness) and tiles at the scan's real size. Loaded from the files directly (the folder is .gdignore'd, no import step).
-const GROUND_SCANS := {"rock": ["dark_rock_02", 2.0], "scree": ["rocks_ground_02", 2.0], "soil": ["forest_ground_06", 2.11], "alluvium": ["gravelly_sand", 2.48], "sand": ["sand_03", 2.0]}
-
-func _ground_scan_tex(path: String, normal := false) -> Texture2D:
-	var img := Image.load_from_file(path)
-	if img == null or img.is_empty():
-		return null
-	img.generate_mipmaps(normal)
-	return ImageTexture.create_from_image(img)
-
 func _apply_ground_scans(tm: TerrainMaterial3D, dir: String, only := "1") -> int:
-	var n := 0
-	for layer_name in GROUND_SCANS:
-		if only != "1" and not (layer_name in only.split(",")):
-			continue # --ground-scans=rock,scree: those layers only
-		var scan: String = GROUND_SCANS[layer_name][0]
-		var base := dir.path_join(scan).path_join(scan)
-		if not FileAccess.file_exists(base + "_albedo.jpg"):
-			continue
-		var l := TerrainMaterialLayer.new()
-		var maps: String = args.get("scan-maps", "anrh") # --scan-maps=an: only the albedo and normal maps (A/B)
-		if "a" in maps:
-			l.albedo_texture = _ground_scan_tex(base + "_albedo.jpg")
-		if "n" in maps:
-			l.normal_texture = _ground_scan_tex(base + "_normal.jpg", true)
-		if "r" in maps:
-			l.roughness_texture = _ground_scan_tex(base + "_roughness.jpg")
-		if "h" in maps:
-			l.height_texture = _ground_scan_tex(base + "_height.jpg")
-		l.tile_size = GROUND_SCANS[layer_name][1]
-		var c: Color = tm.get_shader_parameter("tm_%s_color" % layer_name) if tm.get_shader_parameter("tm_%s_color" % layer_name) is Color else Color.WHITE
-		l.color = c # the geology's colour: the scan's mean is divided out (detail_only)
-		tm.set("%s_layer" % layer_name, l)
-		n += 1
-	return n
+	# The whole scan set (layers and overlay scans) from the art folder's scans.cfg (TerrainMaterial3D.load_scan_set).
+	# --ground-scans=rock,scree: scans on those slots only; --overlay-scans=0: the five layers' scans only (A/B);
+	# --scan-maps=an: only the albedo and normal maps.
+	var slots := PackedStringArray()
+	if only != "1":
+		slots = only.split(",")
+	elif args.get("overlay-scans", "1") == "0":
+		slots = PackedStringArray(["rock", "scree", "soil", "alluvium", "sand"])
+	return tm.load_scan_set(dir, slots, args.get("scan-maps", ""))
 
 func _log(s: String) -> void:
 	print("[landscape] ", s)
@@ -2030,6 +2084,8 @@ func _generate() -> void:
 		lake_marker.set_meta("rock_lip", true)
 		add_child(lake_marker)
 	gen = TerrainGenerator3D.new()
+	if "generate_on_ready" in gen:
+		gen.generate_on_ready = false # this bench generates itself, with its own settings (older builds lack it)
 	# Heavy generator options are on by default: this bench sets each from its own flags (dunes on, --dunes=0 off).
 	gen.glacial_enabled = false
 	gen.glacial_converged = false
@@ -2400,6 +2456,8 @@ func _generate() -> void:
 			rocks.name = "Rocks"
 			rocks.streaming = false
 			add_child(rocks)
+			if args.get("stone-scans", "1") != "0": # --stone-scans=0: the stones without scan detail (A/B)
+				_log("stone scans: %d" % rocks.load_scan_set(ProjectSettings.globalize_path("res://art/terrain_layers")))
 			rocks.generator = rocks.get_path_to(gen)
 			if "close_up_enabled" in rocks:
 				rocks.close_up_enabled = args.get("rock-closeup", "1") != "0" # real close-up detail near the camera
@@ -3276,14 +3334,32 @@ func _docs_links_setup() -> void:
 		weather.air_follows_climate = false
 		weather.cloud_cover = 1.0 # the rain (snow) falls where the cover is
 		weather.temperature = minf(weather.temperature, -4.0)
-		weather.rain_rate = float(args["snow-fall"]) * float(args.get("snow-fall-density", "200")) / 100.0 / hrs # cm x kg/m3 / 100 = mm of water
-		weather.snap_to_settings()
+		# The water in CM of fresh snow: at the fall's own new-snow density (Hedstrom and Pomeroy 1998, about 80 kg/m3 at
+		# -4 C), as the snowpack lays it down, unless --snow-fall-density=KG_M3 says otherwise.
+		var fall_rho := float(args["snow-fall-density"]) if args.has("snow-fall-density") else SnowCover3D.new_snow_density(weather.temperature)
+		weather.rain_rate = float(args["snow-fall"]) * fall_rho / 100.0 / hrs # cm x kg/m3 / 100 = mm of water
+		var cq0: Camera3D = get_viewport().get_camera_3d()
+		var fq0 := cq0.global_position if cq0 != null else Vector3.ZERO
+		var want := float(args["snow-fall"]) / 100.0
+		var d0 := snow.get_depth_at(fq0)
 		var tf := Time.get_ticks_msec()
-		snow.advance(hrs * 3600.0)
-		var wf := 0
-		while snow.is_updating() and wf < 600:
-			await get_tree().process_frame
-			wf += 1
+		# The pack settles and the weather lets part of the rate through, so a fall short of CM at the camera is topped
+		# up by a further fall scaled to the shortfall (at most three), which keeps CM the depth the frame shows.
+		var pass_n := 0
+		var got := 0.0
+		while pass_n < 4:
+			weather.snap_to_settings()
+			snow.advance(hrs * 3600.0)
+			var wf := 0
+			while snow.is_updating() and wf < 600:
+				await get_tree().process_frame
+				wf += 1
+			var step := snow.get_depth_at(fq0) - d0 - got # this pass's own gain at the camera
+			got += step
+			pass_n += 1
+			if got >= want * 0.9 or pass_n >= 4:
+				break
+			weather.rain_rate *= clampf((want - got) / maxf(step, want * 0.05), 0.1, 10.0)
 		weather.rain_rate = keep[0]
 		weather.temperature = keep[1]
 		weather.air_follows_climate = keep[2]
@@ -3291,7 +3367,7 @@ func _docs_links_setup() -> void:
 		weather.snap_to_settings()
 		var cq: Camera3D = get_viewport().get_camera_3d()
 		var fq := cq.global_position if cq != null else Vector3.ZERO
-		_log("snow fall: %.3f m deep at the camera after %.1f h (%d ms)" % [snow.get_depth_at(fq), hrs, Time.get_ticks_msec() - tf])
+		_log("snow fall: %.3f m deep at the camera after %d x %.1f h (%d ms)" % [snow.get_depth_at(fq), pass_n, hrs, Time.get_ticks_msec() - tf])
 		if args.has("probe-at"):
 			# --probe-at=X,Z: water and ice reads at a point after the fall (a bare patch under fresh snow).
 			var pz := _vec2_arg(args["probe-at"])
@@ -3300,6 +3376,23 @@ func _docs_links_setup() -> void:
 				str(data_map.call("get_water_depth_at", pq)) if data_map.has_method("get_water_depth_at") else "n/a",
 				str(snow.call("get_ice_thickness_at", pq)) if snow.has_method("get_ice_thickness_at") else "n/a",
 				str(snow.call("get_water_level_at", pq)) if snow.has_method("get_water_level_at") else "n/a"])
+		if args.has("snow-probe-grid"):
+			# --snow-probe-grid=x0,z0,size,step: snow depth (mm) over a square, rows of z, as a map.
+			var g := String(args["snow-probe-grid"]).split(",")
+			var x0 := float(g[0])
+			var z0 := float(g[1])
+			var sz := float(g[2])
+			var st := float(g[3])
+			var zz := z0
+			while zz <= z0 + sz:
+				var row := "snow grid z %6.1f:" % zz
+				var xx := x0
+				while xx <= x0 + sz:
+					var gq := Vector3(xx, height_at(xx, zz), zz)
+					row += " %3d" % int(round(snow.get_depth_at(gq) * 1000.0))
+					xx += st
+				_log(row)
+				zz += st
 	if args.has("snow-days") and snow != null:
 		var days := float(args["snow-days"])
 		var t := Time.get_ticks_msec()
@@ -3625,7 +3718,9 @@ func _weather_settings() -> void:
 func _run_weather() -> void:
 	var t := Time.get_ticks_msec()
 	# A night and a day of weather: snow builds on the peaks, rain wets the lowlands.
-	var hours := float(args.get("hours", "12"))
+	# --haboob grows its storm before this (in _ready): hours more of weather would carry the storm and its wall off the
+	# map (it drifts on the steering wind and never ends), so with --haboob the run is 0 hours unless --hours is given.
+	var hours := float(args.get("hours", "0" if args.has("haboob") else "12"))
 	if args.has("smoke-haze"):
 		weather.set("smoke_haze", args["smoke-haze"] != "0") # --smoke-haze=0: fires' smoke does not haze the air
 	if args.has("smoke-kg") and weather.has_method("add_smoke"):
@@ -4213,6 +4308,81 @@ func _build_camera() -> void:
 					best_pos = Vector3(c.x, y, c.z)
 			cam.position = best_pos
 			cam.look_at(lake_center)
+		"terracettes":
+			# Grazing terracettes (Landscape3D.terracette_relief, WorldContracts::terracette_at): a soil slope of
+			# --tc-min..--tc-max degrees (25..35) with strong treads, its contour as square to the sun as the sun allows
+			# (low raking light down the treads), seen raised and oblique from --tc-dist m (30) out and --tc-up m (14)
+			# up, looking at the spot. Not near the sea, no rock exposure.
+			var to_sun_t := Vector2(sun.global_basis.z.x, sun.global_basis.z.z).normalized()
+			var tmin := float(args.get("tc-min", "25"))
+			var tmax := float(args.get("tc-max", "35"))
+			var best_tc := -INF
+			var tspot := Vector3.ZERO
+			var tdown := Vector2(0, 1)
+			var tr := int(args.get("tc-search", "700"))
+			if args.has("tc-spot"):
+				# --tc-spot=x,z: this spot, not a search (the same camera across runs whose sun differs).
+				var ts := String(args["tc-spot"]).split_floats(",")
+				var sp := Vector3(ts[0], 0, ts[1])
+				var sgx := gen.get_height(sp + Vector3(3, 0, 0)) - gen.get_height(sp - Vector3(3, 0, 0))
+				var sgz := gen.get_height(sp + Vector3(0, 0, 3)) - gen.get_height(sp - Vector3(0, 0, 3))
+				tspot = Vector3(sp.x, gen.get_height(sp), sp.z)
+				tdown = Vector2(-sgx, -sgz).normalized()
+				best_tc = 0.0
+				tr = -1
+			for zz in range(-tr, tr + 1, 6):
+				for xx in range(-tr, tr + 1, 6):
+					var p := Vector3(xx, 0, zz)
+					var hp := gen.get_height(p)
+					if hp < gen.sea_level + 8.0:
+						continue
+					var gx := gen.get_height(p + Vector3(3, 0, 0)) - gen.get_height(p - Vector3(3, 0, 0))
+					var gz := gen.get_height(p + Vector3(0, 0, 3)) - gen.get_height(p - Vector3(0, 0, 3))
+					var sl := rad_to_deg(atan(Vector2(gx, gz).length() / 6.0))
+					if sl < tmin or sl > tmax:
+						continue
+					# The slope stays in the band 15 m round (a real hillside, not a bank).
+					var steady := true
+					for o in [Vector3(15, 0, 0), Vector3(-15, 0, 0), Vector3(0, 0, 15), Vector3(0, 0, -15)]:
+						var q: Vector3 = p + o
+						var qx := gen.get_height(q + Vector3(3, 0, 0)) - gen.get_height(q - Vector3(3, 0, 0))
+						var qz := gen.get_height(q + Vector3(0, 0, 3)) - gen.get_height(q - Vector3(0, 0, 3))
+						var qs := rad_to_deg(atan(Vector2(qx, qz).length() / 6.0))
+						if qs < tmin - 5.0 or qs > tmax + 5.0:
+							steady = false
+					if not steady:
+						continue
+					var g := gen.get_material_geology_at(p)
+					if g.r < 0.25 or g.g > 0.0 or absf(g.b) > 0.0:
+						continue
+					var grad := Vector2(gx, gz) / 6.0
+					var band := 0.0
+					for k in 10:
+						band = maxf(band, GrassField3D.get_terracette_at(Vector3(xx, hp - float(k) * 0.2, zz), grad).x)
+					if band < 0.8 and not args.has("tc-any"):
+						continue # --tc-any: any soil slope in the band, terraced or not (cured-cover and plant frames)
+					var down := Vector2(-gx, -gz).normalized()
+					# Raking: the contour along the sun (down the slope square to it), the face still lit.
+					# Lit: the slope faces the sun at least --tc-lit (0.2) of the way, so the treads catch light and the
+					# risers' shade reads; raking within that.
+					if down.dot(to_sun_t) < float(args.get("tc-lit", "0.2")):
+						continue
+					var rake := 1.0 - absf(down.dot(to_sun_t))
+					var score := rake * 2.0 - absf(sl - 30.0) / 10.0 - Vector2(xx, zz).length() / 4000.0
+					if score > best_tc:
+						best_tc = score
+						tspot = Vector3(xx, hp, zz)
+						tdown = down
+			var td := Vector3(tdown.x, 0, tdown.y)
+			var tside := Vector3(-td.z, 0, td.x)
+			# Oblique: out down the slope and to the side, so the steps read as stripes across the frame.
+			var tdir := (td + tside * float(args.get("tc-oblique", "0.6"))).normalized()
+			var tcp := tspot + tdir * float(args.get("tc-dist", "30"))
+			tcp.y = maxf(height_at(tcp.x, tcp.z) + 1.7, tspot.y + float(args.get("tc-up", "14")))
+			cam.fov = 50.0
+			cam.position = tcp
+			cam.look_at(tspot + Vector3(0, float(args.get("tc-look-up", "0")), 0))
+			_log("terracette view: spot %s, score %.2f, camera %s" % [str(tspot.round()), best_tc, str(tcp.round())])
 		"talus":
 			# Standing 1.7 m high 20 to 30 m out from the foot of a talus cone (the densest 40 m patch of scree stones,
 			# --talus-pick=N for the Nth densest), looking back up at the cone and the cliff face above it.
@@ -4427,10 +4597,66 @@ func _build_camera() -> void:
 			var pr := float(args.get("ped-search", "600"))
 			var pbest := 0.0
 			var pp := Vector3.INF
+			var prect := Rect2(-pr, -pr, 2.0 * pr, 2.0 * pr)
+			if args.has("ped-burn") and gen != null:
+				# --ped-burn=r,years: a fresh burn scar (WorldBurnScar3D) of radius r centred on the soil slope in the
+				# --ped-min-slope..--ped-max-slope band (steady 10 m round) nearest the middle, and the pedestal spots
+				# searched under it (a recent fire leaves the soil bare: the pedestals' wet-climate case).
+				var pb := String(args["ped-burn"]).split_floats(",")
+				var br := pb[0] if pb.size() > 0 else 30.0
+				var smin := float(args.get("ped-min-slope", "15"))
+				var smax2 := float(args.get("ped-max-slope", "25"))
+				# Candidates nearest the middle first; the scar goes on each in turn until the rocks find pedestal
+				# spots under it (their own gates: soil depth, no water, sand, talus or rock).
+				var cands := []
+				for zz in range(-int(pr), int(pr) + 1, 8):
+					for xx in range(-int(pr), int(pr) + 1, 8):
+						var p := Vector3(xx, 0, zz)
+						if gen.get_height(p) < gen.sea_level + 8.0:
+							continue
+						var ok := true
+						for o in [Vector3.ZERO, Vector3(10, 0, 0), Vector3(-10, 0, 0), Vector3(0, 0, 10), Vector3(0, 0, -10)]:
+							var q: Vector3 = p + o
+							var qs := rad_to_deg(data_map.get_slope_at(Vector3(q.x, gen.get_height(q), q.z)))
+							var g := gen.get_material_geology_at(q)
+							if qs < smin or qs > smax2 or g.g > 0.0 or absf(g.b) > 0.0:
+								ok = false
+								break
+						if ok:
+							cands.append(Vector3(xx, Vector2(xx, zz).length(), zz))
+				cands.sort_custom(func(a, b): return a.y < b.y)
+				if cands.is_empty():
+					_log("pedestal burn: no soil slope of %.0f..%.0f deg within %.0f m" % [smin, smax2, pr])
+				else:
+					var scar = ClassDB.instantiate("WorldBurnScar3D")
+					scar.name = "PedestalBurn"
+					add_child(scar)
+					scar.size = Vector2(br, br) * 2.0
+					scar.age_years = pb[1] if pb.size() > 1 else 0.4
+					var tries := 0
+					# Spaced candidates only (one per scar width), up to --ped-burn-tries (60).
+					var used := []
+					for c in cands:
+						var far := true
+						for u in used:
+							if Vector2(c.x - u.x, c.z - u.z).length() < br:
+								far = false
+								break
+						if not far:
+							continue
+						used.append(c)
+						tries += 1
+						scar.global_position = Vector3(c.x, gen.get_height(Vector3(c.x, 0, c.z)), c.z)
+						prect = Rect2(c.x - br * 0.7, c.z - br * 0.7, br * 1.4, br * 1.4)
+						if rocks == null or not rocks.has_method("get_pedestal_spots") or not rocks.get_pedestal_spots(prect, 2.0, 1).is_empty():
+							break
+						if tries >= int(args.get("ped-burn-tries", "60")):
+							break
+					_log("pedestal burn: scar at %s, %.0f m, %.1f years (%d of %d slopes tried)" % [str(scar.global_position.round()), br, scar.age_years, tries, cands.size()])
 			if rocks != null and rocks.has_method("get_pedestal_spots"):
 				# Rocks 3589ba9f: the pedestals' own spots (bare patches only), deepest splash first; the first on
 				# gentle ground.
-				var spots: PackedVector4Array = rocks.get_pedestal_spots(Rect2(-pr, -pr, 2.0 * pr, 2.0 * pr), float(args.get("ped-step", "2")), int(args.get("ped-count", "1024")))
+				var spots: PackedVector4Array = rocks.get_pedestal_spots(prect, float(args.get("ped-step", "2")), int(args.get("ped-count", "1024")))
 				var smax := 0.0
 				for sp4 in spots:
 					var q := Vector3(sp4.x, sp4.y, sp4.z)
@@ -5219,6 +5445,12 @@ func _build_cover() -> void:
 			for st in [PlantGenerator.SCRUB_GARRIGUE, PlantGenerator.SCRUB_MAQUIS]:
 				calls.append(["make_scrub", [st, 3, true, season, woody]])
 				keys.append("make_scrub:%d" % st)
+		if args.get("flowering-grasses", "1") != "0" and ClassDB.class_has_method("PlantGenerator", "make_flowering_grasses"):
+			calls.append(["make_flowering_grasses", [3, true, season]])
+			keys.append("make_flowering_grasses:0")
+		if args.get("dry-tussocks", "1") != "0" and ClassDB.class_has_method("PlantGenerator", "make_dry_tussocks"):
+			calls.append(["make_dry_tussocks", [3, true, season]])
+			keys.append("make_dry_tussocks:0")
 		calls.append(["make_floor", [floor_set, 3, true, 15.0, season]])
 		keys.append("make_floor:%d" % floor_set)
 		if gen.dunes_enabled and args.get("dune-plants", "1") != "0":
@@ -5335,6 +5567,21 @@ func _build_cover() -> void:
 			for sp in (pre["make_scrub:%d" % st] if pre.has("make_scrub:%d" % st) else PlantGenerator.make_scrub(st, 3, true, season, woody)):
 				sp.set_meta("own_rules", true)
 				b.species.append(sp)
+	if args.get("flowering-grasses", "1") != "0" and ClassDB.class_has_method("PlantGenerator", "make_flowering_grasses"):
+		# The tall meadow (Yorkshire fog, false oat-grass, foxtail, hair-grass, ox-eye daisy, cranesbill, red campion)
+		# in drifts over the sward, in season. On by default; --flowering-grasses=0 turns it off.
+		var fg: Array = pre["make_flowering_grasses:0"] if pre.has("make_flowering_grasses:0") else ClassDB.class_call_static("PlantGenerator", "make_flowering_grasses", 3, true, season)
+		for sp in fg:
+			b.species.append(sp)
+		_log("flowering grasses: %d species" % fg.size())
+	if args.get("dry-tussocks", "1") != "0" and ClassDB.class_has_method("PlantGenerator", "make_dry_tussocks"):
+		# Dry tussocks over the cured cover (esparto 150-470 mm of rain, thatching grass 320-850 mm; vegetation
+		# d9dfa4a8): only under 1000 mm, off rock, shade and bare patches, curing with the season, by their own rules.
+		var tus: Array = pre["make_dry_tussocks:0"] if pre.has("make_dry_tussocks:0") else ClassDB.class_call_static("PlantGenerator", "make_dry_tussocks", 3, true, season)
+		for sp in tus:
+			sp.set_meta("own_rules", true)
+			b.species.append(sp)
+		_log("dry tussocks: %d species" % tus.size())
 	if args.get("marsh-plants", "1") != "0":
 		# Salt marsh zoned by height in the tidal frame and the shingle backshore above it (the data map's
 		# geology source is the generator with its sea), each set by its own tide, exposure and beach rules.
@@ -7351,6 +7598,38 @@ func _mem_log(tag: String) -> void:
 			RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_BUFFER_MEM_USED) >> 20,
 			RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_VIDEO_MEM_USED) >> 20,
 			OS.get_static_memory_usage() >> 20])
+	if args.has("tex-report"):
+		# --tex-report: the largest textures the renderer holds (size, format, source) after each memory line.
+		var tl: Array = RenderingServer.call("get_texture_debug_usage") if RenderingServer.has_method("get_texture_debug_usage") else []
+		tl.sort_custom(func(a, b): return int(a["bytes"]) > int(b["bytes"]))
+		var total := 0
+		for t in tl:
+			total += int(t["bytes"])
+		_log("textures %s: %d, %d MB" % [tag, tl.size(), total >> 20])
+		for i in mini(int(args.get("tex-report", "25")), tl.size()):
+			var t: Dictionary = tl[i]
+			_log("  %6.1f MB %dx%dx%d fmt %d %s" % [int(t["bytes"]) / 1048576.0, t["width"], t["height"], t["depth"], t["format"], t["path"]])
+
+
+# --rt-report[=N]: the path tracer's per-frame counters every N frames (10) while it settles (memory hunts).
+func _rt_log(tag: String) -> void:
+	var vp := get_viewport()
+	var t := Viewport.RENDER_INFO_TYPE_VISIBLE
+	var rss := 0
+	var st := FileAccess.open("/proc/self/status", FileAccess.READ)
+	while st != null and not st.eof_reached():
+		var ln := st.get_line()
+		if ln.begins_with("VmRSS:"):
+			rss = int(ln.substr(6).strip_edges().split(" ")[0]) >> 10
+			break
+	_log("rt %s: resident %d MB, buffers %d MB; tlas %d, blas builds %d (%d tris), refits %d, captured %d meshes / %d verts, arena %d/%d KB, scratch %d/%d KB, pending %d" % [tag, rss,
+			RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_BUFFER_MEM_USED) >> 20,
+			vp.get_render_info(t, Viewport.RENDER_INFO_RT_TLAS_INSTANCES), vp.get_render_info(t, Viewport.RENDER_INFO_RT_BLAS_BUILDS),
+			vp.get_render_info(t, Viewport.RENDER_INFO_RT_TRIANGLES_BUILT), vp.get_render_info(t, Viewport.RENDER_INFO_RT_BLAS_REFITS),
+			vp.get_render_info(t, Viewport.RENDER_INFO_RT_CAPTURED_MESHES), vp.get_render_info(t, Viewport.RENDER_INFO_RT_CAPTURED_VERTICES),
+			vp.get_render_info(t, Viewport.RENDER_INFO_RT_CAPTURE_ARENA_USED_KB), vp.get_render_info(t, Viewport.RENDER_INFO_RT_CAPTURE_ARENA_SIZE_KB),
+			vp.get_render_info(t, Viewport.RENDER_INFO_RT_SCRATCH_USED_KB), vp.get_render_info(t, Viewport.RENDER_INFO_RT_SCRATCH_SIZE_KB),
+			vp.get_render_info(t, Viewport.RENDER_INFO_RT_PENDING_SURFACES)])
 
 
 func _snow_strata() -> void:
@@ -7359,10 +7638,19 @@ func _snow_strata() -> void:
 	# surface hoar, a gale's wind slab and a fresh fall), then a trench --strata-w (1.2) m wide pressed to the ground,
 	# running along the sun's bearing so the low light rakes the far wall. The camera stands --strata-dist (1.5) m from
 	# that wall at --strata-eye (1.7) m over the snow, looking down into it.
+	# A pit study: the season's avalanches and falling roof slabs stay off (--strata-avalanches=1 keeps them), so the
+	# deepest gentle snow is not a debris cone and no powder cloud hangs in the frame.
+	if args.get("strata-avalanches", "0") != "1":
+		snow.set("avalanches_enabled", false)
+		snow.set("bodies_enabled", false)
 	var wr: Rect2 = gen.get_world_rect()
 	var best := Vector3.INF
 	var mind := float(args.get("strata-min", "0.8"))
-	var xx := wr.position.x + 200.0
+	if args.has("strata-at"):
+		# --strata-at=X,Z: the pit here instead of the highest gentle deep snow.
+		var sa := _vec2_arg(args["strata-at"])
+		best = Vector3(sa.x, gen.get_height(Vector3(sa.x, 0, sa.y)), sa.y)
+	var xx := wr.position.x + 200.0 if not args.has("strata-at") else wr.end.x
 	while xx < wr.end.x - 200.0:
 		var zz := wr.position.y + 200.0
 		while zz < wr.end.y - 200.0:
@@ -7390,23 +7678,35 @@ func _snow_strata() -> void:
 	weather.wind_speed = 1.0
 	weather.snap_to_settings()
 	weather.advance(60.0)
-	snow.call("add_depth_hoar", 0.6)
+	# The week in the order a pit keeps it apart (a gale after the crust and the hoar made them and both storms one
+	# wind slab, and the season's own pack is one layer): a mid-winter storm long settled over the faceted base, then
+	# a storm the gale packs into a slab, its top melted and refrozen, a clear night's hoar, the next storm over it
+	# and a last fresh fall.
+	snow.call("add_depth_hoar", 0.45) # the faceted base: the lower share of the pack
+	snow.advance(3600.0)
+	snow.call("add_snow", 60.0, 250.0) # a mid-winter storm, settled (old rounded snow)
 	snow.advance(3600.0)
 	snow.call("add_snow", 20.0, 120.0) # a storm's snow
-	snow.call("add_crust", 0.02, 3.0) # its top melts and refreezes
-	snow.advance(3600.0)
-	snow.call("add_hoar", 8.0) # a clear night's surface hoar
-	snow.call("add_snow", 16.0, 110.0) # buried by the next storm
-	weather.wind_speed = 14.0 # a gale packs the top
+	weather.wind_speed = 14.0 # a gale packs it
 	weather.snap_to_settings()
 	weather.advance(60.0)
 	snow.advance(3.0 * 3600.0)
 	weather.wind_speed = 1.0
 	weather.snap_to_settings()
 	weather.advance(60.0)
+	snow.call("add_crust", 0.02, 3.0) # its top melts and refreezes
+	snow.advance(3600.0)
+	snow.call("add_hoar", 8.0) # a clear night's surface hoar
+	snow.call("add_snow", 16.0, 110.0) # buried by the next storm
+	snow.advance(3600.0)
 	snow.call("add_snow", 10.0, 80.0) # a last fresh fall
 	var to_sun := sun.global_basis.z
 	var sf := Vector3(to_sun.x, 0, to_sun.z).normalized()
+	if args.get("strata-snap", "1") != "0":
+		# The trench along the nearer of the deformation field's axes to the sun's bearing: a wall turned off the
+		# field's texel grid by a few degrees is a staircase of texels (ribs down a 2 m face, square steps at its
+		# edge); --strata-snap=0 keeps the sun's own bearing.
+		sf = Vector3(signf(sf.x), 0, 0) if absf(sf.x) >= absf(sf.z) else Vector3(0, 0, signf(sf.z))
 	var nrm := Vector3(sf.z, 0, -sf.x)
 	var c3: Camera3D = get_viewport().get_camera_3d()
 	var surf: Node3D = ClassDB.instantiate("SnowSurface3D")
@@ -7420,16 +7720,46 @@ func _snow_strata() -> void:
 	var g: float = snow.get_ground_height_at(best) if snow.has_method("get_ground_height_at") else best.y
 	var w := float(args.get("strata-w", "1.2"))
 	surf.set("rim_share", 0.0) # dug: the snow is thrown out, no pressed rim
+	# A study pit is cut and read at once, its walls standing (--strata-collapse=1 lets them give way as a rut's do;
+	# the collapsing wall is drawn as jagged spikes for now, see docs/ideas/snow.md).
+	surf.set("wall_collapse", args.get("strata-collapse", "0") == "1")
 	surf.set("compacted_density", 900.0)
-	surf.call("press_box", Vector3(best.x, g, best.z), Vector2(w, 8.0), atan2(sf.x, sf.z), g + 0.01)
+	# The trench cut as deep as the pack lets a press go everywhere along it (its compaction limit, about three
+	# quarters of the depth): a floor held at the pit's own ground level cut nothing where the slope fell away and
+	# left a ramp down half the trench.
+	surf.call("press_box", Vector3(best.x, g, best.z), Vector2(w, 8.0), atan2(sf.x, sf.z), g - 4.0)
 	for i in 30:
 		await get_tree().physics_frame
+	if args.has("strata-profile"):
+		# --strata-profile: the dent (cm) along both walls, 2 cm in from the edge and 2 cm out, every 3 cm over 1.2 m.
+		for side in [-1.0, 1.0]:
+			for off in [-0.02, 0.02]:
+				var vals := PackedStringArray()
+				for k in 40:
+					var q: Vector3 = best + nrm * float(side) * (w * 0.5 + float(off)) + sf * (1.0 + 0.03 * k)
+					vals.append("%d" % int(float(surf.call("get_dent_at", q)) * 100.0))
+				_log("strata wall %+d %+.2f: %s" % [int(side), off, " ".join(vals)])
 	var top := g + snow.get_depth_at(best + nrm * 3.0)
 	var wall := best - nrm * (w * 0.5)
 	var cp := wall + nrm * float(args.get("strata-dist", "1.5"))
 	c3.global_position = Vector3(cp.x, top + float(args.get("strata-eye", "1.7")), cp.z)
 	c3.look_at(Vector3(wall.x, g + 0.5 * (top - g), wall.z) + sf * 0.8)
 	_log("snow strata: %.2f m of snow at %s (%.0f m), trench %.1f m wide along the sun, cam %s" % [top - g, str(best.round()), best.y, w, str(c3.global_position.snapped(Vector3.ONE * 0.1))])
+	for o in [Vector3.ZERO, nrm * 3.0, nrm * 6.0, sf * 4.0]:
+		var q: Vector3 = best + o
+		_log("snow strata surface at %s: depth %.2f m, sastrugi %s, suncups %s m, hoar %s, new %s m" % [str(q.round()), snow.get_depth_at(q), str(snow.call("get_sastrugi_at", q)), str(snow.call("get_suncup_relief_at", q)), str(snow.call("get_hoar_at", q)), str(snow.call("get_new_snow_at", q))])
+	var av: Node = snow.find_child("*SnowAvalanche3D*", true, false)
+	if av != null:
+		_log("snow strata: avalanches released %d, deposited %.0f m3, run-out %s" % [av.call("get_release_count"), av.call("get_deposited_volume"), str(av.call("get_run_out"))])
+	_log("snow strata layers at the pit (bottom up): %s" % str(snow.call("get_layers_at", best)))
+	var rows := PackedStringArray()
+	for j in 9:
+		var row := PackedStringArray()
+		for i in 9:
+			var q2 := best + Vector3(i - 4, 0, j - 4) * 1.0
+			row.append("%4d" % int(snow.get_depth_at(q2) * 100.0))
+		rows.append(" ".join(row))
+	_log("snow strata depth (cm, 1 m grid round the pit):\n" + "\n".join(rows))
 
 
 # Tripo's lobster pots come with their netting as sparse wire strands: each of the three stacked pots gets an alpha-cut
@@ -7502,6 +7832,8 @@ func _frost_sorted_cam() -> void:
 	var upd := float(args.get("fs-up", "25"))
 	var gmax := 0.0
 	var fmin := float(args.get("fs-min", "0.6")) # --fs-min: the sorting strength a spot and its ring need
+	var bfg := 0.0 # the best flat point (its sorting + its ring's mean), for when no ring passes
+	var bf := Vector3.INF
 	var xx := wr.position.x + 100.0
 	while xx < wr.end.x - 100.0:
 		var zz := wr.position.y + 100.0
@@ -7509,13 +7841,23 @@ func _frost_sorted_cam() -> void:
 			var p := Vector3(xx, 0, zz)
 			var g0: Vector2 = rocks.call("get_frost_at", p)
 			gmax = maxf(gmax, g0.x)
-			if g0.x > fmin and rad_to_deg(atan(_slip_grad(p).length())) < float(args.get("fs-flat", "2")):
+			var flat_here := rad_to_deg(atan(_fs_grad(p).length())) < float(args.get("fs-flat", "2"))
+			if g0.x > fmin and flat_here:
 				var ok := true
 				var lo := 1.0
+				var mean := 0.0
+				var hstep := 0.0
+				var h0 := height_at(p.x, p.z)
 				for k in 8:
 					var q := p + Vector3(cos(TAU * k / 8.0), 0, sin(TAU * k / 8.0)) * 15.0
 					var gq: Vector2 = rocks.call("get_frost_at", q)
 					lo = minf(lo, gq.x)
+					mean += gq.x / 8.0
+					hstep = maxf(hstep, absf(height_at(q.x, q.z) - h0))
+				# The fallback: the most sorted ring round flat ground with no bank or cliff within 15 m (4 m of rise).
+				if hstep < 4.0 and g0.x + mean > bfg:
+					bfg = g0.x + mean
+					bf = p
 				if lo > fmin:
 					# upslope: the steepest rise within 40 m
 					var up := Vector3.ZERO
@@ -7527,7 +7869,7 @@ func _frost_sorted_cam() -> void:
 							rise = r
 							up = d
 					var sp := p + up * upd
-					var sdeg := rad_to_deg(atan(_slip_grad(sp).length()))
+					var sdeg := rad_to_deg(atan(_fs_grad(sp).length()))
 					var gs: Vector2 = rocks.call("get_frost_at", sp)
 					# the pattern should run on 40-60 m ahead: the gate along the view
 					var far := minf((rocks.call("get_frost_at", p + up * 40.0) as Vector2).x, (rocks.call("get_frost_at", p + up * 55.0) as Vector2).x)
@@ -7538,8 +7880,47 @@ func _frost_sorted_cam() -> void:
 						bu = up
 			zz += 16.0
 		xx += 16.0
+	if args.has("fs-why") and rocks.has_method("get_frost_factors"):
+		# --fs-why: on the flat (under --fs-flat), which factor of the sorting gate closes it, over the same 16 m grid.
+		var n_flat := 0
+		var shut := {"cold": 0, "wet": 0, "water": 0, "talus": 0, "sand": 0, "sea": 0, "deep": 0, "soil": 0, "steep": 0}
+		var hsum := 0.0
+		var xw := wr.position.x + 100.0
+		while xw < wr.end.x - 100.0:
+			var zw := wr.position.y + 100.0
+			while zw < wr.end.y - 100.0:
+				var pw := Vector3(xw, 0, zw)
+				if rad_to_deg(atan(_slip_grad(pw).length())) < float(args.get("fs-flat", "2")):
+					var f: Dictionary = rocks.call("get_frost_factors", pw)
+					if not f.is_empty():
+						n_flat += 1
+						hsum += float(f["height"])
+						if float(f["cold"]) <= 0.0: shut["cold"] += 1
+						if float(f["wet"]) <= 0.0: shut["wet"] += 1
+						if float(f["water"]) > 0.03: shut["water"] += 1
+						if float(f["talus"]) > 0.25: shut["talus"] += 1
+						if float(f["sand"]) > 0.05: shut["sand"] += 1
+						if bool(f["sea"]): shut["sea"] += 1
+						if float(f["soil_depth"]) <= 0.1: shut["deep"] += 1
+						if float(f["rock_exposure"]) >= 0.7: shut["soil"] += 1
+						if float(f["slope"]) >= 15.0: shut["steep"] += 1
+				zw += 16.0
+			xw += 16.0
+		_log("frost why: %d flat points, mean height %.0f m; shut by %s" % [n_flat, hsum / maxi(n_flat, 1), str(shut)])
+	if best < 0.0 and bfg > fmin and bf != Vector3.INF:
+		# No spot with its whole 15 m ring sorted (small patches): the strongest flat point, looking up its steepest rise.
+		var rise2 := -INF
+		for k in 16:
+			var d := Vector3(cos(TAU * k / 16.0), 0, sin(TAU * k / 16.0))
+			var r := height_at(bf.x + d.x * 40.0, bf.z + d.z * 40.0) - height_at(bf.x, bf.z)
+			if r > rise2:
+				rise2 = r
+				bu = d
+		bp = Vector3(bf.x, height_at(bf.x, bf.z), bf.z)
+		best = bfg
+		_log("frost sorted: no ring passes; best flat point %s, sorting + ring mean %.2f" % [str(bp.round()), bfg])
 	if best < 0.0:
-		_log("frost sorted: no sorted ground found (strongest sorting anywhere %.2f, needs %.2f)" % [gmax, fmin])
+		_log("frost sorted: no sorted ground found (strongest sorting anywhere %.2f, strongest flat %.2f, needs %.2f)" % [gmax, bfg, fmin])
 		return
 	var c3: Camera3D = get_viewport().get_camera_3d()
 	var dir := bu.rotated(Vector3.UP, deg_to_rad(float(args.get("fs-yaw", "0"))))
@@ -7565,6 +7946,15 @@ func _frost_sorted_cam() -> void:
 # fields side by side across x round x,z (else the meadow view's clearing, else --look), each --hay-w (40; 22 in the
 # meadow view) m wide and --hay-l (140; 56) m deep: mown today (swaths), raked on day 3 (windrows), carted on day 5 (stubble); rows at --hay-row (0.35 rad).
 # VegetationField3D leaves the tall herbs out there on its own.
+
+# The slope over an 8 m baseline (the frost-sorted search: the sorting follows the hillside, not the ground's
+# metre-scale relief), as rise per metre.
+func _fs_grad(p: Vector3) -> Vector2:
+	var hx := gen.get_height(p + Vector3(4, 0, 0)) - gen.get_height(p - Vector3(4, 0, 0))
+	var hz := gen.get_height(p + Vector3(0, 0, 4)) - gen.get_height(p - Vector3(0, 0, 4))
+	return Vector2(hx, hz) / 8.0
+
+
 func _hay_list() -> Array:
 	var at := String(args.get("hay", ""))
 	var w := float(args.get("hay-w", "40"))

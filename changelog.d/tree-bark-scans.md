@@ -1,0 +1,1 @@
+- Trees: scanned bark per species and weathered wood under lost bark (CC0, detail only; `TreeGenerator.load_scan_set`).

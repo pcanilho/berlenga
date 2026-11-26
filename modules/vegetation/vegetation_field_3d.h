@@ -38,6 +38,7 @@
 #include "vegetation_holes.h"
 #include "vegetation_obstacles.h"
 #include "vegetation_paths.h"
+#include "modules/world/world_exclusion_3d.h"
 
 #include "core/object/worker_thread_pool.h"
 #include "core/os/rw_lock.h"
@@ -146,6 +147,12 @@ private:
 	// Painted or generated density over a world rect: each species reads one channel (PlantSpecies.mask_channel).
 	Ref<Texture2D> density_mask;
 	Rect2 density_mask_rect;
+	// Biome map (docs/ideas/editor-tools.md, D; Unreal PCG Biome Core's texture biomes): fields that share one painted
+	// map each take one channel, its share of the channels painted there (normalised when they sum past 1); outside
+	// the map's rect the field grows everywhere.
+	Ref<Texture2D> biome_map;
+	Rect2 biome_map_rect;
+	int biome_channel = -1;
 	PackedVector4Array obstacles;
 	VegetationObstacles obstacle_grid;
 	// A RockField3D whose stones the plants keep out of, fetched round each tile as it is placed (get_obstacles), in
@@ -217,6 +224,10 @@ private:
 	float tile_size = 32.0f;
 	int seed = 0;
 	bool populate_on_ready = true;
+	// Editor preview (docs/ideas/editor-tools.md, A): in the scene being edited the field places its plants as in the
+	// game, round the editor's view when streaming; nothing it places is saved.
+	bool editor_preview = true;
+	void _editor_ready();
 
 	HashMap<uint64_t, Pattern> patterns;
 
@@ -283,6 +294,10 @@ private:
 		Rect2 rect;
 		Ref<Image> mask_img;
 		Rect2 mask_rect;
+		WorldExclusions exclusions; // keep-out areas for plants (WorldExclusion3D), a copy
+		Ref<Image> biome_img; // the biome map (editor-tools.md D), read once
+		Rect2 biome_rect;
+		int biome_channel = -1;
 		const VegetationField3D *other = nullptr;
 		Transform3D to_local;
 		Transform3D global_xf;
@@ -478,6 +493,10 @@ private:
 	LocalVector<Vector4> canopy_losses;
 	LocalVector<Vector4> plant_removals; // add_plant_removal(): x, z, radius, species.
 	Rect2 removal_dirty;
+	void _read_biome(PlaceSetup &r_setup) const;
+	Rect2 exclusion_dirty; // keep-out areas changed there (WorldContracts exclusions_changed)
+	void _on_exclusions_changed(const Rect2 &p_area);
+	Rect2 mask_dirty; // density mask painted there (notify_density_mask_changed): its tiles are placed again
 	static void _apply_canopy_losses(LocalVector<Crown> &r_crowns, const LocalVector<Vector4> &p_losses, int p_from = 0);
 	static void _compute_maps(Maps &r_maps, const LocalVector<const LocalVector<Crown> *> &p_crowns, const LocalVector<const LocalVector<FarAdd> *> &p_far);
 	void _apply_maps(Maps &p_maps);
@@ -655,7 +674,6 @@ private:
 	// again once no tile is being placed, a populated field populates again.
 	mutable uint64_t burn_seen = 0; // WorldFire.get_burn_generation() the setup's burn grid holds
 	mutable bool burn_follow = false; // A species reads burn ages.
-	double burn_check = 0.0;
 	Rect2 burn_dirty;
 	void _follow_burns(double p_delta);
 	// Flood marks (WorldWater.high_water_at): a flood that peaks or ages moves the wrack. Checked every 2 s where a
@@ -685,6 +703,7 @@ private:
 	void _setup_species(PlaceSetup &r_setup, int s, const Ref<PlantSpecies> &p_sp, real_t pixel);
 	bool variants_waiting = false;
 	double variants_check = 0.0;
+	static float _burn_recovery_of(const PlantSpecies *p_sp);
 	static int _deferred_kinds(const Ref<PlantSpecies> &p_sp) { return p_sp.is_valid() ? int(p_sp->get_meta(SNAME("tree_variants_deferred"), 0)) : 0; }
 	void _read_browse(PlaceSetup &r_setup) const;
 	double stand_check = 0.0;
@@ -748,6 +767,11 @@ protected:
 public:
 	int get_flood_replaced_tiles() const { return flood_tiles; }
 	static String get_floor_shader_code();
+	// Scanned detail for the forest floor and its moss (docs/ideas/scan-textures.md): floor_scans.cfg beside the
+	// ground scans, sections [leaves], [needles], [moss] (scan folder, tile metres). Each albedo's luminance over its mean,
+	// mipmapped, into the forest_scan_* globals. Returns the scans loaded; warns when the folder is missing.
+	static int load_floor_scans(const String &p_dir);
+	static void free_floor_scans();
 	// Game trails (vegetation_trails.cpp): a worn-path network (paths' Dictionaries) linking p_goals over the map.
 	static Array make_game_trails(Node *p_data_map, const Rect2 &p_area, const PackedVector3Array &p_goals, const Dictionary &p_options = Dictionary());
 	void set_forest_floor_enabled(bool p_enabled);
@@ -758,6 +782,15 @@ public:
 	NodePath get_data_map() const { return data_map; }
 	void set_density_mask(const Ref<Texture2D> &p_mask) { density_mask = p_mask; }
 	Ref<Texture2D> get_density_mask() const { return density_mask; }
+	void notify_density_mask_changed(const Rect2 &p_area);
+	void set_biome_map(const Ref<Texture2D> &p_map) { biome_map = p_map; }
+	Ref<Texture2D> get_biome_map() const { return biome_map; }
+	void set_biome_map_rect(const Rect2 &p_rect) { biome_map_rect = p_rect; }
+	Rect2 get_biome_map_rect() const { return biome_map_rect; }
+	void set_biome_channel(int p_channel) { biome_channel = CLAMP(p_channel, -1, 3); }
+	int get_biome_channel() const { return biome_channel; }
+	void notify_biome_map_changed(const Rect2 &p_area) { notify_density_mask_changed(p_area); }
+	float get_biome_share_at(const Vector3 &p_position) const;
 	void set_density_mask_rect(const Rect2 &p_rect) { density_mask_rect = p_rect; }
 	Rect2 get_density_mask_rect() const { return density_mask_rect; }
 	// Rocks on the ground, (x, ground y, z, radius at the soil): no plant grows inside one.
@@ -809,6 +842,10 @@ public:
 	float get_tile_size() const { return tile_size; }
 	void set_seed(int p_seed);
 	int get_seed() const { return seed; }
+	void set_editor_preview(bool p_enable);
+	bool is_editor_preview() const { return editor_preview; }
+	Callable get_populate_button();
+	Callable get_clear_button();
 	void set_populate_on_ready(bool p_enable);
 	bool is_populate_on_ready() const { return populate_on_ready; }
 
@@ -881,6 +918,7 @@ public:
 	void queue_populate();
 	void clear();
 	int get_plant_count() const { return plant_count; }
+	int get_stream_pending() const;
 	double get_populate_time_msec() const { return populate_msec; }
 	PackedVector3Array get_placements(int p_species) const;
 	// The placed trees' trunks near a point (for close-up bark detail): their lowest few metres from each mesh's

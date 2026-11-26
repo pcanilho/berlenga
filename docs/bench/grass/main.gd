@@ -38,6 +38,7 @@ extends Node3D
 #                    under it combed flat and silted (WorldWater.high_water_at through a script stub)
 #   --seed-down      with --day (late summer, e.g. 245): thistledown loosed by a 10 m/s dry wind (SeedDown3D),
 #                    seen from beside a thistle in seed
+#   --thin-snow=D    a uniform fresh snowpack D m deep on the snow globals (thin snow on the sward; no SnowCover3D)
 #   --snowy          with --day: a snowy winter (January -6 C, July 18 C, 1100 mm): a long lie, then the sward after
 #                    the melt (GrassField3D.snowmelt); prints GRASS_MELT (days lain, days since the melt, matting)
 #   --hay=D          the meadow round the camera mown D days ago (GrassField3D.hay_meadows): 0 swaths, 1-2 tedded,
@@ -56,6 +57,8 @@ extends Node3D
 #   --forest         a wood of stand-in trees: forest floor (litter, moss, bilberry, fern) in
 #                    their shade, meadow in the open (PlantSpecies.shade_range)
 #   --forest=in      the same, standing inside the wood
+#   --floor-scans[=DIR]  the scanned forest floor and moss detail (VegetationField3D.load_floor_scans; default
+#                    ../landscape/art/terrain_layers; =0 without)
 #   --stand=S        the wood's trees and their floor set (PlantGenerator.make_floor): beech, oak,
 #                    spruce (montane), pine (heath), larch (subalpine) or mixed (beech and spruce);
 #                    the ground's litter follows the crowns. Use with --forest=in.
@@ -89,7 +92,7 @@ extends Node3D
 #   --graze=P        a deer browse disc of pressure P (WorldStand.add_browse, 6.5 m) 6 m ahead, framed from 1.6 m: a
 #                    grazed lawn edged by the standing sward
 #   --burn=A         a burn scar A years old (WorldBurnScar3D, 20 x 12 m) in the view: the sward grows back over
-#                    GrassField3D.burn_recovery (0.7 years), short and sparse first; GRASS_NO_FLUSH=1 without the
+#                    GrassField3D.burn_recovery (2 years), short and sparse first; GRASS_NO_FLUSH=1 without the
 #                    regrowth flush (the before frame)
 #   GRASS_FIBRE=ab   with --out: also saves out_nofibre.png, the same frame with GrassField3D.fibre_shading 0
 #   --undergrowth-edge  with --undergrowth: its edge from 1 m up, 3.5 m along it (--no-margin: no margin)
@@ -137,6 +140,7 @@ var season_day := 0
 var drought := false
 var frost := false
 var snowy := false
+var thin_snow := 0.0 # --thin-snow=D: a uniform fresh snowpack D m deep (100 kg/m3) on the snow globals, no SnowCover3D.
 var seed_down := false
 var pollen_cloud := false
 var hay_days := -1.0
@@ -384,11 +388,24 @@ func _ready() -> void:
 		elif a == "--drought": drought = true
 		elif a == "--frost": frost = true
 		elif a == "--snowy": snowy = true
+		elif a.begins_with("--thin-snow="):
+			thin_snow = float(a.get_slice("=", 1))
+			# The world tier of the snow globals (material.cpp snow_pack_at()): r depth m, g albedo, b melt, a density / 1000.
+			var si := Image.create(4, 4, false, Image.FORMAT_RGBAF)
+			si.fill(Color(thin_snow, 0.85, 0.0, 0.1))
+			RenderingServer.global_shader_parameter_set("snow_world_map", ImageTexture.create_from_image(si))
+			RenderingServer.global_shader_parameter_set("snow_world_rect", Vector4(-5000.0, -5000.0, 10000.0, 10000.0))
 		elif a == "--seed-down": seed_down = true
 		elif a == "--pollen-cloud": pollen_cloud = true
 		elif a.begins_with("--hay="): hay_days = float(a.get_slice("=", 1))
 		elif a.begins_with("--hay-rain="): hay_rain = float(a.get_slice("=", 1))
 		elif a == "--river": river = true
+		elif a.begins_with("--floor-scans"):
+			# --floor-scans[=DIR]: the scanned forest floor and moss detail (VegetationField3D.load_floor_scans) from DIR
+			# (default the landscape bench's fetched art); --floor-scans=0 without.
+			var fdir := a.get_slice("=", 1) if a.contains("=") else ProjectSettings.globalize_path("res://../landscape/art/terrain_layers")
+			if fdir != "0" and ClassDB.class_has_method("VegetationField3D", "load_floor_scans"):
+				print("GRASS_FLOOR_SCANS %d from %s" % [VegetationField3D.load_floor_scans(fdir), fdir])
 		elif a.begins_with("--flood="):
 			var fp := a.substr(8).split(",")
 			flood = Vector2(float(fp[0]), float(fp[1]) if fp.size() > 1 else 10.0)
@@ -2002,6 +2019,9 @@ func _season_checks() -> void:
 	_check("season: summer drought browns it", g.call(20.0, 0.08) < 0.01, g.call(20.0, 0.08))
 	_check("season: a dry spell half browns it", absf(g.call(20.0, 0.25) - 0.5) < 0.1, g.call(20.0, 0.25))
 	_check("season: no season, as set", GrassField3D.season_greenness({}) == 1.0, GrassField3D.season_greenness({}))
+	if ClassDB.class_has_method("GrassField3D", "season_height_for"):
+		var sh := [GrassField3D.season_height_for({"forcing": 0.0, "day_of_year": 15, "senescence": 0.0}), GrassField3D.season_height_for({"forcing": 300.0, "day_of_year": 120}), GrassField3D.season_height_for({"forcing": 900.0, "day_of_year": 190, "senescence": 0.0}), GrassField3D.season_height_for({"forcing": 1700.0, "day_of_year": 355, "senescence": 1200.0}), GrassField3D.season_height_for({})]
+		_check("season height: short in winter, regrowing in spring, full in summer, short again by December, 1 with no season", sh[0] < 0.4 and sh[1] > sh[0] and sh[1] < sh[2] and sh[2] == 1.0 and sh[3] < 0.4 and sh[4] == 1.0, sh)
 	var base := grass.dryness
 	grass.dryness = 0.2
 	grass.season_response = 1.0
@@ -2468,11 +2488,55 @@ func _checks() -> void:
 		_check("plants carry rank and range for thinning", ranged > 1000 and bad == 0, "%d ranged, %d bad" % [ranged, bad])
 	_path_checks()
 	_burn_checks()
+	await _burn_plants_check()
 	_radius_zero_check()
 
+
+# A burn arriving after the plants were placed (a scar dropped in at run time, as the landscape bench does before its
+# pedestal shot, or a fire's front): the field follows WorldFire.burn_changed by itself, within a few frames, and the
+# plants on the scar thin and come back small (PlantSpecies.burn_recovery: a tenth of their size on a fresh burn).
+func _burn_plants_check() -> void:
+	if cover == null or cover.streaming:
+		return
+	var c := cam.global_position
+	var fwd := -cam.global_transform.basis.z
+	fwd.y = 0.0
+	var centre := c + fwd.normalized() * 8.0
+	var before := _cover_tally(centre, 5.0)
+	var scar := WorldBurnScar3D.new()
+	add_child(scar)
+	scar.size = Vector2(12, 12)
+	scar.age_years = 0.4
+	scar.global_position = Vector3(centre.x, 0.0, centre.z)
+	var waited := 0
+	while waited < 120:
+		await get_tree().process_frame
+		waited += 1
+		if waited >= 3 and cover.get_stream_pending() == 0 and _cover_tally(centre, 5.0)[0] != before[0]:
+			break
+	var after := _cover_tally(centre, 5.0)
+	scar.queue_free()
+	_check("plants follow a burn placed after they were built: fewer and smaller on the scar within a few frames", before[0] > 20 and after[0] < before[0] and after[1] < before[1] * 0.6 and waited < 60, [before, after, waited])
+
+# Plants of the cover field within r of a point: [count, mean height scale].
+func _cover_tally(centre: Vector3, r: float) -> Array:
+	var n := 0
+	var hs := 0.0
+	for ch in cover.find_children("*", "MultiMeshInstance3D", true, false):
+		var mm: MultiMesh = (ch as MultiMeshInstance3D).multimesh
+		if mm == null:
+			continue
+		var x := (ch as Node3D).global_transform
+		for i in mm.visible_instance_count if mm.visible_instance_count >= 0 else mm.instance_count:
+			var t := x * mm.get_instance_transform(i)
+			if Vector2(t.origin.x - centre.x, t.origin.z - centre.z).length() < r:
+				n += 1
+				hs += t.basis.get_scale().y
+	return [n, hs / maxf(n, 1)]
+
 # Burnt ground (GrassField3D.burn_recovery, WorldFire.burn_age_at): two 8 m scars 6 m in front of the
-# camera, a fortnight and four months old, against the same ground unburnt. The sward is gone on the fresh
-# one and about half back, shorter, on the older one (smoothstep over 0.7 years), on the GPU and CPU fill.
+# camera, a fortnight and a year old, against the same ground unburnt. The sward is gone on the fresh
+# one and about half back, shorter, on the older one (smoothstep over 2 years), on the GPU and CPU fill.
 func _burn_checks() -> void:
 	var c := cam.global_position
 	var fwd := -cam.global_transform.basis.z
@@ -2480,7 +2544,7 @@ func _burn_checks() -> void:
 	fwd = fwd.normalized()
 	var side := Vector3(-fwd.z, 0.0, fwd.x)
 	var mid := c + fwd * 6.0
-	var ages := [0.04, 0.35]
+	var ages := [0.04, 1.0]
 	var centres := [mid - side * 5.0, mid + side * 5.0]
 	for gpu in [true, false]:
 		grass.gpu_fill = gpu
@@ -2499,11 +2563,11 @@ func _burn_checks() -> void:
 		var share := float(after[0][1]) / maxf(before[0][1], 1)
 		var hr: float = (after[1][1] / maxf(after[0][1], 1)) / maxf(before[1][1] / maxf(before[0][1], 1), 1e-6)
 		var res := [before[0], after[0], snappedf(share, 0.01), snappedf(hr, 0.01)]
-		_check("burnt ground (%s fill): sward gone on a fresh burn, about half back and shorter at four months" % ("GPU" if gpu else "CPU"), before[0][0] > 20 and after[0][0] * 20 <= before[0][0] and share > 0.3 and share < 0.75 and hr < 0.95, res)
+		_check("burnt ground (%s fill): sward gone on a fresh burn, about half back and shorter at a year" % ("GPU" if gpu else "CPU"), before[0][0] > 20 and after[0][0] * 20 <= before[0][0] and share > 0.3 and share < 0.75 and hr < 0.95, res)
 	grass.gpu_fill = true
 	_burn_count(c, centres)
 	# A fire burning ground after the grass was built (no rebuild): the scar's report (WorldFire.burn_changed)
-	# alone thins the tiles over it, and only those; then it ages to four months.
+	# alone thins the tiles over it, and only those; then it ages to a year.
 	var far_tiles := grass.get_tile_count()
 	var scar := WorldBurnScar3D.new()
 	scar.age_years = 0.04
@@ -2518,7 +2582,7 @@ func _burn_checks() -> void:
 		for i in 3:
 			grass.update_at(c)
 		live.append(_burn_tally(centres[0]))
-		scar.age_years = 0.35
+		scar.age_years = 1.0
 	scar.free()
 	var t1 := Time.get_ticks_msec()
 	while Time.get_ticks_msec() - t1 < 600:

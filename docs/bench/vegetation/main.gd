@@ -522,6 +522,7 @@ func _floor_view() -> void:
 func _desert_view() -> void:
 	field.queue_free()
 	var gen := TerrainGenerator3D.new()
+	gen.generate_on_ready = false # this bench generates itself, with its own settings
 	gen.name = "DesertGen"
 	# Heavy generator options are on by default; this bench keeps its own fast choices.
 	gen.glacial_enabled = false
@@ -3562,6 +3563,7 @@ func _checks() -> void:
 	# Holes (a cave mouth's opening, TerrainGenerator3D.add_hole()): no plant in one. The generator
 	# is found as the map's geology source; it needs no terrain of its own for its boxes.
 	var hgen := TerrainGenerator3D.new()
+	hgen.generate_on_ready = false # this bench generates itself, with its own settings
 	# Heavy generator options are on by default; this bench keeps its own fast choices.
 	hgen.glacial_enabled = false
 	hgen.glacial_converged = false

@@ -1,0 +1,1 @@
+- Trees: scanned leaf detail on hazel and the maples, one scanned leaf per blade over the drawn venation (CC0).

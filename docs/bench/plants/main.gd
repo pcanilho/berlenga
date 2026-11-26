@@ -33,7 +33,7 @@ extends Node3D
 #   --dew=D          dew 0..1 on the spider webs (season dew), in place of a WeatherMap3D's
 #   --out=path.png   save the frame
 
-const NAMES := ["dandelion", "plantain", "clover", "fern", "sedge", "daisy", "buttercup", "nettle", "thistle", "yarrow", "dock", "cocksfoot", "timothy", "dry_grass", "leaf_litter", "moss", "bilberry", "bracken", "bramble", "foxglove", "reed", "cattail", "rush", "water_lily", "needle_litter", "twigs", "wood_sorrel", "seedling", "feather_moss", "woodruff", "wood_anemone", "ivy", "heather", "violet", "herb_robert", "knapweed", "scabious", "wild_carrot", "sorrel", "fly_agaric", "cep", "chanterelle", "brittlegill", "clouded_agaric", "honey_fungus", "parsley_fern", "spleenwort", "stonecrop", "saxifrage", "thrift", "marsh_marigold", "meadowsweet", "butterbur", "river_moss", "liverwort", "sphagnum", "cottongrass", "bog_asphodel", "sundew", "marram", "lyme_grass", "sea_holly", "moss_campion", "purple_saxifrage", "mountain_avens", "alpine_sedge", "dwarf_willow", "alpine_toadflax", "glasswort", "cord_grass", "sea_purslane", "sea_aster", "sea_lavender", "sea_kale", "sea_campion", "horned_poppy", "bell_heather", "cross_leaved_heath", "crowberry", "rosemary", "french_lavender", "thyme", "sage_rockrose", "corn_poppy", "cornflower", "mayweed", "cow_parsley", "pincushion_moss", "ground_ivy", "drinn", "desert_annuals", "soil_crust", "fireweed", "fire_moss", "charred_stems", "burnt_tussock", "reindeer_lichen", "raspberry", "grazed_lawn", "rooted_sod", "anthill", "wood_ant_nest", "molehill", "leaf_bank", "cow_pat", "horse_dung", "deer_pellets", "dung_rough", "fairy_ring_mushroom", "sheet_web", "orb_web", "flood_wrack", "turf_lip", "bank_roots", "bank_roots_woody", "hay_bale", "yorkshire_fog"]
+const NAMES := ["dandelion", "plantain", "clover", "fern", "sedge", "daisy", "buttercup", "nettle", "thistle", "yarrow", "dock", "cocksfoot", "timothy", "dry_grass", "leaf_litter", "moss", "bilberry", "bracken", "bramble", "foxglove", "reed", "cattail", "rush", "water_lily", "needle_litter", "twigs", "wood_sorrel", "seedling", "feather_moss", "woodruff", "wood_anemone", "ivy", "heather", "violet", "herb_robert", "knapweed", "scabious", "wild_carrot", "sorrel", "fly_agaric", "cep", "chanterelle", "brittlegill", "clouded_agaric", "honey_fungus", "parsley_fern", "spleenwort", "stonecrop", "saxifrage", "thrift", "marsh_marigold", "meadowsweet", "butterbur", "river_moss", "liverwort", "sphagnum", "cottongrass", "bog_asphodel", "sundew", "marram", "lyme_grass", "sea_holly", "moss_campion", "purple_saxifrage", "mountain_avens", "alpine_sedge", "dwarf_willow", "alpine_toadflax", "glasswort", "cord_grass", "sea_purslane", "sea_aster", "sea_lavender", "sea_kale", "sea_campion", "horned_poppy", "bell_heather", "cross_leaved_heath", "crowberry", "rosemary", "french_lavender", "thyme", "sage_rockrose", "corn_poppy", "cornflower", "mayweed", "cow_parsley", "pincushion_moss", "ground_ivy", "drinn", "desert_annuals", "soil_crust", "fireweed", "fire_moss", "charred_stems", "burnt_tussock", "reindeer_lichen", "raspberry", "grazed_lawn", "rooted_sod", "anthill", "wood_ant_nest", "molehill", "leaf_bank", "cow_pat", "horse_dung", "deer_pellets", "dung_rough", "fairy_ring_mushroom", "sheet_web", "orb_web", "flood_wrack", "turf_lip", "bank_roots", "bank_roots_woody", "hay_bale", "yorkshire_fog", "false_oat_grass", "meadow_foxtail", "tufted_hair_grass", "ox_eye_daisy", "meadow_cranesbill", "red_campion", "esparto", "thatching_grass"]
 const SEEDS := 3
 const STEP := 0.55
 var test := false
@@ -559,6 +559,95 @@ func _flowering_grass_checks() -> void:
 	var s0 := set[0] as PlantSpecies
 	var b0 := bare[0] as PlantSpecies
 	_check("flowering grass set: tagged, far tint while headed, none in March", set.size() >= 1 and s0.has_meta("flowering_grass") and s0.far_color.a > 0.0 and b0.far_color.a == 0.0, [set.size(), s0.far_color, b0.far_color])
+	# The tall meadow grasses (docs/ideas/vegetation.md, "Tall meadow heads"): heights from Stace (with the scale range
+	# up to 1.2), headed in their months, under 60k triangles a plant; none headed before (the hair-grass keeps last
+	# year's, checked below).
+	var talls := {P.PRESET_FALSE_OAT_GRASS: [0.75, 1.8, {"forcing": 1100.0, "day_of_year": 190}, {"forcing": 200.0, "day_of_year": 110}],
+			P.PRESET_MEADOW_FOXTAIL: [0.4, 1.1, {"forcing": 400.0, "day_of_year": 140}, {"forcing": 60.0, "day_of_year": 60}],
+			P.PRESET_TUFTED_HAIR_GRASS: [0.55, 1.6, {"forcing": 1000.0, "day_of_year": 185}, {"forcing": 200.0, "day_of_year": 110}]}
+	for p in talls:
+		var tg := PlantGenerator.new()
+		tg.preset = p
+		tg.apply_preset_colors()
+		var tok := true
+		var tinfo := []
+		var heads := 0
+		var early := 0
+		for sd in 4:
+			tg.seed = sd
+			var st: Dictionary = talls[p][2].duplicate()
+			st["senescence"] = 0.0
+			tg.season = st
+			var m := tg.generate()
+			var top := m.get_aabb().end.y
+			heads += _surface_tris(m, "petal")
+			tok = tok and top > talls[p][0] * 0.8 and top < talls[p][1] / 1.2 and _tris(m) < 60000
+			tinfo.append([snappedf(top, 0.01), _tris(m)])
+			var st2: Dictionary = talls[p][3].duplicate()
+			st2["senescence"] = 0.0
+			tg.season = st2
+			early += _surface_tris(tg.generate(), "petal")
+		_check("%s: headed %.2f to %.2f m tall in its month, under 60k triangles, no heads before" % [NAMES[p], talls[p][0], talls[p][1]], tok and heads > 1000 and (early == 0 or p == P.PRESET_TUFTED_HAIR_GRASS), [tinfo, heads, early])
+	var winter: Dictionary = {"forcing": 0.0, "day_of_year": 20, "senescence": 0.0}
+	var hg := PlantGenerator.new()
+	hg.preset = P.PRESET_TUFTED_HAIR_GRASS
+	hg.apply_preset_colors()
+	hg.season = winter
+	_check("tufted_hair_grass: last year's panicles stand into winter", _surface_tris(hg.generate(), "petal") > 0, "")
+	_check("flowering grass set: the fog, the three tall grasses and the three tall flowers, each tagged", set.size() == 7 and set.all(func(x): return x.has_meta("flowering_grass")), set.size())
+	# The tall meadow flowers: heights from Stace (with the scale range up to 1.2), flowers in their month, none in March.
+	var forbs := {P.PRESET_OX_EYE_DAISY: [0.25, 1.0, {"forcing": 600.0, "day_of_year": 160}],
+			P.PRESET_MEADOW_CRANESBILL: [0.3, 1.0, {"forcing": 1100.0, "day_of_year": 190}],
+			P.PRESET_RED_CAMPION: [0.3, 1.0, {"forcing": 450.0, "day_of_year": 145}]}
+	for p in forbs:
+		var fg := PlantGenerator.new()
+		fg.preset = p
+		fg.apply_preset_colors()
+		var fok := true
+		var finfo := []
+		var petals_in := 0
+		var petals_march := 0
+		for sd in 4:
+			fg.seed = sd
+			var st: Dictionary = forbs[p][2].duplicate()
+			st["senescence"] = 0.0
+			fg.season = st
+			var m := fg.generate()
+			var top := m.get_aabb().end.y
+			petals_in += _surface_tris(m, "petal")
+			fok = fok and top < forbs[p][1] / 1.2 and _tris(m) < 40000
+			finfo.append([snappedf(top, 0.01), _tris(m)])
+			fg.season = {"forcing": 60.0, "day_of_year": 75, "senescence": 0.0}
+			petals_march += _surface_tris(fg.generate(), "petal")
+		var tallest: float = finfo.map(func(x): return x[0]).max()
+		_check("%s: flowering stems to %.2f m (over %.2f) in its month, under 40k triangles, no flowers in March" % [NAMES[p], forbs[p][1], forbs[p][0]], fok and tallest > forbs[p][0] and petals_in > 200 and petals_march == 0, [finfo, petals_in, petals_march])
+
+	# Dry tussocks over the cured cover: esparto in its spring heads, thatching grass in summer; heights and spread from
+	# the floras (scale up to 1.3), under 60k triangles; the set keeps to summer-dry climates (under 1000 mm).
+	var drys := {P.PRESET_ESPARTO: [0.6, 1.5, 0.35, 1.6, {"forcing": 420.0, "day_of_year": 105}],
+			P.PRESET_THATCHING_GRASS: [0.35, 1.3, 0.2, 1.0, {"forcing": 1000.0, "day_of_year": 175}]}
+	for p in drys:
+		var dg := PlantGenerator.new()
+		dg.preset = p
+		dg.apply_preset_colors()
+		var dok := true
+		var dinfo := []
+		var dheads := 0
+		for sd in 4:
+			dg.seed = sd
+			var st: Dictionary = drys[p][4].duplicate()
+			st["senescence"] = 0.0
+			dg.season = st
+			var m := dg.generate()
+			var ab := m.get_aabb()
+			var wide := maxf(ab.size.x, ab.size.z)
+			dheads += _surface_tris(m, "petal")
+			dok = dok and ab.end.y < drys[p][1] / 1.3 and wide > drys[p][2] and wide < drys[p][3] and _tris(m) < 60000
+			dinfo.append([snappedf(ab.end.y, 0.01), snappedf(wide, 0.01), _tris(m)])
+		var dtall: float = dinfo.map(func(x): return x[0]).max()
+		_check("%s: heads to %.2f m (over %.2f), %.2f to %.2f m across, under 60k triangles" % [NAMES[p], drys[p][1], drys[p][0], drys[p][2], drys[p][3]], dok and dtall > drys[p][0] and dheads > 500, [dinfo, dheads])
+	var dset: Array = PlantGenerator.make_dry_tussocks(1, false, {})
+	_check("dry tussock set: esparto and thatching grass, tagged, only where under 1000 mm of rain", dset.size() == 2 and dset.all(func(x): return x.has_meta("dry_tussock") and x.get_rule_range(PlantSpecies.RULE_PRECIPITATION).y < 1000.0), dset.size())
 
 func _make_sets_check() -> void:
 	if not ClassDB.class_has_method("PlantGenerator", "make_sets"):

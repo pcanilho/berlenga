@@ -1039,6 +1039,15 @@
 		<member name="uplift_noise_strength" type="float" setter="set_uplift_noise_strength" getter="get_uplift_noise_strength" default="0.5">
 			How far [member uplift_noise] can lower the uplift: where the noise is lowest the uplift is multiplied by [code]1 - strength[/code].
 		</member>
+		<member name="generate_on_ready" type="bool" setter="set_generate_on_ready" getter="is_generate_on_ready" default="true">
+			Generates the ground when the node is ready, in the editor and in the game, unless a script generated it first. The result is not saved; it is generated again from the settings (the world cache keeps the slow stages).
+		</member>
+		<member name="water_on_ready" type="bool" setter="set_water_on_ready" getter="is_water_on_ready" default="true">
+			After generating, builds the sea, lakes and rivers as internal children that are never saved, and rebuilds them after the Generate button and after touch-ups.
+		</member>
+		<member name="water_river_min_area" type="float" setter="set_water_river_min_area" getter="get_water_river_min_area" default="1500000.0">
+			The smallest drainage area, in square metres, that [member water_on_ready] draws a river for.
+		</member>
 	</members>
 	<signals>
 		<signal name="holes_changed">

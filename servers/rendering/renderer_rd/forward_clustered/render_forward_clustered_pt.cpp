@@ -106,6 +106,12 @@
 #include "servers/rendering/rendering_device.h"
 #include "servers/rendering/rendering_server_default.h" // IWYU pragma: keep. RENDER_TIMESTAMP macro uses RSG.
 
+#include "core/os/os.h"
+
+#ifdef __GLIBC__
+#include <malloc.h>
+#endif
+
 using namespace RendererSceneRenderImplementation;
 
 // The transparent surfaces' own layer under Ray Reconstruction, freed with its
@@ -127,6 +133,21 @@ void RenderForwardClusteredPT::_render_scene(RenderDataRD *p_render_data, const 
 		rb_data = rb->get_custom_data(RB_SCOPE_FORWARD_CLUSTERED);
 	}
 	bool is_reflection_probe = p_render_data->reflection_probe.is_valid();
+
+#ifdef __GLIBC__
+	// A CPU device compiles its pipelines and keeps its GPU memory on the heap: the driver's shader compiles (path
+	// tracing hit groups, raster material pipelines on workers) free gigabytes that glibc keeps in its arenas, and the
+	// next compile or acceleration structure build adds to them. Hand the free pages back every few seconds.
+	static const bool trim_heap = RD::get_singleton()->get_device_type() == RenderingDeviceEnums::DEVICE_TYPE_CPU;
+	if (trim_heap) {
+		static uint64_t last_trim_usec = 0;
+		const uint64_t now_usec = OS::get_singleton()->get_ticks_usec();
+		if (now_usec - last_trim_usec > 5000000) {
+			last_trim_usec = now_usec;
+			malloc_trim(0);
+		}
+	}
+#endif
 
 	bool use_rt = !is_reflection_probe && pathtracing_is_used(p_render_data->environment, p_render_data->viewport) && _setup_rt();
 
@@ -159,9 +180,13 @@ void RenderForwardClusteredPT::_render_scene(RenderDataRD *p_render_data, const 
 		// otherwise draw this frame raster.
 		SceneShaderRaytracing *rt_shader = raytracing->get_shader();
 		if (rt_shader->request_pipeline_bundle(rt_flags)) {
-			if (rt_flags != full_rt_flags) {
-				// Keep the variant that leaves nothing out built, so a material that brings a left-out feature
-				// back (a snowy area streamed in) is traced with it at once, not drawn raster while it builds.
+			// Keep the variant that leaves nothing out built, so a material that brings a left-out feature back (a
+			// snowy area streamed in) is traced with it at once, not drawn raster while it builds. Not on a CPU device:
+			// its driver keeps every hit group's compiled code in system memory and links the whole pipeline into one
+			// program, so this standby set doubles the memory and its link alone needs gigabytes; a variant takes it
+			// minutes to build in any case. The frames traced are the same (this variant only stands by).
+			static const bool cpu_device = RD::get_singleton()->get_device_type() == RenderingDeviceEnums::DEVICE_TYPE_CPU;
+			if (rt_flags != full_rt_flags && !cpu_device) {
 				rt_shader->request_pipeline_bundle(full_rt_flags);
 			}
 		} else {
@@ -552,33 +577,78 @@ void RenderForwardClusteredPT::_render_scene(RenderDataRD *p_render_data, const 
 			RD::get_singleton()->draw_command_end_label();
 			return;
 		}
-		RD::RaytracingListID raytracing_list = RD::get_singleton()->raytracing_list_begin();
-		RD::get_singleton()->raytracing_list_bind_raytracing_pipeline(raytracing_list, rt_pipeline);
-		RD::get_singleton()->raytracing_list_bind_uniform_set(raytracing_list, rt_uniform_set, 0);
-
 		// Bindless set 1 can be unset when no bindless textures are live
 		RID bindless_set = raytracing->get_bindless_uniform_set();
-		if (bindless_set.is_valid()) {
-			RD::get_singleton()->raytracing_list_bind_uniform_set(raytracing_list, bindless_set, 1);
-		}
 
-		// Raytracing dispatches at internal (pre-upscale) size, in bands of rows when the frame asks for many samples
-		// (raytracing_common_inc.glsl, RTLaunchBand): each dispatch holds at most
-		// rendering/pathtracing/max_samples_per_dispatch pixel samples, so a still at 64 spp is several short
-		// dispatches the GPU can be preempted between, not one long enough for the system's watchdog to reset the device
-		// (Windows TDR after 2 s: VK_ERROR_DEVICE_LOST). A real-time frame (1080p at 2 spp, 4K at 1) stays one dispatch.
+		// The trace is split into dispatches short enough that the GPU can be preempted between them, so no single one
+		// runs long enough for the system's watchdog to reset the device (Windows TDR after 2 s: VK_ERROR_DEVICE_LOST).
+		// Unreal's path tracer splits its dispatches the same way (r.PathTracing.DispatchSize), and Cycles' render
+		// scheduler sizes each kernel launch in samples from the time the last ones took. Each dispatch is a band of
+		// rows (raytracing_common_inc.glsl, RTLaunchBand); where one row's samples alone are too many (a dense volume
+		// at many samples a pixel), a run of each pixel's samples, the runs adding up in the output image's running
+		// mean, one raytracing list each so the next run waits for the last. The cap is the samples that fit
+		// rendering/pathtracing/max_dispatch_time_ms at the cost measured on the last frames (GPU timestamps), never
+		// above rendering/pathtracing/max_samples_per_dispatch, and small until a cost is measured.
 		Size2i rt_size = rb->get_internal_size();
 		static const uint64_t max_samples = MAX((uint64_t)(int64_t)GLOBAL_GET("rendering/pathtracing/max_samples_per_dispatch"), (uint64_t)65536);
-		const uint64_t spp = (uint64_t)MAX(p_render_data->environment.is_valid() ? RendererEnvironmentStorage::get_singleton()->environment_get_pathtracing_samples_per_pixel(p_render_data->environment) : 1, 1);
-		const uint64_t row_samples = MAX((uint64_t)rt_size.width, (uint64_t)1) * spp;
-		const uint32_t band_rows = (uint32_t)CLAMP(max_samples / row_samples, (uint64_t)1, (uint64_t)MAX(rt_size.height, 1));
-		const RID hit_sbt = raytracing->get_shader()->get_hit_sbt(rt_flags);
-		for (uint32_t y = 0; y < (uint32_t)rt_size.height; y += band_rows) {
-			const uint32_t band[4] = { y, (uint32_t)rt_size.height, 0, 0 };
-			RD::get_singleton()->raytracing_list_set_push_constant(raytracing_list, band, sizeof(band));
-			RD::get_singleton()->raytracing_list_trace_rays(raytracing_list, 0, hit_sbt, rt_size.width, MIN(band_rows, (uint32_t)rt_size.height - y), 1);
+		static const double max_dispatch_ns = MAX((double)GLOBAL_GET("rendering/pathtracing/max_dispatch_time_ms"), 1.0) * 1.0e6;
+		static const String trace_begin_name = "PT Trace Begin";
+		static const String trace_end_name = "PT Trace End "; // followed by the samples traced
+		// Cost per sample (ns) measured on an earlier frame; 0 until one is.
+		static double ns_per_sample = 0.0;
+		{
+			RD *rd = RD::get_singleton();
+			// The last finished frame's trace (its timestamps come back a few frames late), the latest cost rather
+			// than an average: a volume entering the view raises it at once.
+			uint64_t begin_ns = 0;
+			const uint32_t count = rd->get_captured_timestamps_count();
+			for (uint32_t i = 0; i < count; i++) {
+				const String name = rd->get_captured_timestamp_name(i);
+				if (name == trace_begin_name) {
+					begin_ns = rd->get_captured_timestamp_gpu_time(i);
+				} else if (begin_ns > 0 && name.begins_with(trace_end_name)) {
+					const uint64_t end_ns = rd->get_captured_timestamp_gpu_time(i);
+					const int64_t traced = name.substr(trace_end_name.length()).to_int();
+					if (end_ns > begin_ns && traced > 0) {
+						ns_per_sample = double(end_ns - begin_ns) / double(traced);
+					}
+					begin_ns = 0;
+				}
+			}
 		}
-		RD::get_singleton()->raytracing_list_end();
+		const uint64_t spp = (uint64_t)MAX(p_render_data->environment.is_valid() ? RendererEnvironmentStorage::get_singleton()->environment_get_pathtracing_samples_per_pixel(p_render_data->environment) : 1, 1);
+		const uint64_t width = (uint64_t)MAX(rt_size.width, 1);
+		const uint64_t height = (uint64_t)MAX(rt_size.height, 1);
+		uint64_t cap = ns_per_sample > 0.0 ? uint64_t(MAX(max_dispatch_ns / ns_per_sample, 1.0)) : uint64_t(262144);
+		cap = CLAMP(cap, (uint64_t)4096, max_samples);
+		// Runs of samples need the pixel's work around its samples to be its own (raygen): not with indirect light
+		// reuse's reservoir or a co-tenant's depth composite, which traces as bands of whole pixels.
+		const bool split_samples = (rt_flags & (SceneShaderRaytracing::RT_FLAG_INDIRECT_REUSE_ENABLED | SceneShaderRaytracing::RT_FLAG_DEPTH_COMPOSITE_ENABLED)) == 0;
+		const uint64_t run_samples = (split_samples && width * spp > cap) ? MAX(cap / width, (uint64_t)1) : spp;
+		const uint32_t band_rows = (uint32_t)CLAMP(cap / (width * run_samples), (uint64_t)1, height);
+		const RID hit_sbt = raytracing->get_shader()->get_hit_sbt(rt_flags);
+
+		RD::get_singleton()->capture_timestamp(trace_begin_name);
+		for (uint64_t s0 = 0; s0 < spp; s0 += run_samples) {
+			RD::RaytracingListID raytracing_list = RD::get_singleton()->raytracing_list_begin();
+			RD::get_singleton()->raytracing_list_bind_raytracing_pipeline(raytracing_list, rt_pipeline);
+			RD::get_singleton()->raytracing_list_bind_uniform_set(raytracing_list, rt_uniform_set, 0);
+			if (bindless_set.is_valid()) {
+				RD::get_singleton()->raytracing_list_bind_uniform_set(raytracing_list, bindless_set, 1);
+			}
+			// The whole pixel in one run: sample_end 0. Otherwise the last run ends at UINT32_MAX, which raygen clamps
+			// to its own sample count.
+			const bool whole = run_samples >= spp;
+			const uint32_t sample_begin = whole ? 0u : uint32_t(s0);
+			const uint32_t sample_end = whole ? 0u : (s0 + run_samples >= spp ? UINT32_MAX : uint32_t(s0 + run_samples));
+			for (uint32_t y = 0; y < (uint32_t)height; y += band_rows) {
+				const uint32_t band[4] = { y, (uint32_t)height, sample_begin, sample_end };
+				RD::get_singleton()->raytracing_list_set_push_constant(raytracing_list, band, sizeof(band));
+				RD::get_singleton()->raytracing_list_trace_rays(raytracing_list, 0, hit_sbt, (uint32_t)width, MIN(band_rows, (uint32_t)height - y), 1);
+			}
+			RD::get_singleton()->raytracing_list_end();
+		}
+		RD::get_singleton()->capture_timestamp(trace_end_name + itos(int64_t(width * height * spp)));
 
 		RD::get_singleton()->draw_command_end_label();
 

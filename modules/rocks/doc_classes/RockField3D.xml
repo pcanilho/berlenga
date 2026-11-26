@@ -69,6 +69,13 @@
 				The far cover map the terrain reads as [code]rock_far_cover_map[/code]: 256 x 256 texels of 32 m centred on the target, rgb the stones' weathered colour, alpha their plan cover (rockfall blocks, glacial boulders on till and coarse river beds). Null while [member far_radius] is 0.
 			</description>
 		</method>
+		<method name="get_frost_factors" qualifiers="const">
+			<return type="Dictionary" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				For tests: each factor of the frost sorting gate at [param position] (height, maat, cold, wet, water, talus, sand, soil_depth, rock_exposure, slope, sea, gate), so a bench can tell which one closes it. Empty with sorting off or no climate.
+			</description>
+		</method>
 		<method name="get_frost_at" qualifiers="const">
 			<return type="Vector2" />
 			<param index="0" name="position" type="Vector3" />
@@ -366,6 +373,15 @@
 		<member name="cell_threads" type="bool" setter="set_cell_threads" getter="is_cell_threads" default="true">
 			While streaming, the cells of the coarse layers (field stones, scree, river and shore stones, landforms) are placed on worker threads, and the main thread only adds their MultiMeshes and collision. A cell whose shapes are not built yet starts them on workers and is placed again once they are in. Landform cells stay on the main thread while [member cave_mouths] is on, as those open terrain holes. Off: placed on the main thread within [member build_budget_msec], as before.
 		</member>
+		<member name="cliff_block_max_slope" type="float" setter="set_cliff_block_max_slope" getter="get_cliff_block_max_slope" default="88.0">
+			Steepest terrain face, in degrees, that the cliff layer's wall blocks cover. Above about 60 degrees a heightfield face is a stretched step that draws vertical bands, and the blocks cover it with real geometry: beds of uneven thickness cut by joints, nearly closed, the hard beds standing proud of the soft ones. 76 keeps the blocks off sheer walls.
+		</member>
+		<member name="cliff_kit" type="bool" setter="set_cliff_kit" getter="is_cliff_kit" default="true">
+			Tall joint-bounded rock pillars in columns build the bare rock faces of 40 degrees and steeper. Each segment is fitted to the face over its own footprint. The bed blocks a piece would bury are left out.
+		</member>
+		<member name="cliff_recess" type="bool" setter="set_cliff_recess" getter="is_cliff_recess" default="true">
+			The drawn face steps back under the cliff kit's pillars ([method WorldGround.recess_at]), so the pillars are the visible wall: each stands at the face's mean and the face behind it is set back by about a third of the column's width. Off, the pillars stand just proud of the highest ridges and nothing is published.
+		</member>
 		<member name="cliff_density" type="float" setter="set_layer_density" getter="get_layer_density" default="1.0">
 			Scales how many blocks are set into cliff faces.
 		</member>
@@ -644,6 +660,12 @@
 		</member>
 		<member name="wind_obstacles" type="bool" setter="set_wind_obstacles" getter="is_wind_obstacles_enabled" default="true">
 			Boulders block the wind: the field joins the [code]weather_shelter[/code] group and gives its boulders through [method get_wind_obstacles], so WeatherMap3D slows the wind in their lee and snow and sand drift there.
+		</member>
+		<member name="editor_preview" type="bool" setter="set_editor_preview" getter="is_editor_preview" default="true">
+			Places stones round the editor's 3D view in the scene being edited, without physics, rockfall or far bakes. Nothing it places is saved.
+		</member>
+		<member name="rebuild_button" type="Callable" setter="" getter="get_rebuild_button" default="Callable()">
+			Places the stones again.
 		</member>
 	</members>
 	<signals>

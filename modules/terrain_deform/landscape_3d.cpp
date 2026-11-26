@@ -86,7 +86,34 @@ static _FORCE_INLINE_ real_t _eno_slope(float a2, float a1, float c, float b1, f
 	return Math::lerp(central, eno, t * t * (3.0f - 2.0f * t));
 }
 
+// The grid normals around the cliff chunk this thread is building (_build_cliff_surface): its relief reads the same
+// grid normals tens of times over (each bilinear normal four, the weights' tent nine of those, the fold scale four),
+// so each is worked out once per chunk. Filled as read; points outside fall through to _normal_eval.
+struct LandscapeNormalCache {
+	const Landscape3D *owner = nullptr;
+	int x0 = 0, z0 = 0, w = 0, h = 0;
+	LocalVector<Vector3> normals;
+	LocalVector<uint8_t> has;
+};
+static thread_local LandscapeNormalCache *landscape_normal_cache = nullptr;
+
 Vector3 Landscape3D::_normal(int p_x, int p_z) const {
+	LandscapeNormalCache *nc = landscape_normal_cache;
+	if (nc && nc->owner == this) {
+		const int u = p_x - nc->x0, v = p_z - nc->z0;
+		if (u >= 0 && v >= 0 && u < nc->w && v < nc->h) {
+			const int i = v * nc->w + u;
+			if (!nc->has[i]) {
+				nc->normals[i] = _normal_eval(p_x, p_z);
+				nc->has[i] = 1;
+			}
+			return nc->normals[i];
+		}
+	}
+	return _normal_eval(p_x, p_z);
+}
+
+Vector3 Landscape3D::_normal_eval(int p_x, int p_z) const {
 	const float c = _h(p_x, p_z);
 	const real_t sx = _eno_slope(_h(p_x - 2, p_z), _h(p_x - 1, p_z), c, _h(p_x + 1, p_z), _h(p_x + 2, p_z), spacing);
 	const real_t sz = _eno_slope(_h(p_x, p_z - 2), _h(p_x, p_z - 1), c, _h(p_x, p_z + 1), _h(p_x, p_z + 2), spacing);
@@ -588,6 +615,10 @@ real_t Landscape3D::_cliff_scale(const Vector3 &p, real_t p_k, real_t p_tan) con
 	if (p_k <= 0.0) {
 		return 0.0;
 	}
+	return MIN(p_k, _cliff_scale_limit(p, p_tan));
+}
+
+real_t Landscape3D::_cliff_scale_limit(const Vector3 &p, real_t p_tan) const {
 	const real_t tn = MIN(p_tan, real_t(6.0));
 	// Down the surface's own fall line: outward along the slope's horizontal normal m by 0.4 / tn while 0.4 m down, so
 	// the offset's change across the face (its noise and joints) counts with its change in height: the surface folds
@@ -609,7 +640,7 @@ real_t Landscape3D::_cliff_scale(const Vector3 &p, real_t p_k, real_t p_tan) con
 		}
 		prev = o;
 	}
-	return MIN(p_k, real_t(0.8) / MAX(tn * g, real_t(1e-4)));
+	return real_t(0.8) / MAX(tn * g, real_t(1e-4));
 }
 
 // The bank relief's scale at a point, as _cliff_scale for the cliffs: a slump's head scarp falls 0.4 to 1 of its
@@ -621,6 +652,10 @@ real_t Landscape3D::_bank_scale(const Vector3 &p, real_t p_k, real_t p_tan) cons
 	if (p_k <= 0.0) {
 		return 0.0;
 	}
+	return MIN(p_k, _bank_scale_limit(p, p_tan));
+}
+
+real_t Landscape3D::_bank_scale_limit(const Vector3 &p, real_t p_tan) const {
 	const real_t tn = MIN(p_tan, real_t(6.0));
 	// Down the surface's own fall line: outward along the slope's horizontal normal m by 0.4 / tn while 0.4 m down, so
 	// the offset's change across the face (its noise and joints) counts with its change in height: the surface folds
@@ -641,29 +676,82 @@ real_t Landscape3D::_bank_scale(const Vector3 &p, real_t p_k, real_t p_tan) cons
 		}
 		prev = o;
 	}
-	return MIN(p_k, real_t(0.6) / MAX(tn * g, real_t(1e-4)));
+	return real_t(0.6) / MAX(tn * g, real_t(1e-4));
 }
 
 // The displaced point for a point on the heightfield surface (landscape space).
 Vector3 Landscape3D::_cliff_point(const Vector3 &p, real_t p_weight_scale) const {
+	ReliefFrame frame;
+	return _cliff_point_framed(p, p_weight_scale, frame);
+}
+
+void Landscape3D::_relief_frame_weights(real_t p_fx, real_t p_fz, ReliefFrame &r_frame) const {
+	if (!r_frame.has_w) {
+		r_frame.w = _relief_weights_at(p_fx, p_fz);
+		r_frame.fold = _relief_fold_scale(p_fx, p_fz);
+		r_frame.has_w = true;
+	}
+}
+
+// As _cliff_point, keeping what it read at the point in r_frame (and reading only what r_frame lacks), so the mesh
+// build's other reads at a vertex (its CUSTOM channels) come from the same values instead of a second evaluation.
+// The cliff kit's recess: where a stone field stands rock pillars as the wall of a steep face, the drawn face steps
+// back under them, so the pillars are the visible wall (Far Cry 5's cliff meshes over a recessed heightfield). The
+// provider answers at a point of the drawn, unrecessed face; the point moves back along the face's horizontal normal.
+Vector3 Landscape3D::_recessed(const Vector3 &p_c, const Vector3 &p_n, real_t p_keep, real_t *r_share) const {
+	if (r_share) {
+		*r_share = 0.0;
+	}
+	if (!recess_on || p_keep <= 0.0) {
+		return p_c;
+	}
+	const real_t ml = Vector2(p_n.x, p_n.z).length();
+	if (ml < 1e-4f) {
+		return p_c;
+	}
+	// Along the pillar's own outward normal (WorldGround.recess_vector_at), not the face's: on a fluted face the
+	// flanks' normals point sideways, and a step along them left the ridges standing in front of the pillars.
+	const Vector4 r = WorldContracts::ground()->recess_vector_at(recess_xform.xform(p_c));
+	if (!(r.w > 0.0f)) {
+		return p_c;
+	}
+	if (r_share) {
+		*r_share = r.w;
+	}
+	return p_c + recess_xform.basis.inverse().xform(Vector3(r.x, r.y, r.z)) * p_keep; // (the full inverse: the placement may scale)
+}
+
+Vector3 Landscape3D::_cliff_point_framed(const Vector3 &p, real_t p_weight_scale, ReliefFrame &r_frame) const {
 	const real_t fx = (p.x - origin.x) / spacing, fz = (p.z - origin.y) / spacing;
-	const Vector3 n = _normal_at(fx, fz);
+	if (!r_frame.has_n) {
+		r_frame.n = _normal_at(fx, fz);
+		r_frame.ml = Vector2(r_frame.n.x, r_frame.n.z).length();
+		r_frame.has_n = true;
+	}
+	const Vector3 n = r_frame.n;
 	const Vector2 m(n.x, n.z);
-	const real_t ml = m.length();
+	const real_t ml = r_frame.ml;
 	if (ml < 1e-4f || p_weight_scale <= 0.0) {
 		return p;
 	}
-	const Vector2 w = _relief_weights_at(fx, fz) * (p_weight_scale * _relief_fold_scale(fx, fz));
+	_relief_frame_weights(fx, fz, r_frame);
+	const Vector2 w = r_frame.w * (p_weight_scale * r_frame.fold);
 	real_t d = 0.0;
 	if (w.x > 0.0 && cliff_relief > 0.0) {
 		const real_t tn = ml / MAX(n.y, real_t(1e-3));
-		const real_t k = _cliff_scale(p, cliff_relief * w.x, tn);
+		if (r_frame.cliff_limit < 0.0) {
+			r_frame.cliff_limit = _cliff_scale_limit(p, tn);
+		}
+		const real_t k = MIN(cliff_relief * w.x, r_frame.cliff_limit); // _cliff_scale (its p_k is over 0 here)
 		d += k * _cliff_offset(p, cliff_relief * tn, cliff_relief, false); // the lip rule at the full scale, as _cliff_scale measured it
 		// The joint steps at the face's own scale: they never overhang, so the easing for the rest leaves them be.
 		d += cliff_relief * w.x * _joint_offset(p, cliff_relief * tn);
 	}
 	if (w.y > 0.0 && bank_relief > 0.0) {
-		d += _bank_scale(p, bank_relief * w.y, ml / MAX(n.y, real_t(1e-3))) * _bank_offset(p);
+		if (r_frame.bank_limit < 0.0) {
+			r_frame.bank_limit = _bank_scale_limit(p, ml / MAX(n.y, real_t(1e-3)));
+		}
+		d += MIN(bank_relief * w.y, r_frame.bank_limit) * _bank_offset(p); // _bank_scale
 	}
 	return p + Vector3(m.x / ml, 0.0, m.y / ml) * d;
 }
@@ -685,6 +773,28 @@ void Landscape3D::_build_cliff_surface(MeshJob &r_job) const {
 	const int n = chunk_quads;
 	const int row = n + 1;
 	const Vector3 corner(origin.x + cx * chunk_quads * spacing, 0.0, origin.y + cz * chunk_quads * spacing);
+	// The grid normals the relief reads (LandscapeNormalCache), over the chunk and the reach of the face weights' tent
+	// (two taps of 1.5 times the relief's reach either way) and the fold scale's and bilinear reads past it.
+	LandscapeNormalCache normal_cache;
+	{
+		const int margin = int(Math::ceil(2.0 * 1.5f * 3.5f * MAX(cliff_relief, bank_relief) / spacing * 0.5f)) + 4;
+		normal_cache.owner = this;
+		normal_cache.x0 = cx * chunk_quads - margin;
+		normal_cache.z0 = cz * chunk_quads - margin;
+		normal_cache.w = chunk_quads + 1 + 2 * margin;
+		normal_cache.h = chunk_quads + 1 + 2 * margin;
+		normal_cache.normals.resize(normal_cache.w * normal_cache.h);
+		normal_cache.has.resize(normal_cache.w * normal_cache.h);
+		memset(normal_cache.has.ptr(), 0, normal_cache.has.size());
+	}
+	struct NormalCacheScope {
+		LandscapeNormalCache *prev;
+		explicit NormalCacheScope(LandscapeNormalCache *p_cache) {
+			prev = landscape_normal_cache;
+			landscape_normal_cache = p_cache;
+		}
+		~NormalCacheScope() { landscape_normal_cache = prev; }
+	} normal_cache_scope(&normal_cache);
 	LocalVector<Vector3> base; // landscape space
 	LocalVector<real_t> keep; // 1 = free to move, 0 = on a side stitched to a coarser neighbour
 	base.resize(row * row);
@@ -735,7 +845,7 @@ void Landscape3D::_build_cliff_surface(MeshJob &r_job) const {
 	memset(has_disp.ptr(), 0, has_disp.size());
 	auto disp_of = [&](int a) -> Vector3 {
 		if (!has_disp[a]) {
-			disp[a] = _cliff_point(base[a], 1.0) - base[a];
+			disp[a] = _recessed(_cliff_point(base[a], 1.0), _normal_at((base[a].x - origin.x) / spacing, (base[a].z - origin.y) / spacing), 1.0) - base[a];
 			has_disp[a] = 1;
 		}
 		return disp[a];
@@ -744,7 +854,14 @@ void Landscape3D::_build_cliff_surface(MeshJob &r_job) const {
 	// middle strays from the straight line between its ends (error-driven tessellation of a displacement, as adaptive
 	// displacement mapping does, Moreton 2001; Nießner et al. 2016), so a lip and the shadow it casts follow vertices
 	// placed along it instead of zig-zagging across the triangles.
-	auto split = [&](int a, int b) -> bool {
+	// An edge is shared by two triangles (and tested again at each depth it stays whole): the test runs once per edge,
+	// and the displacement of its middle is kept for the vertex a split puts there (the same point).
+	HashMap<uint64_t, uint8_t> split_done;
+	HashMap<uint64_t, Vector3> mid_disp;
+	auto edge_key = [](int a, int b) -> uint64_t {
+		return a < b ? (uint64_t(a) << 32 | uint32_t(b)) : (uint64_t(b) << 32 | uint32_t(a));
+	};
+	auto split_test = [&](int a, int b) -> bool {
 		if (on_fixed_side(base[a], base[b])) {
 			return false;
 		}
@@ -760,20 +877,31 @@ void Landscape3D::_build_cliff_surface(MeshJob &r_job) const {
 			return false;
 		}
 		const Vector3 pm = (base[a] + base[b]) * 0.5f;
-		const Vector3 dm = _cliff_point(pm, 1.0) - pm;
+		const Vector3 dm = _recessed(_cliff_point(pm, 1.0), _normal_at((pm.x - origin.x) / spacing, (pm.z - origin.y) / spacing), 1.0) - pm;
+		mid_disp.insert(edge_key(a, b), dm);
 		return (dm - (da + db) * 0.5f).length() > 0.08f;
+	};
+	auto split = [&](int a, int b) -> bool {
+		const uint64_t k = edge_key(a, b);
+		if (const uint8_t *f = split_done.getptr(k)) {
+			return *f != 0;
+		}
+		const bool s = split_test(a, b);
+		split_done.insert(k, s ? 1 : 0);
+		return s;
 	};
 	HashMap<uint64_t, int> mids;
 	auto mid = [&](int a, int b) -> int {
-		const uint64_t k = a < b ? (uint64_t(a) << 32 | uint32_t(b)) : (uint64_t(b) << 32 | uint32_t(a));
+		const uint64_t k = edge_key(a, b);
 		if (const int *f = mids.getptr(k)) {
 			return *f;
 		}
 		const int id = int(base.size());
 		base.push_back((base[a] + base[b]) * 0.5f);
 		keep.push_back(keep_at((base[a] + base[b]) * 0.5f));
-		disp.push_back(Vector3());
-		has_disp.push_back(0);
+		const Vector3 *dm = mid_disp.getptr(k);
+		disp.push_back(dm ? *dm : Vector3());
+		has_disp.push_back(dm ? 1 : 0);
 		mids.insert(k, id);
 		return id;
 	};
@@ -902,20 +1030,43 @@ void Landscape3D::_build_cliff_surface(MeshJob &r_job) const {
 	const real_t e = 0.3f;
 	for (uint32_t i = 0; i < base.size(); i++) {
 		const Vector3 p = base[i];
-		vp[i] = _cliff_point(p, keep[i]) - corner;
-		const Vector3 nb = _normal_at((p.x - origin.x) / spacing, (p.z - origin.y) / spacing);
-		const Vector2 w = _relief_weights_at((p.x - origin.x) / spacing, (p.z - origin.y) / spacing) * _relief_fold_scale((p.x - origin.x) / spacing, (p.z - origin.y) / spacing);
+		ReliefFrame frame; // the reads below at p, each once
+		real_t rs = 0.0; // the recess's share: the material's analytic relief normal cannot see the recess, so its scales
+		// give way there and the recessed face shades by its mesh normals
+		vp[i] = _recessed(_cliff_point_framed(p, keep[i], frame), frame.n, keep[i], &rs) - corner;
+		_relief_frame_weights((p.x - origin.x) / spacing, (p.z - origin.y) / spacing, frame);
+		const Vector3 nb = frame.n;
+		const real_t rk = 1.0 - rs;
+		const Vector2 w = frame.w * frame.fold;
 		{
 			const real_t ml = Vector2(nb.x, nb.z).length();
+			const real_t tn = ml / MAX(nb.y, real_t(1e-3));
 			c0[i * 4 + 0] = p.x;
 			c0[i * 4 + 1] = p.y;
 			c0[i * 4 + 2] = p.z;
-			c0[i * 4 + 3] = ml < 1e-4f ? 0.0f : float(_cliff_scale(p, cliff_relief * w.x * keep[i], ml / MAX(nb.y, real_t(1e-3))));
+			// _cliff_scale and _bank_scale, their bounds from the frame.
+			const real_t kc = cliff_relief * w.x * keep[i];
+			if (ml < 1e-4f || kc <= 0.0) {
+				c0[i * 4 + 3] = 0.0f;
+			} else {
+				if (frame.cliff_limit < 0.0) {
+					frame.cliff_limit = _cliff_scale_limit(p, tn);
+				}
+				c0[i * 4 + 3] = float(MIN(kc, frame.cliff_limit) * rk);
+			}
 			c1[i * 4 + 0] = nb.x;
 			c1[i * 4 + 1] = nb.y;
 			c1[i * 4 + 2] = nb.z;
-			c1[i * 4 + 3] = ml < 1e-4f ? 0.0f : float(_bank_scale(p, bank_relief * w.y * keep[i], ml / MAX(nb.y, real_t(1e-3))));
-			c2[i * 4 + 0] = ml < 1e-4f ? 0.0f : float(cliff_relief * w.x * keep[i]);
+			const real_t kb = bank_relief * w.y * keep[i];
+			if (ml < 1e-4f || kb <= 0.0) {
+				c1[i * 4 + 3] = 0.0f;
+			} else {
+				if (frame.bank_limit < 0.0) {
+					frame.bank_limit = _bank_scale_limit(p, tn);
+				}
+				c1[i * 4 + 3] = float(MIN(kb, frame.bank_limit) * rk);
+			}
+			c2[i * 4 + 0] = ml < 1e-4f ? 0.0f : float(cliff_relief * w.x * keep[i] * rk);
 			const Vector3 np = _normal_central_at((p.x - origin.x) / spacing, (p.z - origin.y) / spacing);
 			c2[i * 4 + 1] = np.x;
 			c2[i * 4 + 2] = np.y;
@@ -928,8 +1079,8 @@ void Landscape3D::_build_cliff_surface(MeshJob &r_job) const {
 		Vector3 t1 = nb.cross(Vector3(0, 1, 0));
 		t1 = t1.length_squared() > 1e-8f ? t1.normalized() : Vector3(1, 0, 0);
 		const Vector3 t2 = t1.cross(nb);
-		const Vector3 du = _cliff_point(p + t1 * e, keep[i]) - _cliff_point(p - t1 * e, keep[i]);
-		const Vector3 dv = _cliff_point(p + t2 * e, keep[i]) - _cliff_point(p - t2 * e, keep[i]);
+		const Vector3 du = _recessed(_cliff_point(p + t1 * e, keep[i]), nb, keep[i]) - _recessed(_cliff_point(p - t1 * e, keep[i]), nb, keep[i]);
+		const Vector3 dv = _recessed(_cliff_point(p + t2 * e, keep[i]), nb, keep[i]) - _recessed(_cliff_point(p - t2 * e, keep[i]), nb, keep[i]);
 		Vector3 nn = dv.cross(du);
 		if (nn.dot(nb) < 0.0) {
 			nn = -nn;
@@ -1595,6 +1746,9 @@ bool Landscape3D::_pick_lods(const Transform3D &p_camera, const Projection &p_pr
 void Landscape3D::_launch_meshes(bool p_wait) {
 	HashSet<uint64_t> queued;
 	mesh_jobs.clear();
+	// For the jobs' recess reads (_recessed); the jobs before these are done (mesh_jobs is clear).
+	recess_on = WorldContracts::ground()->has_recess();
+	recess_xform = is_inside_tree() ? get_global_transform() : Transform3D();
 	for (uint32_t i = 0; i < chunks.size(); i++) {
 		const uint64_t key = _mesh_key(i, target_lod[i], target_mask[i]);
 		if (meshes.has(key) || queued.has(key)) {
@@ -1959,6 +2113,16 @@ void Landscape3D::set_bank_relief(real_t p_metres) {
 	_relief_changed(Rect2());
 }
 
+void Landscape3D::set_terracette_relief(real_t p_share) {
+	p_share = CLAMP(p_share, real_t(0.0), real_t(1.0));
+	if (Math::is_equal_approx(terracette_relief, p_share)) {
+		return;
+	}
+	terracette_relief = p_share;
+	_publish_cliff_relief(!is_inside_tree());
+	_relief_changed(Rect2());
+}
+
 // The relief over a rect (landscape space; empty: all of it) changed: WorldGround.relief_changed in world space.
 void Landscape3D::_relief_changed(const Rect2 &p_area) {
 	if (!is_inside_tree() || heights.is_empty()) {
@@ -2040,6 +2204,24 @@ int Landscape3D::get_hole_quad_count() const {
 		}
 	}
 	return n;
+}
+
+// The cliff kit's recess changed within a world box: new meshes for the chunks it touches (their generation). Not
+// relief_changed: the kit fits to the unrecessed face, so it has nothing to refit, and its fit would come back here.
+void Landscape3D::_on_recess_changed(const AABB &p_box) {
+	if (chunks.is_empty() || !is_inside_tree()) {
+		return;
+	}
+	const AABB b = get_global_transform().affine_inverse().xform(p_box).grow(spacing);
+	const real_t size = chunk_quads * spacing;
+	for (uint32_t i = 0; i < chunks.size(); i++) {
+		const int cx = int(i) % cw, cz = int(i) / cw;
+		const Rect2 r(origin.x + cx * size, origin.y + cz * size, size, size);
+		if (r.intersects(Rect2(b.position.x, b.position.z, b.size.x, b.size.z), true)) {
+			chunks[i].gen++;
+		}
+	}
+	lods_dirty = true;
 }
 
 void Landscape3D::_on_holes_changed(const Rect2 &p_rect) {
@@ -2125,12 +2307,94 @@ void Landscape3D::_refresh_holes(const Rect2 &p_rect) {
 	_update_collision();
 }
 
+void Landscape3D::set_source(const NodePath &p_path) {
+	if (source == p_path) {
+		return;
+	}
+	source = p_path;
+	if (is_inside_tree()) {
+		_auto_connect();
+	}
+}
+
+void Landscape3D::set_auto_rebuild(bool p_enable) {
+	if (auto_rebuild == p_enable) {
+		return;
+	}
+	auto_rebuild = p_enable;
+	if (is_inside_tree()) {
+		_auto_connect();
+	}
+}
+
+// Follows the source generator's "generated", and queues a rebuild when it already has a result and nothing is drawn.
+void Landscape3D::_auto_connect() {
+	_auto_disconnect();
+	if (!auto_rebuild || !is_inside_tree()) {
+		return;
+	}
+	TerrainGenerator3D *gen = Object::cast_to<TerrainGenerator3D>(source.is_empty() ? nullptr : get_node_or_null(source));
+	if (!gen) {
+		return;
+	}
+	gen->connect(SNAME("generated"), callable_mp(this, &Landscape3D::_on_source_generated));
+	auto_source = gen->get_instance_id();
+	if (gen->has_result() && chunks.is_empty()) {
+		_on_source_generated();
+	}
+}
+
+void Landscape3D::_auto_disconnect() {
+	if (TerrainGenerator3D *gen = Object::cast_to<TerrainGenerator3D>(ObjectDB::get_instance(auto_source))) {
+		const Callable cb = callable_mp(this, &Landscape3D::_on_source_generated);
+		if (gen->is_connected(SNAME("generated"), cb)) {
+			gen->disconnect(SNAME("generated"), cb);
+		}
+	}
+	auto_source = ObjectID();
+}
+
+void Landscape3D::_on_source_generated() {
+	if (rebuild_pending) {
+		return;
+	}
+	rebuild_pending = true;
+	callable_mp(this, &Landscape3D::_auto_rebuild).call_deferred();
+}
+
+void Landscape3D::_auto_rebuild() {
+	if (!rebuild_pending || !is_inside_tree()) {
+		rebuild_pending = false;
+		return;
+	}
+	rebuild();
+}
+
+// A TerrainMaterial3D drawn on a generator's ground reads that generator's geology and erosion detail.
+void Landscape3D::_auto_material(Node *p_source) {
+	TerrainGenerator3D *gen = Object::cast_to<TerrainGenerator3D>(p_source);
+	if (!gen || !gen->has_result() || material.is_null() || !material->has_method(SNAME("use_generator"))) {
+		return;
+	}
+	if (Object::cast_to<Object>(material->call(SNAME("get_generator"))) == gen) {
+		return;
+	}
+	material->call(SNAME("use_generator"), gen);
+	material->call(SNAME("update_shader"));
+}
+
+Callable Landscape3D::get_rebuild_button() {
+	return callable_mp(this, &Landscape3D::rebuild);
+}
+
 bool Landscape3D::rebuild() {
 	const uint64_t t0 = OS::get_singleton()->get_ticks_usec();
+	rebuild_pending = false;
 	clear();
 	// Valid points from the source (vw x vh), then the grid rounded up to whole chunks, clamped at the far edges.
 	Ref<Image> img;
 	Node *src = source.is_empty() ? nullptr : get_node_or_null(source);
+	_auto_material(src);
 	if (src) {
 		ERR_FAIL_COND_V_MSG(!src->has_method("sample_heights"), false, "Landscape3D: the source needs sample_heights(origin, spacing, size), as TerrainGenerator3D has.");
 		if (src->has_method("get_world_rect")) {
@@ -2387,28 +2651,141 @@ Dictionary Landscape3D::get_stats() const {
 // middle half, easing to the edge) times the wear their passes give. Trampling takes the field layer's cover off
 // roughly as 1 - exp(-passes / P) (Cole 1995, Liddle 1997: a few hundred passes a year keep a line bare in most
 // field layers), P = 300 here. Rooting: the freshness of turned soil, 1 up to a season after the boar, gone by two
-// years as litter and the field layer close over it. Rebuilt when the camera crosses a 64 m step or the stand changes.
+// years as litter and the field layer close over it. Burn scars: years since the ground last burnt (WorldFire's
+// burn_age_at, a fire in play or an authored WorldBurnScar3D), for the material's char overlay. Rebuilt when the
+// camera crosses a 64 m step or the stand changes; the burn channel also when the fire reports burnt ground changed
+// (only the area it names).
 void Landscape3D::_update_stand_map(const Vector3 &p_camera) {
 	WorldStand *st = WorldContracts::stand();
-	if (!st) {
+	WorldFire *fire = WorldContracts::fire();
+	const bool has_fire = fire && fire->has_provider();
+	if (!st && !has_fire) {
 		_clear_stand_map();
 		return;
 	}
 	const real_t step = 64.0;
 	const Vector2 origin = Vector2(Math::round(p_camera.x / step) * step, Math::round(p_camera.z / step) * step) - Vector2(STAND_SIZE, STAND_SIZE) * 0.5;
-	const uint64_t gen = st->get_stand_generation();
-	if (origin == stand_origin && gen == stand_generation && st->get_instance_id() == stand_id) {
+	const uint64_t gen = st ? st->get_stand_generation() : 0;
+	const ObjectID sid = st ? st->get_instance_id() : ObjectID();
+	const uint64_t fgen = has_fire ? fire->get_burn_generation() : 0;
+	const bool moved = origin != stand_origin;
+	const bool stand_changed = moved || gen != stand_generation || sid != stand_id;
+	const bool fire_changed = moved || has_fire != stand_fire || fgen != stand_burn_generation;
+	if (!stand_changed && !fire_changed) {
 		return;
 	}
-	stand_origin = origin;
-	stand_generation = gen;
-	stand_id = st->get_instance_id();
 	const int R = STAND_RES;
 	const real_t texel = STAND_SIZE / real_t(R);
+	const int G = int(STAND_SIZE / 2.0) + 1;
+	if (stand_changed) {
+		stand_origin = origin;
+		stand_generation = gen;
+		stand_id = sid;
+		stand_trail.resize(R * R);
+		memset(stand_trail.ptr(), 0, stand_trail.size());
+		stand_rooting.resize(G * G);
+		for (float &v : stand_rooting) {
+			v = 0.0f;
+		}
+		stand_any = false;
+		if (st) {
+			stand_any = _raster_stand(st, origin, texel);
+		}
+	}
+	if (fire_changed) {
+		// Burn scars: years since the ground last burnt (WorldFire.burn_age_at), sampled every 2 m like the rooting.
+		// Only the area the fire's change log names is read again when the map has not moved (a fire in play reports
+		// a few times a second); everything after a move, or once the log no longer reaches back.
+		Rect2i cells(0, 0, G, G);
+		if (!moved && has_fire && stand_fire && stand_burn.size() == uint32_t(G * G)) {
+			Rect2 area;
+			if (fire->burn_changes_since(stand_burn_generation, area)) {
+				const Rect2 g = Rect2(area.position - origin, area.size).grow(2.0);
+				const Vector2i c0 = Vector2i(CLAMP(int(Math::floor(g.position.x / 2.0)), 0, G), CLAMP(int(Math::floor(g.position.y / 2.0)), 0, G));
+				const Vector2i c1 = Vector2i(CLAMP(int(Math::ceil(g.get_end().x / 2.0)) + 1, 0, G), CLAMP(int(Math::ceil(g.get_end().y / 2.0)) + 1, 0, G));
+				cells = Rect2i(c0, (c1 - c0).maxi(0));
+			}
+		}
+		stand_burn.resize(G * G);
+		if (cells.size.x == G && cells.size.y == G) {
+			for (float &v : stand_burn) {
+				v = -1.0f;
+			}
+		}
+		if (has_fire) {
+			for (int z = cells.position.y; z < cells.get_end().y; z++) {
+				for (int x = cells.position.x; x < cells.get_end().x; x++) {
+					stand_burn[z * G + x] = fire->burn_age_at(Vector3(origin.x + x * 2.0, 0.0, origin.y + z * 2.0));
+				}
+			}
+		}
+		stand_fire = has_fire;
+		stand_burn_generation = fgen;
+		stand_any_burn = false;
+		for (const float b : stand_burn) {
+			stand_any_burn = stand_any_burn || b >= 0.0f;
+		}
+	}
+	if (!stand_any && !stand_any_burn) {
+		_unpublish_stand_map();
+		return;
+	}
+	// RGBA8: r trail wear, g fresh rooting, b burn: 1 - years / BURN_YEARS (0 never burnt, so a scar as old as that
+	// still reads as burnt; TerrainMaterial3D fades the char over those years), a unused.
+	Vector<uint8_t> data;
+	data.resize(R * R * 4);
+	uint8_t *w = data.ptrw();
+	auto bilerp = [&](const LocalVector<float> &p_grid, real_t p_gx, real_t p_gz, float &r_v) {
+		const int ix = MIN(int(p_gx), G - 2);
+		const int iz = MIN(int(p_gz), G - 2);
+		const float fx = float(p_gx - ix), fz = float(p_gz - iz);
+		const float r0 = Math::lerp(p_grid[iz * G + ix], p_grid[iz * G + ix + 1], fx);
+		const float r1 = Math::lerp(p_grid[(iz + 1) * G + ix], p_grid[(iz + 1) * G + ix + 1], fx);
+		r_v = Math::lerp(r0, r1, fz);
+	};
+	auto burn_v = [](float p_age) { return p_age < 0.0f ? 0.0f : 1.0f - MIN(p_age, BURN_YEARS) / (BURN_YEARS * 1.02f); };
+	for (int z = 0; z < R; z++) {
+		const real_t gz = ((z + 0.5) * texel) / 2.0;
+		for (int x = 0; x < R; x++) {
+			const real_t gx = ((x + 0.5) * texel) / 2.0;
+			float g = 0.0f;
+			if (stand_any) {
+				bilerp(stand_rooting, gx, gz, g);
+			}
+			float b = 0.0f;
+			if (stand_any_burn) {
+				// The four corners' burn values, not their ages (an unburnt corner is 0, not an age of -1).
+				const int ix = MIN(int(gx), G - 2);
+				const int iz = MIN(int(gz), G - 2);
+				const float fx = float(gx - ix), fz = float(gz - iz);
+				const float b0 = Math::lerp(burn_v(stand_burn[iz * G + ix]), burn_v(stand_burn[iz * G + ix + 1]), fx);
+				const float b1 = Math::lerp(burn_v(stand_burn[(iz + 1) * G + ix]), burn_v(stand_burn[(iz + 1) * G + ix + 1]), fx);
+				b = Math::lerp(b0, b1, fz);
+			}
+			const int i = (z * R + x) * 4;
+			w[i] = stand_any ? stand_trail[z * R + x] : 0;
+			w[i + 1] = uint8_t(CLAMP(g * 255.0f, 0.0f, 255.0f));
+			w[i + 2] = uint8_t(CLAMP(b * 255.0f + 0.5f, 0.0f, 255.0f));
+			w[i + 3] = 0;
+		}
+	}
+	Ref<Image> img = Image::create_from_data(R, R, false, Image::FORMAT_RGBA8, data);
+	if (stand_texture.is_valid() && stand_texture->get_width() == R && stand_texture->get_format() == Image::FORMAT_RGBA8) {
+		stand_texture->update(img);
+	} else {
+		stand_texture = ImageTexture::create_from_image(img);
+	}
+	RenderingServer *rs = RenderingServer::get_singleton();
+	rs->global_shader_parameter_set("terrain_stand_map", stand_texture->get_rid());
+	rs->global_shader_parameter_set("terrain_stand_rect", Vector4(origin.x, origin.y, STAND_SIZE, STAND_SIZE));
+	stand_published = true;
+}
+
+// The stand's trails and rooting into stand_trail (bytes, STAND_RES square) and stand_rooting (2 m grid); true if any.
+bool Landscape3D::_raster_stand(WorldStand *st, const Vector2 &origin, real_t texel) {
+	const int R = STAND_RES;
 	const bool scripted = st->get_script_instance() != nullptr;
-	LocalVector<uint8_t> trail;
-	trail.resize(R * R);
-	memset(trail.ptr(), 0, trail.size());
+	LocalVector<uint8_t> &trail = stand_trail;
 	bool any = false;
 	auto wear = [](float p_passes) { return 1.0f - Math::exp(-MAX(p_passes, 0.0f) / 300.0f); };
 	if (scripted) {
@@ -2474,8 +2851,7 @@ void Landscape3D::_update_stand_map(const Vector3 &p_camera) {
 	}
 	// Rooting: sampled every 2 m (the discs are metres across), bilinear over the texels.
 	const int G = int(STAND_SIZE / 2.0) + 1;
-	LocalVector<float> fresh;
-	fresh.resize(G * G);
+	LocalVector<float> &fresh = stand_rooting;
 	bool any_rooting = false;
 	for (int z = 0; z < G; z++) {
 		for (int x = 0; x < G; x++) {
@@ -2485,62 +2861,37 @@ void Landscape3D::_update_stand_map(const Vector3 &p_camera) {
 			any_rooting = any_rooting || f > 0.0f;
 		}
 	}
-	if (!any && !any_rooting) {
-			_clear_stand_map();
-		stand_origin = origin;
-		stand_generation = gen;
-		stand_id = st->get_instance_id();
-		return;
-	}
-	Vector<uint8_t> data;
-	data.resize(R * R * 2);
-	uint8_t *w = data.ptrw();
-	for (int z = 0; z < R; z++) {
-		const real_t gz = ((z + 0.5) * texel) / 2.0;
-		const int iz = MIN(int(gz), G - 2);
-		const real_t fz = gz - iz;
-		for (int x = 0; x < R; x++) {
-			float g = 0.0f;
-			if (any_rooting) {
-				const real_t gx = ((x + 0.5) * texel) / 2.0;
-				const int ix = MIN(int(gx), G - 2);
-				const real_t fx = gx - ix;
-				const float r0 = Math::lerp(fresh[iz * G + ix], fresh[iz * G + ix + 1], float(fx));
-				const float r1 = Math::lerp(fresh[(iz + 1) * G + ix], fresh[(iz + 1) * G + ix + 1], float(fx));
-				g = Math::lerp(r0, r1, float(fz));
-			}
-			w[(z * R + x) * 2] = trail[z * R + x];
-			w[(z * R + x) * 2 + 1] = uint8_t(CLAMP(g * 255.0f, 0.0f, 255.0f));
-		}
-	}
-	Ref<Image> img = Image::create_from_data(R, R, false, Image::FORMAT_RG8, data);
-	if (stand_texture.is_valid() && stand_texture->get_width() == R) {
-		stand_texture->update(img);
-	} else {
-		stand_texture = ImageTexture::create_from_image(img);
-	}
-	RenderingServer *rs = RenderingServer::get_singleton();
-	rs->global_shader_parameter_set("terrain_stand_map", stand_texture->get_rid());
-	rs->global_shader_parameter_set("terrain_stand_rect", Vector4(origin.x, origin.y, STAND_SIZE, STAND_SIZE));
-	stand_published = true;
+	return any || any_rooting;
 }
 
-void Landscape3D::_clear_stand_map() {
+void Landscape3D::_unpublish_stand_map() {
 	if (stand_published) {
 		RenderingServer::get_singleton()->global_shader_parameter_set("terrain_stand_rect", Vector4());
 		stand_published = false;
 	}
+}
+
+void Landscape3D::_clear_stand_map() {
+	_unpublish_stand_map();
 	stand_origin = Vector2(1e30, 1e30);
 	stand_generation = UINT64_MAX;
 	stand_id = ObjectID();
+	stand_fire = false;
+	stand_burn_generation = UINT64_MAX;
+	stand_burn.clear();
+	stand_any = false;
+	stand_any_burn = false;
 }
 
 // The drawn ground over the heightfield at a point's xz (landscape space): x metres up, y the relief's share. Cliff and
 // bank relief push a surface point out along the slope's horizontal normal m by d, so at a fixed xz the surface stands
 // d tan(slope) higher (outward is downhill). The full field: the stitch weight on sides next to coarser chunks and the
 // finest-chunk-only drawing are left out (both are under a pixel by design).
-Vector2 Landscape3D::_relief_at_local(const Vector3 &p) const {
-	if (heights.is_empty() || (cliff_relief <= 0.0 && bank_relief <= 0.0)) {
+Vector2 Landscape3D::_relief_at_local(const Vector3 &p, bool p_steps, Vector3 *r_drawn, real_t *r_drawn_tan, Vector3 *r_drawn_dir) const {
+	if (r_drawn_tan) {
+		*r_drawn_tan = 0.0;
+	}
+	if (heights.is_empty() || (cliff_relief <= 0.0 && bank_relief <= 0.0 && terracette_relief <= 0.0)) {
 		return Vector2(0.0, 0.0);
 	}
 	const real_t fx = (p.x - origin.x) / spacing, fz = (p.z - origin.y) / spacing;
@@ -2552,14 +2903,24 @@ Vector2 Landscape3D::_relief_at_local(const Vector3 &p) const {
 	if (ml < 1e-4f || n.y < 1e-3f) {
 		return Vector2(0.0, 0.0);
 	}
-	const Vector2 w = _relief_weights_at(fx, fz);
-	if (w.x <= 0.0 && w.y <= 0.0) {
-		return Vector2(0.0, 0.0);
-	}
-	const real_t fold = _relief_fold_scale(fx, fz);
 	const int ix = int(Math::floor(fx)), iz = int(Math::floor(fz));
 	const real_t u = fx - ix, v = fz - iz;
 	const real_t h = Math::lerp(Math::lerp(real_t(_h(ix, iz)), real_t(_h(ix + 1, iz)), u), Math::lerp(real_t(_h(ix, iz + 1)), real_t(_h(ix + 1, iz + 1)), u), v);
+	// The terracettes' steps as the near ground draws them (half a metre's filter, twice the near patch's grid).
+	real_t tc_share = p_steps ? terracette_relief : real_t(0.0);
+	if (tc_share > 0.0) {
+		// On open soil only, as TerrainMaterial3D's (WorldContracts::terracette_soil_share).
+		const TerrainGenerator3D *gen = _stream_generator();
+		if (gen) {
+			tc_share *= WorldContracts::terracette_soil_share(gen->get_material_geology_at(Vector3(p.x, h, p.z)));
+		}
+	}
+	const real_t tc = p_steps ? real_t(WorldContracts::terracette_step(Vector3(p.x, h, p.z), Vector2(-n.x, -n.z) / n.y, 0.5f, float(tc_share)).x) : real_t(0.0);
+	const Vector2 w = _relief_weights_at(fx, fz);
+	if (w.x <= 0.0 && w.y <= 0.0) {
+		return Vector2(tc, 0.0);
+	}
+	const real_t fold = _relief_fold_scale(fx, fz);
 	const Vector3 q(p.x, h, p.z);
 	real_t d = 0.0;
 	if (w.x > 0.0 && cliff_relief > 0.0) {
@@ -2571,13 +2932,36 @@ Vector2 Landscape3D::_relief_at_local(const Vector3 &p) const {
 	if (w.y > 0.0 && bank_relief > 0.0) {
 		d += _bank_scale(q, bank_relief * w.y * fold, ml / MAX(n.y, real_t(1e-3))) * _bank_offset(q);
 	}
-	return Vector2(d * ml / n.y, MIN(w.x + w.y, real_t(1.0)));
+	if (r_drawn && r_drawn_tan) {
+		*r_drawn = q + Vector3(n.x / ml, 0.0, n.z / ml) * d;
+		*r_drawn_tan = ml / n.y;
+		if (r_drawn_dir) {
+			*r_drawn_dir = Vector3(n.x / ml, 0.0, n.z / ml);
+		}
+	}
+	return Vector2(d * ml / n.y + tc, MIN(w.x + w.y, real_t(1.0)));
 }
 
-Vector2 Landscape3D::contract_relief_at(const Vector3 &p_position) const {
-	RWLockRead hl(heights_lock);
+Vector2 Landscape3D::contract_relief_at(const Vector3 &p_position, bool p_steps, bool p_recess) const {
 	const Transform3D xf = is_inside_tree() ? get_global_transform() : Transform3D();
-	return _relief_at_local(xf.affine_inverse().xform(p_position));
+	Vector3 drawn, dir;
+	real_t tn = 0.0;
+	Vector2 r;
+	{
+		RWLockRead hl(heights_lock);
+		r = _relief_at_local(xf.affine_inverse().xform(p_position), p_steps, &drawn, &tn, &dir);
+	}
+	// The cliff kit's recess, asked outside the lock (its producer fits its pillars to the unrecessed face through
+	// this same contract): the drawn face steps back by the recess offset (along the pillar's normal, as the mesh
+	// does), so at a fixed xz it stands that offset's share along the face's own horizontal normal times tan lower.
+	if (p_recess && tn > 0.0 && Math::is_finite(r.x) && WorldContracts::ground()->has_recess()) {
+		const Vector4 rv = WorldContracts::ground()->recess_vector_at(xf.xform(drawn));
+		if (rv.w > 0.0f) {
+			const Vector3 off = xf.basis.inverse().xform(Vector3(rv.x, rv.y, rv.z));
+			r.x -= MAX(-off.dot(dir), real_t(0.0)) * tn;
+		}
+	}
+	return r;
 }
 
 // What contract_relief_at reads besides the stored properties: the placement, the grid and its heights as read so far.
@@ -2585,7 +2969,7 @@ void Landscape3D::contract_relief_state(void (*p_add)(void *p_user, const void *
 	RWLockRead hl(heights_lock);
 	const Transform3D xf = is_inside_tree() ? get_global_transform() : Transform3D();
 	p_add(p_user, &xf, sizeof(xf));
-	const real_t grid[] = { origin.x, origin.y, spacing, cliff_relief, bank_relief };
+	const real_t grid[] = { origin.x, origin.y, spacing, cliff_relief, bank_relief, terracette_relief };
 	p_add(p_user, grid, sizeof(grid));
 	const int32_t dims[] = { gw, gh };
 	p_add(p_user, dims, sizeof(dims));
@@ -2621,7 +3005,9 @@ void Landscape3D::_update_relief_map(const Vector3 &p_camera) {
 	bool any = false;
 	for (int z = 0; z < R; z++) {
 		for (int x = 0; x < R; x++) {
-			Vector2 r = _relief_at_local(Vector3(org.x + (x + 0.5) * texel, 0.0, org.y + (z + 0.5) * texel));
+			// Without the terracettes' steps: a 3 m step pattern sampled at texel centres aliases, and placers on the
+			// GPU add the steps at their own roots (wc_terracette_step).
+			Vector2 r = _relief_at_local(Vector3(org.x + (x + 0.5) * texel, 0.0, org.y + (z + 0.5) * texel), false);
 			if (Math::is_nan(r.x)) {
 				r = Vector2(0.0, 0.0);
 			}
@@ -2708,10 +3094,10 @@ void Landscape3D::_clear_relief_map() {
 
 void Landscape3D::_publish_cliff_relief(bool p_clear) {
 	const Vector4 v = p_clear || heights.is_empty() ? Vector4() : Vector4(cliff_relief, spacing, origin.x, origin.y);
-	const real_t b = p_clear || heights.is_empty() ? 0.0 : bank_relief;
+	const Vector2 b = p_clear || heights.is_empty() ? Vector2() : Vector2(bank_relief, terracette_relief);
 	if (b != bank_published) {
 		bank_published = b;
-		RenderingServer::get_singleton()->global_shader_parameter_set("terrain_bank_relief", Vector4(b, 0, 0, 0));
+		RenderingServer::get_singleton()->global_shader_parameter_set("terrain_bank_relief", Vector4(b.x, b.y, 0, 0));
 	}
 	if (v == cliff_published) {
 		return;
@@ -2724,14 +3110,28 @@ void Landscape3D::_notification(int p_what) {
 	switch (p_what) {
 		case NOTIFICATION_ENTER_WORLD: {
 			_create_instances();
+			_auto_connect();
 			if (!relief_registered) {
 				WorldContracts::register_relief(this);
 				relief_registered = true;
 				_relief_changed(Rect2());
 			}
+			{
+				const Callable rcb = callable_mp(this, &Landscape3D::_on_recess_changed);
+				if (!WorldContracts::ground()->is_connected(SNAME("recess_changed"), rcb)) {
+					WorldContracts::ground()->connect(SNAME("recess_changed"), rcb);
+				}
+			}
 			set_process_internal(true);
 		} break;
 		case NOTIFICATION_EXIT_WORLD: {
+			_auto_disconnect();
+			{
+				const Callable rcb = callable_mp(this, &Landscape3D::_on_recess_changed);
+				if (WorldContracts::ground()->is_connected(SNAME("recess_changed"), rcb)) {
+					WorldContracts::ground()->disconnect(SNAME("recess_changed"), rcb);
+				}
+			}
 			_wait_all();
 			_free_instances();
 			_free_all_collision();
@@ -2831,6 +3231,8 @@ void Landscape3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_cliff_relief", "metres"), &Landscape3D::set_cliff_relief);
 	ClassDB::bind_method(D_METHOD("get_cliff_relief"), &Landscape3D::get_cliff_relief);
 	ClassDB::bind_method(D_METHOD("set_bank_relief", "metres"), &Landscape3D::set_bank_relief);
+	ClassDB::bind_method(D_METHOD("set_terracette_relief", "share"), &Landscape3D::set_terracette_relief);
+	ClassDB::bind_method(D_METHOD("get_terracette_relief"), &Landscape3D::get_terracette_relief);
 	ClassDB::bind_method(D_METHOD("get_bank_relief"), &Landscape3D::get_bank_relief);
 	ClassDB::bind_method(D_METHOD("get_cliff_point", "global_position"), &Landscape3D::get_cliff_point);
 	ClassDB::bind_method(D_METHOD("set_cast_shadows", "enable"), &Landscape3D::set_cast_shadows);
@@ -2855,6 +3257,9 @@ void Landscape3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("update_collision"), &Landscape3D::update_collision);
 	ClassDB::bind_method(D_METHOD("has_chunk_collision", "chunk"), &Landscape3D::has_chunk_collision);
 	ClassDB::bind_method(D_METHOD("rebuild"), &Landscape3D::rebuild);
+	ClassDB::bind_method(D_METHOD("set_auto_rebuild", "enable"), &Landscape3D::set_auto_rebuild);
+	ClassDB::bind_method(D_METHOD("is_auto_rebuild"), &Landscape3D::is_auto_rebuild);
+	ClassDB::bind_method(D_METHOD("get_rebuild_button"), &Landscape3D::get_rebuild_button);
 	ClassDB::bind_method(D_METHOD("clear"), &Landscape3D::clear);
 	ClassDB::bind_method(D_METHOD("update_lods", "camera_transform", "projection", "viewport_height"), &Landscape3D::update_lods);
 	ClassDB::bind_method(D_METHOD("update_lods_from_camera"), &Landscape3D::update_lods_from_camera);
@@ -2874,6 +3279,8 @@ void Landscape3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_stats"), &Landscape3D::get_stats);
 
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "source", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "TerrainGenerator3D"), "set_source", "get_source");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "auto_rebuild"), "set_auto_rebuild", "is_auto_rebuild");
+	ADD_PROPERTY(PropertyInfo(Variant::CALLABLE, "rebuild_button", PROPERTY_HINT_TOOL_BUTTON, "Rebuild,Reload", PROPERTY_USAGE_EDITOR), "", "get_rebuild_button");
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "height_image", PROPERTY_HINT_RESOURCE_TYPE, "Image"), "set_height_image", "get_height_image");
 	ADD_PROPERTY(PropertyInfo(Variant::VECTOR2, "origin", PROPERTY_HINT_NONE, "suffix:m"), "set_origin", "get_origin");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "spacing", PROPERTY_HINT_RANGE, "0.05,16,0.05,or_greater,suffix:m"), "set_spacing", "get_spacing");
@@ -2885,6 +3292,7 @@ void Landscape3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "material", PROPERTY_HINT_RESOURCE_TYPE, "BaseMaterial3D,ShaderMaterial"), "set_material", "get_material");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "cliff_relief", PROPERTY_HINT_RANGE, "0,2,0.05,or_greater,suffix:m"), "set_cliff_relief", "get_cliff_relief");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "bank_relief", PROPERTY_HINT_RANGE, "0,2,0.05,or_greater,suffix:m"), "set_bank_relief", "get_bank_relief");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "terracette_relief", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_terracette_relief", "get_terracette_relief");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "cast_shadows"), "set_cast_shadows", "is_casting_shadows");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "stream_heights"), "set_stream_heights", "is_streaming_heights");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "camera", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "Camera3D"), "set_camera", "get_camera");

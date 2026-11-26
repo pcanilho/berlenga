@@ -1075,3 +1075,40 @@ under the TAA resolve (which keeps jittered frames as they are: an unjittered sk
 1.04) and, for a temporal upscaler that is told the jitter (FSR2, MetalFX temporal, DLSS), is read once at this
 frame's jitter in a second pass (the sign checked: the other sign measured softer under FSR2). The 4-pixel checker in
 the PC stills (DLSS on) is likely this; to be confirmed on the PC. Path traced (no jitter) is unchanged.
+
+## Sky light under the clouds: a cloud ambient occlusion map (24 Nov; Paulo: dense clusters should darken the ground)
+
+The cloud shadow cut only the sun. The sky light on surfaces (raster's ambient and reflections, and the path tracer's
+bounces that leave the scene) read the radiance map, the sky as the camera sees it, so ground under a cluster the
+camera saw from the sun kept the full blue sky fill. Technique: a cloud ambient occlusion map, as Unreal Engine's sky
+light Cloud Ambient Occlusion (a top-down map of how much sky each spot sees through the clouds). Here it is baked
+with the light grid (WeatherMap3D._build_cloud_sky_map(), the same 32 km box, 256 m texels): each column's optical
+depth (the grid's extinction summed up, plus the mid and high sheets and wave clouds) and its mean height; for 32
+cosine-weighted directions from the ground, the slant depth where each meets the cloud, the two-stream diffuse
+transmission 1 / (1 + 0.1125 tau) as the cloud shadow uses, averaged. Published as weather_cloud_sky_map and
+weather_cloud_sky_rect (WeatherMap3D.cloud_sky_occlusion, on), bound to the forward clustered scene shader (set 0,
+bindings 25 and 26) and to the path tracer (rt_params 97 to 99, bindless). Both take a point's visibility against the
+camera's, at most 1: the radiance map already holds the clouds over the camera.
+
+Measured: under scattered cumulus the map reads 0.42 at the darkest; under an isolated cumulus the sky it hides is a
+cone of some 20 degrees, a tenth of the cosine-weighted sky, so the ground's darkening there stays the sun's (the
+physics: cumulus shadows are the sun cut). Under a storm (0.18 to 0.23) the fill drops by a few percent of the ground's
+brightness at 7 km in the bench (path traced 2%, raster 1.3%: the path tracer's sky share is larger). Under a full
+overcast the camera is under it too and nothing changes, as the radiance map is already overcast. Per direction in
+the path tracer (the cloud along each ray against the camera's) was tried: capped at 1 it biased the mean dark, and
+uncapped it would light single rays by the map's bright cloud many times over; it uses the same hemisphere ratio as
+raster.
+
+## Cloud shadow to the horizon: a far cascade from the column map (24 Nov; bug: far ground sunlit under an overcast)
+
+The cloud shadow map (the sun's projector) spans 6 km round the camera; past it the sun was uncut, so under an overcast
+the ground from about 3 km to the horizon lay in full sun. Technique: a coarse far cloud shadow past the detailed one,
+as engines extend a cloud shadow map over a large extent at a low resolution. It is read from the cloud sky map's
+columns (32 km, 256 m): where the sun's ray from the point reaches the column's mean cloud height, the slant depth
+tau / sun.y and the same two-stream transmission the near map stores. The near map holds where it reaches and blends
+into the far one over its outer tenth (no seam); past the column map (16 km out) the clouds' mean (the map's last mip
+of the transmission straight up, so scattered cloud is not darkened as a deck). Raster (directional_cloud_projector(),
+also sun_visibility()) and the path tracer (lights_directional_projector_color()) read it alike. Checked: the near
+ground and the sky are bit-identical to before; the overcast bench's sunlit band at the horizon is gone in both, and
+distant cumulus now shade the far fields. Not yet: the froxel fog's and the path tracer's volume beam past the map,
+and the Mobile renderer.

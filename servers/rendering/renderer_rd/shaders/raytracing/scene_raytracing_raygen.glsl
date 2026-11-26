@@ -383,13 +383,93 @@ void plight_update(uvec2 p_pixel, mat4 p_inv_view, uint p_frame) {
 	imageStore(plight_images[write * 2u + 1u], ivec3(cell), b);
 }
 
+bool rt_caustics_trace(vec3 p_origin, vec3 p_dir, float p_width, uint p_rng, out PathState r_ps);
+
+// A lamp over the water lighting a point x in it (docs/ideas/water.md "Lamps above the water", path tracer): its light
+// bends at the surface over x (taken level there, found by a probe straight up), along the one ray Snell's law allows
+// (Newton's method from the paraxial point, as the raster water_lamp_at), and spreads as that bent tube of rays does:
+// drawn in toward the vertical, so the beam in the water narrows under the lamp instead of carrying on its straight cone.
+// Two shadow rays: the water leg up through the surface (its transmission and the water's absorption, as a straight
+// one), and the air leg on to the lamp. r_e: the lamp's light scattered along -p_dir (phase g, its volumetric energy);
+// false where it does not apply (the lamp under the water, no level surface over x), for the straight estimate.
+bool rt_volume_bent(RTLightData p_light, vec3 x, vec3 p_dir, float g, out vec3 r_e, inout uint rng) {
+	r_e = vec3(0.0);
+	PathState ps;
+	if (!rt_caustics_trace(x, vec3(0.0, 1.0, 0.0), 0.0, 0u, ps) || (ps.packed_bounces_flags & MEDIUM_CHANGE_FLAG) == 0u ||
+			ps.bsdf_pdf >= 0.0 || abs(ps.offset_normal.y) < 0.7) {
+		return false;
+	}
+	float level = x.y + ps.hit_t;
+	vec3 c = p_light.position;
+	float a = c.y - level;
+	if (a <= 0.01) {
+		return false;
+	}
+	const float n = 1.333;
+	float b = max(level - x.y, 1e-3);
+	vec2 hv = x.xz - c.xz;
+	float rho = length(hv);
+	vec2 u = rho > 1e-6 ? hv / rho : vec2(1.0, 0.0);
+	float s = rho * a / (a + b / n);
+	for (int k = 0; k < 4; k++) {
+		float ra = sqrt(a * a + s * s);
+		float rb = sqrt(b * b + (rho - s) * (rho - s));
+		float f = s / ra - n * (rho - s) / rb;
+		float df = a * a / (ra * ra * ra) + n * b * b / (rb * rb * rb);
+		s = clamp(s - f / df, 0.0, rho);
+	}
+	float ra = sqrt(a * a + s * s);
+	float rb = sqrt(b * b + (rho - s) * (rho - s));
+	float ci = a / ra;
+	float si = s / ra;
+	float ct = b / rb;
+	float e2 = (a + b / n) * (a + b / n);
+	if (si > 1e-4) {
+		e2 = rho * (a / (ci * ci) + b / (ct * ct) * ci / (n * ct)) * ct / si;
+	}
+	float path = ra + rb;
+	if (p_light.max_range_squared > 0.0 && path * path > p_light.max_range_squared) {
+		return true;
+	}
+	float atten = pow(max(e2, 1e-8), -0.5 * p_light.attenuation);
+	if (p_light.inv_max_range >= 0.0) {
+		float nd = path * p_light.inv_max_range;
+		nd *= nd;
+		nd *= nd;
+		nd = max(1.0 - nd, 0.0);
+		atten *= nd * nd;
+	}
+	vec3 r_pt = vec3(c.x + u.x * s, level, c.z + u.y * s);
+	vec3 air = (c - r_pt) / ra; // up from the surface to the lamp
+	if (p_light.type == RT_LIGHT_TYPE_SPOT) {
+		float scos = dot(-air, lights_rotate(p_light.orientation, vec3(0.0, 0.0, -1.0)));
+		float cos_spot = 1.0 - p_light.one_minus_cos_spot;
+		if (scos <= cos_spot) {
+			return true;
+		}
+		atten *= 1.0 - pow(max(1e-4, (1.0 - scos) / max(p_light.one_minus_cos_spot, 1e-4)), p_light.inv_spot_attenuation);
+	}
+	vec3 up = (r_pt - x) / rb; // toward the light, in the water
+	vec3 e = p_light.emission * atten * rt_volume_hg(dot(up, p_dir), g) * p_light.volume_energy;
+	if (plight_luma(e) <= 0.0) {
+		return true;
+	}
+	// The water leg runs a little past the level point, through the surface where the waves have it.
+	vec3 tr = lights_shadow_transmittance(p_light, x, up, rb + 0.3, 0xFFu, rng);
+	if (max(tr.r, max(tr.g, tr.b)) > 0.0) {
+		tr *= lights_shadow_transmittance(p_light, r_pt + air * 0.3, air, max(ra - 0.31, 0.002), 0xFFu, rng);
+	}
+	r_e = e * tr;
+	return true;
+}
+
 // Light reaching a scattering point in simulated gas and scattered along -p_dir (the ray arrived
 // travelling along p_dir): every directional light, and one positional light chosen among the light
 // grid's candidates in proportion to its unshadowed contribution (as plight_update), each through a
 // shadow ray whose transmittance includes the gas (ratio tracking), weighted by the
 // Henyey-Greenstein phase function of anisotropy g (the gas's, or a water medium's). With p_cloud_beam
 // (the open air's haze), the sun's light is its direct beam through the clouds over x.
-vec3 rt_volume_direct(vec3 x, vec3 p_dir, float g, bool p_cloud_beam, inout uint rng) {
+vec3 rt_volume_direct(vec3 x, vec3 p_dir, float g, bool p_cloud_beam, bool p_water, inout uint rng) {
 	vec3 sum = vec3(0.0);
 	uint light_count = uint(get_rt_param(RT_PARAM_LIGHT_COUNT));
 	uint dir_count = lights_directional_count(light_count);
@@ -445,7 +525,13 @@ vec3 rt_volume_direct(vec3 x, vec3 p_dir, float g, bool p_cloud_beam, inout uint
 			}
 		}
 		if (w_sel > 0.0) {
-			sum += e_sel * (w_sum / w_sel) * lights_shadow_transmittance(lights_get(li_sel), x, l_sel, max(d_sel - 0.01, 0.002), 0xFFu, rng);
+			RTLightData sel = lights_get(li_sel);
+			vec3 e_bent;
+			if (p_water && rt_volume_bent(sel, x, p_dir, g, e_bent, rng)) {
+				sum += e_bent * (w_sum / w_sel);
+			} else {
+				sum += e_sel * (w_sum / w_sel) * lights_shadow_transmittance(sel, x, l_sel, max(d_sel - 0.01, 0.002), 0xFFu, rng);
+			}
 		}
 	}
 	return sum;
@@ -521,6 +607,71 @@ bool rt_caustics_trace(vec3 p_origin, vec3 p_dir, float p_width, uint p_rng, out
 	traceRayEXT(tlas, RT_RAY_FLAGS, RT_BOUNCE_MASK, 0, 0, 0, p_origin, 0.001, p_dir, 10000.0, 0);
 	r_ps = path_unpack(payload);
 	return r_ps.hit_t >= 0.0;
+}
+
+// The sky's light reaching a scattering point in water through the surface over it: next event estimation of the
+// environment through the interface (docs/ideas/water.md, "Sky light in the water under the path tracer"). Paths only
+// found the sky by phase sampling their way back up through the surface, and the water's forward-peaked phase function
+// (g ~ 0.85) needs several scatters to turn a downward ray round, so under the bounce budget the sky lit almost none
+// of the water: the shade of a rock on the sea, and the whole sea at night, went black. One cosine-weighted direction
+// up, to the surface's back face (its geometric normal), refracted out with the exact Fresnel transmittance, then on
+// to the sky. The air leg is traced as a bounce that left a diffuse vertex, so the miss shader gives the sky exactly
+// as a path's escape gets it (clouds, fog, ambient light off). The path's own escape straight after this scattering
+// event is dropped in raygen (rt_sky_nee_open), so the sky is not counted twice.
+vec3 rt_water_sky_direct(vec3 x, vec3 p_dir, float g, vec3 p_sigma_t, inout uint rng) {
+	if ((scene_data_block.data.flags & SCENE_DATA_FLAGS_USE_AMBIENT_LIGHT) == 0u) {
+		return vec3(0.0);
+	}
+	vec2 u = rand2(rng);
+	float r = sqrt(u.x);
+	float phi = 2.0 * PI * u.y;
+	vec3 d = vec3(r * cos(phi), sqrt(max(1.0 - u.x, 0.0)), r * sin(phi));
+	float pdf = d.y / PI;
+	if (pdf < 1e-4) {
+		return vec3(0.0);
+	}
+	PathState ps;
+	// Out through the back face of a medium's surface (photon report: a negative bsdf_pdf), not a rock overhead.
+	if (!rt_caustics_trace(x, d, 0.0, 0u, ps) || (ps.packed_bounces_flags & MEDIUM_CHANGE_FLAG) == 0u || ps.bsdf_pdf >= 0.0) {
+		return vec3(0.0);
+	}
+	vec3 n_out = ps.offset_normal;
+	float ci = dot(d, n_out);
+	if (ci <= 0.0) {
+		return vec3(0.0);
+	}
+	const float n = 1.333;
+	vec3 t = refract(d, -n_out, n);
+	if (dot(t, t) <= 0.0) {
+		return vec3(0.0); // total internal reflection
+	}
+	t = normalize(t);
+	float ct = max(dot(t, n_out), 0.0);
+	float rs = (n * ci - ct) / (n * ci + ct);
+	float rp = (ci - n * ct) / (ci + n * ct);
+	float tf = 1.0 - 0.5 * (rs * rs + rp * rp);
+	vec3 e = exp(-p_sigma_t * ps.hit_t) * (tf * rt_volume_hg(dot(d, p_dir), g) / pdf);
+	if (max(e.r, max(e.g, e.b)) <= 1e-5) {
+		return vec3(0.0);
+	}
+	vec3 s = x + d * ps.hit_t;
+	PathState sky;
+	sky.bsdf_pdf = 0.0;
+	sky.radiance = vec3(0.0);
+	sky.throughput = vec3(1.0);
+	sky.packed_bounces_flags = inc_total_bounce(0u) | CAUSTIC_PHOTON_FLAG | LAST_BOUNCE_DIFFUSE_FLAG | NON_SINGULAR_PATH_FLAG;
+	sky.rng_state = 0u;
+	sky.hit_t = -1.0;
+	sky.offset_normal = vec3(0.0, 0.0, 1.0);
+	sky.next_ray_dir = t;
+	path_pack(payload, sky);
+	payload_set_cone_width(payload, 0.0);
+	traceRayEXT(tlas, RT_RAY_FLAGS, RT_BOUNCE_MASK, 0, 0, 0, offset_ray_origin(s, n_out, ps.hit_t), 0.001, t, 10000.0, 0);
+	sky = path_unpack(payload);
+	if (sky.hit_t >= 0.0) {
+		return vec3(0.0);
+	}
+	return sky.radiance * e;
 }
 
 // A path into or through a medium leaves each surface from offset_ray_origin()'s start, up to 256 ulps of the
@@ -804,6 +955,63 @@ void rt_caustics_photon_cascade(vec3 p_center, uint p_cascade, uint p_write, uve
 	}
 }
 
+// One photon from the lamp over the map's tangent square, and its straight twin (raytracing_caustics_inc.glsl, lamp
+// caustics). p_sub of p_count stratifies the pixel's photons, as the sun's. Dry surfaces within
+// RT_CAUSTICS_LAMP_FIXTURE of the lamp (its housing, its glass) are passed, as its shadow rays see the lamp past them.
+void rt_caustics_lamp_photon(RTLightData p_light, CausticsLampFrame f, uint p_write, uint p_lamp, uvec2 p_pixel, uint p_sub, uint p_count, inout uint rng) {
+	vec2 j = rand2(rng);
+	j.x = (float(p_sub) + j.x) / float(p_count);
+	vec2 uv = (vec2(p_pixel) + j) / vec2(RT_LAUNCH_SIZE.xy);
+	vec2 t = (uv * 2.0 - 1.0) * f.ext;
+	vec3 dir = normalize(f.axis + t.x * f.r + t.y * f.u);
+	float c = dot(dir, f.axis);
+	// The lamp's intensity that way (the spot's cone and rim, as lights_evaluate_positional) and the solid angle of
+	// an even step over the tangent plane (cos^3).
+	float weight = c * c * c;
+	if (p_light.type == RT_LIGHT_TYPE_SPOT) {
+		float one_minus_scos = 1.0 - c;
+		if (one_minus_scos >= p_light.one_minus_cos_spot) {
+			return;
+		}
+		weight *= 1.0 - pow(max(1e-4, one_minus_scos / p_light.one_minus_cos_spot), p_light.inv_spot_attenuation);
+	}
+	if (weight * RT_CAUSTICS_WEIGHT < 0.5) {
+		return;
+	}
+	vec3 o = f.apex;
+	vec3 hit = o;
+	float travelled = 0.0;
+	PathState ps;
+	for (uint i = 0u; i < 3u; i++) {
+		if (!rt_caustics_trace(o, dir, 0.0, rng, ps)) {
+			return;
+		}
+		hit = o + dir * ps.hit_t;
+		if ((ps.packed_bounces_flags & MEDIUM_CHANGE_FLAG) != 0u || travelled + ps.hit_t > RT_CAUSTICS_LAMP_FIXTURE || i == 2u) {
+			break;
+		}
+		travelled += ps.hit_t;
+		o = offset_ray_origin(hit, dot(ps.offset_normal, dir) > 0.0 ? ps.offset_normal : -ps.offset_normal, ps.hit_t);
+	}
+	if ((ps.packed_bounces_flags & MEDIUM_CHANGE_FLAG) == 0u) {
+		rt_caustics_lamp_deposit(f, p_write, p_lamp, hit, 0u, weight);
+		rt_caustics_lamp_deposit(f, p_write, p_lamp, hit, 1u, weight);
+		return;
+	}
+	if (ps.bsdf_pdf < 0.5) {
+		return;
+	}
+	atomicAdd(rt_caustics.data[RT_CAUSTICS_LAMP_HEADER + (p_write * RT_CAUSTICS_LAMPS + p_lamp) * 4u + 3u], 1u);
+	vec3 oo = offset_ray_origin(hit, ps.offset_normal, ps.hit_t);
+	vec3 p;
+	if (rt_caustics_land(oo, ps.next_ray_dir, 0.0, rng, p)) {
+		rt_caustics_lamp_deposit(f, p_write, p_lamp, p, 0u, weight);
+	}
+	if (rt_caustics_land(oo, dir, 0.0, rng, p)) {
+		rt_caustics_lamp_deposit(f, p_write, p_lamp, p, 1u, weight);
+	}
+}
+
 // This pixel's share of the caustics map (raytracing_caustics_inc.glsl): clear part of the slot
 // the next frame writes, then trace one photon from the sun. The square is centred where the
 // camera looked last frame, at least half its width ahead; the centre pixel measures that
@@ -823,6 +1031,20 @@ void rt_caustics_photon(uvec2 p_pixel, uint p_frame, vec3 p_cam_pos, vec3 p_cam_
 			if (i < slot_uints) {
 				rt_caustics.data[base + i] = 0u;
 			}
+		}
+	}
+	{
+		// The lamp maps' slot, and their counts of photons into water.
+		uint base = RT_CAUSTICS_LAMP_BASE + clear * RT_CAUSTICS_LAMP_SLOT_UINTS;
+		uint share = (RT_CAUSTICS_LAMP_SLOT_UINTS + threads - 1u) / threads;
+		for (uint k = 0u; k < share; k++) {
+			uint i = tid * share + k;
+			if (i < RT_CAUSTICS_LAMP_SLOT_UINTS) {
+				rt_caustics.data[base + i] = 0u;
+			}
+		}
+		if (tid < RT_CAUSTICS_LAMPS) {
+			rt_caustics.data[RT_CAUSTICS_LAMP_HEADER + (clear * RT_CAUSTICS_LAMPS + tid) * 4u + 3u] = 0u;
 		}
 	}
 
@@ -857,6 +1079,46 @@ void rt_caustics_photon(uvec2 p_pixel, uint p_frame, vec3 p_cam_pos, vec3 p_cam_
 		uint n1 = clamp((RT_CAUSTICS_MIN_PHOTONS * RT_CAUSTICS_RES_OUTER * RT_CAUSTICS_RES_OUTER * 4u + threads - 1u) / threads, 1u, RT_CAUSTICS_MAX_PER_PIXEL);
 		for (uint k = 0u; k < n1; k++) {
 			rt_caustics_photon_cascade(center, quarter, write, p_pixel, 2u, k, n1, rng);
+		}
+	}
+
+	// The lamp maps: the four lamps reaching brightest round the area's centre. While a lamp's photons last frame met no
+	// water, one pixel in sixteen probes for it (a lamp over dry ground costs a sixteenth).
+	uint picks[RT_CAUSTICS_LAMPS];
+	uint lamps = rt_caustics_pick_lamps(center, picks);
+	uint nl = clamp((RT_CAUSTICS_MIN_PHOTONS * RT_CAUSTICS_LAMP_RES * RT_CAUSTICS_LAMP_RES + threads - 1u) / threads, 1u, RT_CAUSTICS_MAX_PER_PIXEL);
+	for (uint k = 0u; k < RT_CAUSTICS_LAMPS; k++) {
+		uint lh = RT_CAUSTICS_LAMP_HEADER + (write * RT_CAUSTICS_LAMPS + k) * 4u;
+		RTLightData lamp;
+		CausticsLampFrame lf;
+		bool live = k < lamps;
+		if (live) {
+			lamp = lights_get(picks[k]);
+			live = rt_caustics_lamp_frame(lamp, lf);
+		}
+		if (all(equal(p_pixel, uvec2(0u)))) {
+			vec3 lp = live ? lamp.position : vec3(1e30);
+			rt_caustics.data[lh] = floatBitsToUint(lp.x);
+			rt_caustics.data[lh + 1u] = floatBitsToUint(lp.y);
+			rt_caustics.data[lh + 2u] = floatBitsToUint(lp.z);
+		}
+		if (!live) {
+			continue;
+		}
+		// Last frame's map of this lamp, wherever it stood in that frame's list.
+		bool wet_last = false;
+		if (rt_caustics_history()) {
+			for (uint q = 0u; q < RT_CAUSTICS_LAMPS; q++) {
+				uint hq = RT_CAUSTICS_LAMP_HEADER + (last * RT_CAUSTICS_LAMPS + q) * 4u;
+				if (rt_caustics.data[hq + 3u] > 0u && all(equal(vec3(uintBitsToFloat(rt_caustics.data[hq]), uintBitsToFloat(rt_caustics.data[hq + 1u]), uintBitsToFloat(rt_caustics.data[hq + 2u])), lamp.position))) {
+					wet_last = true;
+				}
+			}
+		}
+		if (wet_last || ((tid ^ p_frame ^ (k * 5u)) & 15u) == 0u) {
+			for (uint j = 0u; j < nl; j++) {
+				rt_caustics_lamp_photon(lamp, lf, write, k, p_pixel, j, nl, rng);
+			}
 		}
 	}
 }
@@ -944,6 +1206,12 @@ void main() {
 	// Sample count from specialization constant (or uniform in dynamic mode), frame index from uniform
 	const uint samples_per_pixel = RT_GET_SAMPLE_COUNT();
 	uint frame_index = uint(get_rt_param(RT_PARAM_FRAME_INDEX));
+	// This dispatch's run of samples (RTLaunchBand): the pixel's own work before the samples goes with the first run,
+	// after them with the last.
+	const uint sample_begin = rt_launch_band.sample_end == 0u ? 0u : min(rt_launch_band.sample_begin, samples_per_pixel);
+	const uint sample_end = rt_launch_band.sample_end == 0u ? samples_per_pixel : min(rt_launch_band.sample_end, samples_per_pixel);
+	const bool first_run = sample_begin == 0u;
+	const bool last_run = sample_end == samples_per_pixel;
 
 	// Accumulate multiple samples per pixel
 	vec3 total_radiance = vec3(0.0);
@@ -953,7 +1221,7 @@ void main() {
 	uint debug_tlayers = 0u; // VIS 23: primary-segment transparency hits
 #endif
 
-	if (rt_caustics_enabled()) {
+	if (first_run && rt_caustics_enabled()) {
 		rt_caustics_photon(pixel, frame_index, inv_view[3].xyz, normalize(-inv_view[2].xyz));
 	}
 
@@ -975,7 +1243,7 @@ void main() {
 	}
 
 	const uint max_bounces = RT_GET_MAX_BOUNCES();
-	if (rt_rc_enabled()) {
+	if (first_run && rt_rc_enabled()) {
 		rt_rc_resolve(pixel.y * RT_LAUNCH_SIZE.x + pixel.x, RT_LAUNCH_SIZE.x * RT_LAUNCH_SIZE.y);
 	}
 
@@ -993,7 +1261,7 @@ void main() {
 	// TODO: when we have a spp > 0 the first raycast is always identical,
 	// we should move it out of the loop
 
-	[[dont_unroll]] for (uint sample_idx = 0u; sample_idx < samples_per_pixel; sample_idx++) {
+	[[dont_unroll]] for (uint sample_idx = sample_begin; sample_idx < sample_end; sample_idx++) {
 		// Every field must be defined: path_pack branches on the octahedral encodes,
 		// and branching on an undefined value lets the driver drop the whole path.
 		PathState ps;
@@ -1068,6 +1336,9 @@ void main() {
 		// cloud (snow powder, steam) keeps most of its light through tens of scatters, and cutting the path after the
 		// surface budget (3 by default) darkened its inside to grey. Russian roulette still ends the paths.
 		uint volume_scatters = 0u;
+		// Set at a scattering event in water, whose sky rt_water_sky_direct() counted: the path's own way to the sky
+		// from there (out through the surface, then a miss) adds nothing. Cleared by any other surface.
+		bool rt_sky_nee_open = false;
 		[[dont_unroll]] for (uint bounce = 0u; bounce <= segment_limit + volume_scatters; bounce++) {
 			vec3 throughput_entry = ps.throughput;
 			vec3 radiance_pre = ps.radiance;
@@ -1122,6 +1393,13 @@ void main() {
 			}
 
 			ps = path_unpack(payload);
+			if (rt_sky_nee_open) {
+				if (ps.hit_t < 0.0) {
+					ps.radiance = radiance_pre;
+				} else if ((ps.packed_bounces_flags & MEDIUM_CHANGE_FLAG) == 0u || floatBitsToUint(ps.bsdf_pdf) != 0u) {
+					rt_sky_nee_open = false; // not out of the water into the air
+				}
+			}
 			bool in_medium = false;
 			vec3 medium_sigma_t = vec3(0.0);
 			vec3 medium_albedo = vec3(0.0);
@@ -1145,7 +1423,7 @@ void main() {
 					vec3 albedo = rt_volume.smoke_color.rgb * rt_volume.medium.y;
 					ps.radiance = radiance_pre + throughput_entry * vol_emitted;
 					ps.throughput = throughput_entry * albedo;
-					ps.radiance += ps.throughput * rt_volume_direct(x, ray_dir, rt_volume.medium.z, false, ps.rng_state);
+					ps.radiance += ps.throughput * rt_volume_direct(x, ray_dir, rt_volume.medium.z, false, false, ps.rng_state);
 					// Free of the surface budget while within the volume's own: the total only leaves 0 (no longer the
 					// primary ray), so the surfaces the path meets later still get their max_bounces.
 					uint vol_flags = flags_entry & ~(PATH_TERMINATED_FLAG | PRIMARY_MISS_FLAG | DLSS_RR_REPLACE_PENDING_FLAG);
@@ -1203,7 +1481,7 @@ void main() {
 						float t_ne = rt_haze_distance(h_a, h_k, -log(max(1.0 - rand(ps.rng_state) * p_scatter, 1e-30)), seg_len);
 						t_ne = t_ne < 0.0 ? seg_len : min(t_ne, seg_len);
 						haze_light = throughput_entry * (get_rt_param(RT_PARAM_HAZE_ALBEDO) * p_scatter) *
-								rt_volume_direct(ray_origin + ray_dir * t_ne, ray_dir, 0.6, true, ps.rng_state);
+								rt_volume_direct(ray_origin + ray_dir * t_ne, ray_dir, 0.6, true, false, ps.rng_state);
 					}
 					float t_haze = rt_haze_distance(h_a, h_k, -log(max(1.0 - rand(ps.rng_state), 1e-30)), seg_len);
 					if (t_haze > 0.0 && t_haze < seg_len) {
@@ -1249,7 +1527,9 @@ void main() {
 					vec3 x = ray_origin + ray_dir * t_coll;
 					ps.radiance = radiance_pre;
 					ps.throughput = throughput_entry * medium_albedo * medium_sigma_t * tr / max(pdf, 1e-30);
-					ps.radiance += ps.throughput * rt_volume_direct(x, ray_dir, medium_g, false, ps.rng_state);
+					ps.radiance += ps.throughput * rt_volume_direct(x, ray_dir, medium_g, false, true, ps.rng_state);
+					ps.radiance += ps.throughput * rt_water_sky_direct(x, ray_dir, medium_g, medium_sigma_t, ps.rng_state);
+					rt_sky_nee_open = true;
 					ps.packed_bounces_flags = inc_total_bounce(flags_entry & ~(PATH_TERMINATED_FLAG | PRIMARY_MISS_FLAG | DLSS_RR_REPLACE_PENDING_FLAG | MEDIUM_CHANGE_FLAG)) |
 							NON_SINGULAR_PATH_FLAG | LAST_BOUNCE_DIFFUSE_FLAG;
 					ps.hit_t = t_coll;
@@ -1606,9 +1886,16 @@ void main() {
 	}
 
 	vec3 final_radiance = total_radiance / float(samples_per_pixel);
+	if (!first_run) {
+		// A later run of samples: the earlier runs' mean, weighed by their count, plus this run's sum.
+		vec3 earlier = imageLoad(image, ivec2(pixel)).rgb;
+		final_radiance = (earlier * float(sample_begin) + total_radiance) / float(sample_end);
+	} else if (!last_run) {
+		final_radiance = total_radiance / float(sample_end);
+	}
 	imageStore(image, ivec2(pixel), vec4(final_radiance, 1.0));
 
-	if (get_rt_param(RT_PARAM_PLIGHT_ENABLED) > 0.5) {
+	if (last_run && get_rt_param(RT_PARAM_PLIGHT_ENABLED) > 0.5) {
 		plight_update(pixel, inv_view, frame_index);
 	}
 #ifdef RT_TIMING_ENABLED
@@ -1624,6 +1911,7 @@ void main() {
 
 #pragma shader_stage(miss)
 #extension GL_EXT_ray_tracing : enable
+#extension GL_EXT_nonuniform_qualifier : require
 
 #define GLSL 1
 #define RT_STAGE_MISS 1
@@ -1641,6 +1929,22 @@ layout(location = 0) rayPayloadInEXT PathPayload payload;
 
 layout(set = 0, binding = 29) uniform texture2D prepass_depth_texture;
 layout(set = 0, binding = 33) uniform texture2D sky_screen_texture;
+
+layout(set = 1, binding = 0) uniform texture2D bindless_textures[];
+
+// The share of the clear sky's diffuse light reaching p (relative to rt_origin) through the clouds, from WeatherMap3D's
+// cloud sky map (a cloud ambient occlusion map: red its hemisphere visibility, blue the clouds' height), eased to 1
+// from p_ground (the height it is for: the camera's, which the map follows) up to the clouds' (raster's
+// cloud_sky_visibility()).
+float rt_cloud_sky_visibility(uint p_map, vec3 p, float p_ground) {
+	vec3 w = p + rt_origin.xyz;
+	vec2 uv = (w.xz - vec2(get_rt_param(RT_PARAM_CLOUD_SKY_X), get_rt_param(RT_PARAM_CLOUD_SKY_Z))) / RT_CLOUD_SKY_EXTENT;
+	if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) {
+		return 1.0;
+	}
+	vec4 m = textureLod(sampler2D(bindless_textures[p_map], SAMPLER_LINEAR_CLAMP), uv, 0.0);
+	return mix(1.0, m.r, clamp((m.b - w.y) / max(m.b - p_ground, 1.0), 0.0, 1.0));
+}
 
 #ifdef USE_RADIANCE_OCTMAP_ARRAY
 
@@ -1770,6 +2074,18 @@ void main() {
 		if (get_total_bounces(ps.packed_bounces_flags) == 0u && rt_volumetric_fog_enabled()) {
 			vec3 far_world = gl_WorldRayOriginEXT + gl_WorldRayDirectionEXT * 10000.0;
 			sky_color = rt_volumetric_fog_apply_sky(sky_color, project_uv(far_world, curr_vp_unjittered));
+		}
+
+		// A bounce's sky through the clouds over its start: the radiance map is the sky the camera sees, clouds and
+		// all, so the ray takes its start's visibility against the camera's (at most 1: a clear spot seen from under a
+		// cloud keeps the map's light), as raster's cloud_sky_light(). Per direction (the cloud along the ray against
+		// the camera's) the capped ratio biased the mean dark, and uncapped it lit single rays by the map's bright
+		// cloud fifty times over.
+		uint cloud_sky_map = uint(get_rt_param(RT_PARAM_CLOUD_SKY_MAP));
+		if (get_total_bounces(ps.packed_bounces_flags) > 0u && cloud_sky_map != 0u) {
+			vec3 cam = vec3(scene_data_block.data.inv_view_matrix[0].w, scene_data_block.data.inv_view_matrix[1].w, scene_data_block.data.inv_view_matrix[2].w);
+			float ground = cam.y + rt_origin.y;
+			sky_color *= min(rt_cloud_sky_visibility(cloud_sky_map, gl_WorldRayOriginEXT, ground) / max(rt_cloud_sky_visibility(cloud_sky_map, cam, ground), 0.02), 1.0);
 		}
 
 		// The environment's ambient light switched off (ambient_light_source DISABLED): raster's ambient term is
@@ -3956,6 +4272,69 @@ void main() {
 				m.albedo *= 1.0 - 0.5 * bead.w;
 			}
 		}
+		vec2 sw_on = rt_material_standing_water(mat);
+		if (wetness.w > 0.5 && sw_on.x > 0.5 && m.transmission <= 0.0 && m.alpha >= 1.0 && get_rt_param(RT_PARAM_WETNESS_RECT_W) > 0.0) {
+			// Standing water in the relief, at full detail (material.cpp: rain_standing_cover()).
+			vec3 sw_wp = h.hit_pos + rt_origin.xyz;
+			float sw_mm = pt_weather_surface_puddle(sw_wp, h.geometry_normal) * wetness.y;
+			if (sw_mm > 0.0) {
+				float sw_c = rain_standing_cover(sw_mm, rain_standing_relief(sw_wp.xz), sw_on.y, 0.0);
+				if (sw_c > 0.0) {
+					m.roughness = mix(m.roughness, 0.02, sw_c);
+					m.specular = mix(m.specular, 0.25, sw_c);
+					m.albedo *= mix(1.0, 0.85, sw_c);
+					m.normal = normalize(mix(m.normal, h.geometry_normal, sw_c));
+					float sw_air = get_rt_param(RT_PARAM_PRECIP_TEMPERATURE) - get_rt_param(RT_PARAM_PRECIP_LAPSE) * (sw_wp.y - get_rt_param(RT_PARAM_PRECIP_GROUND));
+					uint sw_map = uint(get_rt_param(RT_PARAM_WETNESS_MAP));
+					vec2 sw_ws = vec2(textureSize(sampler2D(bindless_textures[nonuniformEXT(sw_map)], SAMPLER_LINEAR_CLAMP), 0));
+					vec4 sw_rect = vec4(get_rt_param(RT_PARAM_WETNESS_RECT_X), get_rt_param(RT_PARAM_WETNESS_RECT_Y), get_rt_param(RT_PARAM_WETNESS_RECT_W), get_rt_param(RT_PARAM_WETNESS_RECT_H));
+					vec2 sw_uv = clamp((sw_wp.xz - sw_rect.xy) / sw_rect.zw, 0.5 / max(sw_ws, vec2(1.0)), 1.0 - 0.5 / max(sw_ws, vec2(1.0)));
+					float sw_rate = max(textureLod(sampler2D(bindless_textures[nonuniformEXT(sw_map)], SAMPLER_LINEAR_CLAMP), sw_uv, 0.0).r, 0.0) *
+							rain_liquid_share_nose(sw_air, get_rt_param(RT_PARAM_PRECIP_HUMIDITY), sw_wp.y - get_rt_param(RT_PARAM_PRECIP_GROUND), get_rt_param(RT_PARAM_PRECIP_NOSE), get_rt_param(RT_PARAM_PRECIP_NOSE_BASE));
+					vec3 sw_rr = rain_ripples(sw_wp.xz, scene_data_block.data.time, sw_rate, 0.0);
+					m.normal = normalize(m.normal - vec3(sw_rr.x, 0.0, sw_rr.y) * sw_c);
+					m.roughness = mix(m.roughness, rain_ripple_roughness(m.roughness, sw_rr.z), sw_c);
+				}
+			}
+		}
+		if (wetness.w > 0.5 && !rt_material_wetness_canopy(mat) && (m.transmission > 0.0 || m.alpha < 1.0)) {
+			// Rain on glass, at full detail (material.cpp: rain_glass()). Each drop is a water coat with its own
+			// surface: it reflects through the coat lobe and the thin transmission lobe refracts through it
+			// (rain_drop_refract(), raytracing_closest_hit_common_inc.glsl).
+			vec3 rg_wp = h.hit_pos + rt_origin.xyz;
+			vec3 rg_n = h.geometry_normal;
+			vec3 rg_air = vec3(0.0);
+			float rg_wipe = 0.0;
+			uint rg_iuo = geometries[h.geometry_idx].instance_uniforms_ofs;
+			if (rt_material_wetness_moving(mat) && rg_iuo != 0xFFFFFFFFu) {
+				rg_air = -global_shader_uniforms.data[rg_iuo + 13u].xyz;
+				rg_wipe = clamp(global_shader_uniforms.data[rg_iuo + 14u].x, 0.0, 1.0);
+			}
+			bool rg_map = get_rt_param(RT_PARAM_WETNESS_RECT_W) > 0.0;
+			vec4 rg_rain = rg_map ? pt_weather_surface_rain(rg_wp, rg_n, rg_air) : rain_surface_catch(rg_n, get_rt_param(RT_PARAM_RAIN_FALLBACK), 0.0, -rg_air.xz, 0.0);
+			vec4 rg_back = rg_map ? pt_weather_surface_rain(rg_wp, -rg_n, rg_air) : rain_surface_catch(-rg_n, get_rt_param(RT_PARAM_RAIN_FALLBACK), 0.0, -rg_air.xz, 0.0);
+			vec3 rg_face = rg_n;
+			if (rg_back.x > rg_rain.x) {
+				rg_rain = rg_back;
+				rg_face = -rg_n;
+			}
+			rg_rain.x *= wetness.y;
+			float rg_mist;
+			vec4 rg = rain_glass(rg_wp, rg_face, rg_rain, scene_data_block.data.time, rg_wipe, 0.0, rg_mist);
+			// The mist is droplets too fine to draw, each a scatterer over part of the pane: at full detail the
+			// ray crosses one or clear glass between them (a whole rough pane would blur the scene behind away).
+			uvec3 rg_cell = uvec3(ivec3(floor(rg_wp / 0.0004)) + ivec3(1 << 20));
+			float rg_h = float(rain_ring_hash(rg_cell.x ^ rain_ring_hash(rg_cell.y ^ rain_ring_hash(rg_cell.z))) & 65535u) / 65535.0;
+			if (rg_h < 0.5 * rg_mist * (1.0 - rg.w)) {
+				m.roughness = max(m.roughness, 0.35);
+			}
+			if (rg.w > 0.0 && rt_material_feature(RT_MATERIAL_FEATURE_CLEARCOAT)) {
+				// Water's F0 (0.02) is half the coat's (0.04).
+				m.clearcoat = max(m.clearcoat, 0.5 * rg.w);
+				m.clearcoat_roughness = 0.0;
+				m.coat_normal = normalize(m.normal - rg.xyz * sign(dot(rg_face, m.normal)));
+			}
+		}
 	} else if (g_wet > 0.0) {
 		// A ground material without wetness: sand's porosity (0.6).
 		float wet_factor = mix(1.0, 0.2, (1.0 - m.metalness) * 0.6);
@@ -4033,9 +4412,20 @@ void main() {
 				float gair = get_rt_param(RT_PARAM_PRECIP_TEMPERATURE) - get_rt_param(RT_PARAM_PRECIP_LAPSE) * (gfp.y - get_rt_param(RT_PARAM_PRECIP_GROUND));
 				grate = max(gprec, 0.0) * rain_liquid_share_nose(gair, get_rt_param(RT_PARAM_PRECIP_HUMIDITY), gfp.y - get_rt_param(RT_PARAM_PRECIP_GROUND),
 								get_rt_param(RT_PARAM_PRECIP_NOSE), get_rt_param(RT_PARAM_PRECIP_NOSE_BASE));
+			} else if (grs > 0.0) {
+				grate = max(get_rt_param(RT_PARAM_RAIN_FALLBACK), 0.0); // no weather map: RainFall3D's rain (weather_rainfall_at())
 			}
 			vec3 grr = grate > 0.0 ? rain_ripples(gfp.xz, scene_data_block.data.time, grate, gffp) : vec3(0.0);
 			gfs += grr.xy * grs;
+			// Footsteps and splashes in it (material.cpp: water_impacts_slope()).
+			uint gimp = uint(get_rt_param(RT_PARAM_WATER_IMPACTS)); // (bindless index + 1) * 32 + count
+			if (grs > 0.0 && gimp >= 32u) {
+				uint gimt = gimp / 32u - 1u;
+				int gin = min(int(gimp % 32u), textureSize(sampler2D(bindless_textures[nonuniformEXT(gimt)], SAMPLER_NEAREST_CLAMP), 0).x);
+				for (int i = 0; i < gin; i++) {
+					gfs += water_impact_ripple(gfp.xz, texelFetch(sampler2D(bindless_textures[nonuniformEXT(gimt)], SAMPLER_NEAREST_CLAMP), ivec2(i, 0), 0), gffp) * grs;
+				}
+			}
 			m.roughness = mix(m.roughness, rain_ripple_roughness(m.roughness, grr.z), grs);
 		}
 		if (gfs != vec2(0.0)) {

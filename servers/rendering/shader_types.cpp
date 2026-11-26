@@ -98,6 +98,8 @@ ShaderTypes::ShaderTypes() {
 	shader_modes[RSE::SHADER_SPATIAL].functions["global"].built_ins["IN_PATH_TRACER"] = constt(ShaderLanguage::TYPE_BOOL);
 	// False when the camera cut-out cannot reach this draw (a constant for the pipeline: its discard compiles out).
 	shader_modes[RSE::SHADER_SPATIAL].functions["global"].built_ins["CAMERA_CUTOUT_REACH"] = constt(ShaderLanguage::TYPE_BOOL);
+	// True in the path tracer's any-hit pass, which reads only the coverage and the light let through.
+	shader_modes[RSE::SHADER_SPATIAL].functions["global"].built_ins["IN_ANY_HIT"] = constt(ShaderLanguage::TYPE_BOOL);
 	shader_modes[RSE::SHADER_SPATIAL].functions["constants"].built_ins["PI"] = constvt(ShaderLanguage::TYPE_FLOAT, { pi_scalar });
 	shader_modes[RSE::SHADER_SPATIAL].functions["constants"].built_ins["TAU"] = constvt(ShaderLanguage::TYPE_FLOAT, { tau_scalar });
 	shader_modes[RSE::SHADER_SPATIAL].functions["constants"].built_ins["E"] = constvt(ShaderLanguage::TYPE_FLOAT, { e_scalar });

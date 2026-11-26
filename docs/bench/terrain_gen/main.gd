@@ -280,6 +280,7 @@ func _build_generator(cell: float) -> void:
 	noise.frequency = 1.0 / 1500.0
 	noise.fractal_octaves = 3
 	gen = TerrainGenerator3D.new()
+	gen.generate_on_ready = false # this bench generates itself, with its own settings
 	gen.name = "Generator"
 	# Heavy generator options are on by default; this bench keeps its own fast choices.
 	gen.glacial_enabled = false

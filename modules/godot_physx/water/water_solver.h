@@ -32,6 +32,7 @@
 
 #include "core/math/vector2.h"
 #include "core/math/vector3.h"
+#include "core/math/vector4.h"
 #include "core/object/ref_counted.h"
 #include "core/os/mutex.h"
 #include "core/templates/rid.h"
@@ -62,6 +63,7 @@ public:
 	SafeFlag built;
 
 	static constexpr int MAX_SPHERES = 48;
+	static constexpr int SPHERE_FLOATS = 8; // two vec4 a sphere: (x, z, radius, strength), (foam per second, 0, 0, 0)
 	static constexpr int MAX_IMPULSES = 16;
 
 	RID shader_ripple, pipeline_ripple;
@@ -300,6 +302,7 @@ public:
 	void rt_set_shore_waves(Ref<WaterSolverGPU> p_self, RID p_texture, bool p_on, Vector2 p_omega, float p_h0, float p_l0);
 	void rt_set_shore_clock(Ref<WaterSolverGPU> p_self, double p_time, Vector2 p_center);
 	void rt_set_band(Ref<WaterSolverGPU> p_self, float p_k_min, float p_k_max, int p_spreading, float p_swell);
+	void rt_set_remote_swell(Ref<WaterSolverGPU> p_self, Vector4 p_swell);
 	void rt_reinit_spectrum(Ref<WaterSolverGPU> p_self, float p_wind_speed, Vector2 p_wind_direction, float p_wave_amplitude, float p_fetch);
 	// The ripple layer moved (a re-centre): its state + composed height zeroed in place -- the ocean, its textures and
 	// every other buffer stay (see WaterSolver::recenter).
@@ -350,6 +353,7 @@ private:
 	float _init_depth = 3.0f;
 	int _init_spreading = 1; // PhysXWaterSurface3D::WaveSpreading
 	float _init_swell = 0.0f;
+	Vector4 _init_remote_swell; // significant height (m), peak period (s), travel direction (x, z)
 	// Wavenumber band this ocean carries (rad/m; 0 = no bound): one cascade of a
 	// multi-cascade ocean leaves the rest of the spectrum to the others.
 	float _init_k_min = 0.0f;
@@ -412,6 +416,9 @@ public:
 		// Directional spreading (PhysXWaterSurface3D::WaveSpreading) and Horvath's swell (0..1).
 		int wave_spreading = 1;
 		float swell = 0.0f;
+		// Remote swell (water_spectrum_init.glsl remote_swell()): significant height (m, 0 = none), peak period (s),
+		// the direction it travels (x, z).
+		Vector4 remote_swell;
 
 		// Light-space caustic map (see water_caustics_map.glsl). The grid/
 		// buffers are only built if this is true at configure() time -- keep
@@ -435,6 +442,7 @@ public:
 	};
 
 	static constexpr int MAX_SPHERES = WaterSolverGPU::MAX_SPHERES;
+	static constexpr int SPHERE_FLOATS = WaterSolverGPU::SPHERE_FLOATS;
 	static constexpr int MAX_IMPULSES = WaterSolverGPU::MAX_IMPULSES;
 
 	WaterSolver();
@@ -452,6 +460,8 @@ public:
 	void reinit_spectrum(float p_wind_speed, Vector2 p_wind_direction, float p_wave_amplitude, float p_fetch);
 	// The spectrum's directional spreading and swell, in place (regenerates h0 like reinit_spectrum()).
 	void set_spreading(int p_spreading, float p_swell);
+	// The remote swell (significant height m, peak period s, travel direction), in place (regenerates h0).
+	void set_remote_swell(const Vector4 &p_swell);
 	// The ripple grid's centre moved (a constant-depth square only): no rebuild -- the ripples are cleared, the ocean
 	// (world-anchored) carries on; bodies' spheres / pending impulses are dropped (they were relative to the old centre).
 	void recenter(Vector2 p_grid_center);
@@ -509,8 +519,10 @@ public:
 	// in the water; entries not resubmitted this step stay at their last
 	// value (no implicit aging -- callers should call clear_sphere() in
 	// _exit_tree() for the clean-despawn case).
-	void submit_sphere(uint64_t p_owner, const Vector3 &p_world_pos, float p_radius, float p_strength = 1.0f);
+	void submit_sphere(uint64_t p_owner, const Vector3 &p_world_pos, float p_radius, float p_strength = 1.0f, float p_foam = 0.0f);
 	void clear_sphere(uint64_t p_owner);
+	// White water the owner's sphere churns in per second (0 = none), until its next submit_sphere().
+	void set_sphere_foam(uint64_t p_owner, float p_per_second);
 
 	// One-shot, event-driven (a splash) -- queued, consumed by the next
 	// step(), then cleared. Not persistent like spheres.
@@ -654,6 +666,7 @@ private:
 		Vector3 world_pos;
 		float radius = 0.0f;
 		float strength = 1.0f;
+		float foam = 0.0f; // white water churned in per second over the sphere's disk
 		bool enabled = false;
 	};
 	SphereSlot sphere_slots[MAX_SPHERES];

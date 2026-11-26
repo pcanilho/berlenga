@@ -30,7 +30,10 @@
 
 #pragma once
 
+#include "modules/world/world_exclusion_3d.h"
+
 #include "rock_generator.h"
+#include "rock_scans.h"
 #include "rock_moss.h"
 
 #include "modules/world/world_contracts.h"
@@ -39,6 +42,7 @@
 #include "core/math/random_pcg.h"
 #include "core/object/worker_thread_pool.h"
 #include "core/os/mutex.h"
+#include "core/os/rw_lock.h"
 #include "core/templates/safe_refcount.h"
 #include "core/templates/hash_set.h"
 #include "core/templates/hash_map.h"
@@ -69,10 +73,21 @@ class StaticBody3D;
 // river stones carry the rock of their headwaters. Each layer streams in square cells round the follow target (or
 // the camera) out to its radius; instances share one mesh per shape (MultiMesh), so one acceleration structure per
 // shape serves every stone of it.
-class RockField3D : public Node3D, public WorldCoverProvider {
+class RockField3D : public Node3D, public WorldCoverProvider, public WorldRecessProvider {
 	GDCLASS(RockField3D, Node3D);
 
 public:
+	// The cliff kit's pillars as boxes on the face (docs/ideas/rocks.md, "Cliff kit recess contract").
+	struct KitBox {
+		Vector3 surface; // the root on the face's fitted plane
+		Vector3 up, along, out; // the fitted plane's up, strike and outward normal
+		float half_up = 0.0f, half_along = 0.0f; // the segment's half height and the column's half width, on the face
+		float front = 0.0f; // the pillar's front, from the root along out (m)
+		float recess = 0.0f; // where the drawn face steps back to under it, from the root along out (m)
+		float lean = 0.0f; // the column's own tilt about out (radians)
+		int64_t column = 0, segment = 0;
+		uint32_t cid = 0;
+	};
 	enum Layer {
 		LAYER_ROCKFALL,
 		LAYER_SCREE,
@@ -218,6 +233,21 @@ private:
 	void _remeasure_sea();
 	real_t ground_blend_height = 0.45;
 	Ref<ShaderMaterial> ground_material;
+	RockScan stone_scans[2]; // scans.cfg [stone] and [stone_variant] (load_scan_set): detail on the stones
+	String scan_dir;
+	bool cliff_kit = true; // tall joint-bounded pillars wrap the fluted 50 degree and steeper faces (fitted to each footprint)
+	bool cliff_recess = true; // the drawn face steps back under the kit's pillars (WorldRecessProvider), so they are the wall
+	// The kit's pillars as boxes on the face (docs/ideas/rocks.md, "Cliff kit recess contract"): one list per 8 m plan
+	// square, by the square of each pillar's root, built on first use from the unrecessed face and kept until a
+	// rebuild. The pillars laid and the recess the landscape reads come from the same boxes.
+	mutable RWLock kit_lock;
+	mutable HashMap<Vector2i, LocalVector<KitBox>> kit_cache;
+	uint32_t kit_epoch = 0; // counts resets: a square built across one is dropped
+	ObjectID kit_generator; // set on the main thread: the recess is read from mesh workers
+	void _kit_square(const TerrainGenerator3D *p_gen, const Vector2i &p_square, LocalVector<KitBox> &r_boxes) const;
+	void _kit_ensure(const TerrainGenerator3D *p_gen, const Rect2i &p_squares) const;
+	void _kit_reset(bool p_notify);
+	real_t cliff_block_max_slope = 88.0; // the wall's block courses up to this face angle (76: the courses before 25 Nov)
 	mutable Ref<ShaderMaterial> auto_ground; // the landscape's TerrainMaterial3D when ground_material is unset
 	mutable bool auto_ground_found = false;
 	Ref<ShaderMaterial> _ground_source() const;
@@ -525,6 +555,10 @@ private:
 	real_t close_up_radius = 8.0; // m from the target to a stone's surface
 	int close_up_max_shapes = 12;
 	bool streaming = true;
+	// Editor preview (docs/ideas/editor-tools.md, A): in the scene being edited, stones stream round the editor's view.
+	bool editor_preview = true;
+	WorldExclusions exclusions; // keep-out areas for stones (WorldExclusion3D), read on the main thread
+	void _on_exclusions_changed(const Rect2 &p_area);
 
 	ObjectID generator_id;
 	LocalVector<River> rivers;
@@ -872,6 +906,26 @@ public:
 	void set_ground_blend_height(real_t p_height);
 	real_t get_ground_blend_height() const { return ground_blend_height; }
 	void set_ground_material(const Ref<ShaderMaterial> &p_material);
+	int load_scan_set(const String &p_dir);
+	void set_cliff_block_max_slope(real_t p_degrees) {
+		cliff_block_max_slope = p_degrees;
+		_kit_reset(true);
+		rebuild();
+	}
+	real_t get_cliff_block_max_slope() const { return cliff_block_max_slope; }
+	void set_cliff_kit(bool p_enabled) {
+		cliff_kit = p_enabled;
+		_kit_reset(true);
+		rebuild();
+	}
+	bool is_cliff_kit() const { return cliff_kit; }
+	void set_cliff_recess(bool p_enabled) {
+		cliff_recess = p_enabled;
+		_kit_reset(true);
+		rebuild();
+	}
+	bool is_cliff_recess() const { return cliff_recess; }
+	String get_scan_dir() const { return scan_dir; }
 	Ref<ShaderMaterial> get_ground_material() const { return ground_material; }
 	void set_layer_enabled(int p_layer, bool p_enabled);
 	bool is_layer_enabled(int p_layer) const;
@@ -933,6 +987,7 @@ public:
 	PackedVector4Array get_pedestal_spots(const Rect2 &p_rect, real_t p_step = 2.0, int p_max_count = 64) const;
 	bool is_frost_sorting() const { return frost_sorting; }
 	// How strongly the ground sorts at a point (0..1), and its stone share there (x: gate, y: share), for benches.
+	Dictionary get_frost_factors(const Vector3 &p_position) const;
 	Vector2 get_frost_at(const Vector3 &p_position) const;
 	void set_ground_wear(bool p_enabled);
 	bool is_ground_wear() const { return ground_wear; }
@@ -956,6 +1011,9 @@ public:
 	int get_close_up_max_shapes() const { return close_up_max_shapes; }
 	int get_close_up_shape_count() const;
 	int get_close_up_triangle_count() const;
+	void set_editor_preview(bool p_enable);
+	bool is_editor_preview() const { return editor_preview; }
+	Callable get_rebuild_button();
 	void set_streaming(bool p_streaming);
 	bool is_streaming() const { return streaming; }
 
@@ -1009,6 +1067,14 @@ public:
 	// where it reaches, else the far one; 0 outside both.
 	Vector3 contract_cover_at(const Vector3 &p_position) const override;
 	void contract_cover_points(const Vector2 *p_points, int p_count, Vector3 *r_cover) const override;
+	// WorldGround.recess_at: where the cliff kit's pillars stand, how far the drawn face steps back to stand behind
+	// them (x m along its horizontal outward normal) and the share (y). Thread-safe.
+	Vector2 contract_recess_at(const Vector3 &p_position) const override;
+	Vector4 contract_recess_vector_at(const Vector3 &p_position) const override;
+	Vector2 _recess_query(const Vector3 &p_position, Vector3 *r_out) const;
+	void contract_recess_points(const Vector3 *p_points, int p_count, Vector2 *r_recess) const override;
+	const Object *contract_recess_object() const override { return this; }
+	void contract_recess_state(void (*p_add)(void *p_user, const void *p_data, size_t p_size), void *p_user) const override;
 	void contract_stones_near(const Rect2 &p_rect, LocalVector<float> &r_out) const override;
 	static void _standing_append(const Stone &p_stone, const Library *p_lib, LocalVector<float> &r_out);
 	Vector3 _cover_sample(const Vector2 &p_xz) const; // under cover_data_mutex

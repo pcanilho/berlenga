@@ -205,7 +205,8 @@ void WeatherRunoff3D::_debris_flows() {
 			const Vector3 pc(origin.x + (c % n + 0.5f) * cell, Math::is_finite(height[c]) ? height[c] : 0.0f, origin.y + (c / n + 0.5f) * cell);
 			path.push_back(pc);
 			widths.push_back(bankfull_width(area[c] * 1e-6f));
-			severity.push_back(CLAMP(wf->burnt_at(pc), 0.0f, 1.0f));
+			const float age = wf->burn_age_at(pc);
+			severity.push_back(CLAMP(wf->burnt_at(pc), 0.0f, 1.0f) * (age < 0.0f ? 1.0f : 1.0f - Math::smoothstep(1.5f, 3.0f, age)));
 			if (ww != nullptr && ww->depth_at(Vector3(pc.x, pc.y - 0.05f, pc.z)) > 0.0f) {
 				break;
 			}

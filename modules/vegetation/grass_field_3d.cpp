@@ -399,8 +399,9 @@ void GrassField3D::_ensure_resources() {
 
 // The drawn ground's height over the heightfield at p's xz (Landscape3D's bank and cliff relief, WorldGround.relief_at):
 // 0 with no relief producer or out of its reach.
-static float _relief_y(const Vector3 &p_at) {
-	const float r = WorldContracts::ground()->relief_at(p_at).x;
+// p_steps false: without the terracettes' steps, for blades, whose shader adds them at each root (wc_terracette_step).
+static float _relief_y(const Vector3 &p_at, bool p_steps = true) {
+	const float r = WorldContracts::ground()->relief_at(p_at, p_steps).x;
 	return Math::is_finite(r) ? r : 0.0f;
 }
 
@@ -544,6 +545,7 @@ void GrassField3D::_build_material() {
 	// (TerrainDataMap3D.get_data_texture(), r: height) over ground_data_rect (z 0: none, the blades ease to up).
 	code += "uniform sampler2D ground_data_map : filter_linear, repeat_disable, hint_default_black;\nuniform vec4 ground_data_rect;\n";
 	code += "uniform float dormant; // Share of blades dead to the crown in a drought or hard winter (season).\n";
+	code += "uniform float season_height = 1.0; // The sward's standing height over its summer height (GrassField3D.season_height_for).\n";
 	// Storm lodging (lodging): r, g the direction the blades lie (* 0.5 + 0.5), b the lodged share; rect z 0: none.
 	code += "uniform sampler2D lodge_map : filter_linear, repeat_disable, hint_default_black;\nuniform vec4 lodge_rect;\n";
 	// Meadow fairy rings (fairy_rings.h): 1 on, 0 off.
@@ -572,6 +574,35 @@ void GrassField3D::_build_material() {
 	code += "uniform bool climate_bare = true;\nglobal uniform sampler2D terrain_climate_map : hint_default_black, filter_linear;\nglobal uniform vec4 terrain_climate_rect;\nglobal uniform vec4 weather_climate;\n";
 	code += WorldContracts::climate_bare_shader_code();
 	code += WorldContracts::terracette_shader_code();
+	// The ground's terracette steps (WorldContracts::terracette_step): Landscape3D's share in terrain_bank_relief.y, gated
+	// to open soil by the generator's geology (terrain_deform and terrain_material register these globals).
+	code += R"(global uniform vec4 terrain_bank_relief;
+global uniform sampler2D terrain_geology_map;
+global uniform vec4 terrain_geology_rect;
+// The steps' height over the smooth ground at a blade's root (m), as the ground draws them: the heights the blades are
+// placed on leave the steps out (a 3 m pattern on metre texels aliases), so each root adds its own.
+float grass_terracette_lift(vec3 root) {
+	if (terrain_bank_relief.y <= 0.0 || ground_data_rect.z <= 0.0) {
+		return 0.0;
+	}
+	vec2 ts = vec2(textureSize(ground_data_map, 0));
+	vec2 uv = (root.xz - ground_data_rect.xy) / ground_data_rect.zw;
+	vec2 du = vec2(1.0 / ts.x, 0.0);
+	vec2 dv = vec2(0.0, 1.0 / ts.y);
+	vec2 cell = 2.0 * ground_data_rect.zw / ts;
+	vec2 grad = vec2(textureLod(ground_data_map, uv + du, 0.0).r - textureLod(ground_data_map, uv - du, 0.0).r, textureLod(ground_data_map, uv + dv, 0.0).r - textureLod(ground_data_map, uv - dv, 0.0).r) / cell;
+	// The heightfield's own height, as Landscape3D phases the steps (its relief left out).
+	vec3 p = vec3(root.x, textureLod(ground_data_map, uv, 0.0).r, root.z);
+	float share = terrain_bank_relief.y;
+	if (terrain_geology_rect.z > 0.0) {
+		vec2 gs = vec2(textureSize(terrain_geology_map, 0));
+		vec2 g = clamp((root.xz - terrain_geology_rect.xy) / terrain_geology_rect.zw, 0.0, 1.0);
+		share *= wc_terracette_soil(textureLod(terrain_geology_map, (g * (gs - 1.0) + 0.5) / gs, 0.0));
+	}
+	// Filtered over half a metre, as Landscape3D draws the near ground.
+	return wc_terracette_step(p, grad, 0.5, share).x;
+}
+)";
 	code += "global uniform sampler2D weather_state_map;\nglobal uniform sampler2D weather_contact_map;\nglobal uniform vec4 weather_contact_rect;\nglobal uniform sampler2D weather_frost_map;\nglobal uniform sampler2D weather_spray_map;\nglobal uniform vec4 weather_spray_rect;\n";
 	// The weather module declares its globals, so this compiles with or without a WeatherMap3D.
 	// Sea salt on the blades (WeatherMap3D sea_spray, G: 1 - exp(-salt / 10 g/m2)): salt spray burns leaf tips brown
@@ -594,6 +625,7 @@ float grass_salt_burn(vec2 p_xz) {
 	code += get_ground_opened_shader_code();
 	// The snowpack (SnowCover3D globals; material.cpp snow_pack_at(), snow_press()): it presses the sward flat.
 	code += BaseMaterial3D::get_snow_functions_code(true);
+	code += get_snow_sward_shader_code();
 	code += R"(
 // weather_wind() as felt by a blade: a damped oscillator of angular frequency omega0 and damping
 // zeta (Py, de Langre and Moulia 2006). The mean wind and the gust patches are slow and pass as
@@ -1019,6 +1051,8 @@ void vertex() {
 	n = straw ? normalize(n + vec3(0.0, 2.0, 0.0)) : n;
 	// Not yet emerged (a plot sown, below 10): nothing shows.
 	p -= to_local * vec3(0.0, go.z, 0.0);
+	// On the ground's terracette steps (WorldContracts::terracette_step), which the placed heights leave out.
+	p += to_local * vec3(0.0, grass_terracette_lift(base_w), 0.0);
 	VERTEX = hide || stage < 10.0 ? vec3(0.0) : p;
 	NORMAL = n;
 	v_t = t;
@@ -1030,7 +1064,7 @@ void vertex() {
 	v_wet = 0.0;
 	v_frost = 0.0;
 	v_salt = grass_salt_burn(base_w.xz);
-	v_snow = snow_pk.x > 0.01 ? clamp((snow_pk.x - p.y) / 0.01 + 0.5, 0.0, 1.0) : 0.0;
+	v_snow = max(snow_pk.x > 0.01 ? clamp((snow_pk.x - p.y) / 0.01 + 0.5, 0.0, 1.0) : 0.0, grass_snow_coat(snow_pk, rnd, t, h + ear_len));
 	if (weather_map_rect.z > 0.0) {
 		vec2 half_texel = 0.5 / vec2(textureSize(weather_state_map, 0));
 		vec2 uv = clamp((base_w.xz - weather_map_rect.xy) / weather_map_rect.zw, half_texel, 1.0 - half_texel);
@@ -1166,7 +1200,8 @@ uniform float fibre_shading = 0.8;
 		code += R"(
 
 void vertex() {
-	float h = INSTANCE_CUSTOM.x;
+	// The season's standing height (GrassField3D.season_height_for): short in winter, regrown by early summer.
+	float h = INSTANCE_CUSTOM.x * season_height;
 	float w = INSTANCE_CUSTOM.y;
 	float light_q = floor(INSTANCE_CUSTOM.z / 4.0);
 	float rest_lean = INSTANCE_CUSTOM.z - light_q * 4.0;
@@ -1176,6 +1211,16 @@ void vertex() {
 	float t = VERTEX.y;
 	float side = VERTEX.x;
 	vec3 base_w = (MODEL_MATRIX * vec4(0.0, 0.0, 0.0, 1.0)).xyz;
+	// Regrowth on burnt ground comes up short: a year after a grassland wildfire the sward stands about 40% lower
+	// (visual obstruction -39%, Parker et al. 2024) and is largely back by two and a half. burn_flush_map is
+	// 1 - smoothstep(0, 1.5 yr, age): resprouts a few centimetres high in the first months (a fifth of the height
+	// at five months), about half by a year.
+	if (burn_flush_rect.z > 0.0) {
+		vec2 fuv_h = (base_w.xz - burn_flush_rect.xy) / burn_flush_rect.zw;
+		if (all(greaterThanEqual(fuv_h, vec2(0.0))) && all(lessThanEqual(fuv_h, vec2(1.0)))) {
+			h *= 1.0 - 0.9 * sqrt(textureLod(burn_flush_map, fuv_h, 0.0).r);
+		}
+	}
 	mat3 to_local = inverse(mat3(MODEL_MATRIX));
 	// Deer lawns (Putman 1986; Kuijper et al. 2009): where deer graze hard the blades are bitten down to about
 	// graze_height, a few new leaves a little over it; the blade keeps its width, so the turf reads dense and even.
@@ -1534,6 +1579,8 @@ void vertex() {
 	if (v_hay >= 0.0) {
 		p += to_local * (hay_shift + vec3(0.0, hay_lift, 0.0));
 	}
+	// On the ground's terracette steps (WorldContracts::terracette_step), which the placed heights leave out.
+	p += to_local * vec3(0.0, grass_terracette_lift(base_w), 0.0);
 	VERTEX = p;
 	NORMAL = normalize(n + across * side * 0.9);
 
@@ -1542,7 +1589,7 @@ void vertex() {
 	v_wet = 0.0;
 	v_frost = 0.0;
 	v_salt = grass_salt_burn(base_w.xz);
-	v_snow = snow_pk.x > 0.01 ? clamp((snow_pk.x - p.y) / 0.01 + 0.5, 0.0, 1.0) : 0.0;
+	v_snow = max(snow_pk.x > 0.01 ? clamp((snow_pk.x - p.y) / 0.01 + 0.5, 0.0, 1.0) : 0.0, grass_snow_coat(snow_pk, rnd, t, h));
 	v_tint = grass_patch_tint(base_w.xz, fract(rnd * 7.31 + 0.13), fract(rnd * 13.7 + 0.51), color_variation);
 	v_soft = 0.0;
 	// Softness with distance (docs/ideas/grass.md, "Colour without blotches"; Ghost of Tsushima, GDC 2021: normals
@@ -1799,6 +1846,7 @@ void fragment() {
 	material->set_shader_parameter("dry_color", dry_color);
 	material->set_shader_parameter("dryness", _dryness());
 	material->set_shader_parameter("dormant", _dormant());
+	material->set_shader_parameter("season_height", season_height);
 	material->set_shader_parameter("color_variation", color_variation);
 	material->set_shader_parameter("fallback_wind", fallback_wind);
 	material->set_shader_parameter("wind_response", wind_response);
@@ -3186,7 +3234,8 @@ void GrassField3D::_build_tile(const Vector2i &p_tile, int p_lod, TerrainDataMap
 	// Wider blades where fewer remain, so the field keeps its coverage at a distance.
 	const float width = blade_width / Math::sqrt(keep);
 	// Crops are CPU-built for now (farmland stage 1).
-	if (gpu_fill && crop == CROP_NONE && is_gpu_fill_available()) {
+	const bool tile_excluded = !exclusions.is_empty() && exclusions.any_in(Rect2(x0, z0, tile_size, tile_size));
+	if (gpu_fill && crop == CROP_NONE && !tile_excluded && is_gpu_fill_available()) {
 		_build_tile_gpu(p_tile, p_lod, p_map, r.ptr(), canopy, light_grid, sward_grid, wear_grid, lg, width);
 		return;
 	}
@@ -3194,6 +3243,7 @@ void GrassField3D::_build_tile(const Vector2i &p_tile, int p_lod, TerrainDataMap
 	LocalVector<Color> customs;
 	const bool rocks = _tile_has_obstacles(x0, z0);
 	const bool holed = !holes.is_empty() && holes.any_in(Rect2(x0, z0, tile_size, tile_size).grow(OBSTACLE_MARGIN));
+	const bool excluded = tile_excluded;
 	// Whether a blade (or crop tiller) grows at (x, z): the rules, paths and light decide; rank orders
 	// the thinning (coarser levels keep the same ones).
 	struct Spot {
@@ -3214,6 +3264,13 @@ void GrassField3D::_build_tile(const Vector2i &p_tile, int p_lod, TerrainDataMap
 		}
 		if (holed && _blade_in_hole(p_map, x, z, ground_y)) {
 			return false;
+		}
+		if (excluded) {
+			// A keep-out area (WorldExclusion3D): blades thin by rank over its fade and stop inside.
+			const float k = exclusions.keep_out(Vector2(x, z));
+			if (k > 0.0f && rank >= keep * (1.0f - k)) {
+				return false;
+			}
 		}
 		const float passes = trodden ? path_grid.passes_at(Vector2(x, z)) : 0.0f;
 		if (passes > 0.0f && rank >= keep * _trample_cover(passes)) {
@@ -3239,7 +3296,7 @@ void GrassField3D::_build_tile(const Vector2i &p_tile, int p_lod, TerrainDataMap
 				return false;
 			}
 			r_spot.edge = _edge_height(suit / MAX(passes > 0.0f ? _trample_cover(passes) : 1.0f, 1e-4f));
-			y = p_map->get_height_at(p) + _relief_y(p);
+			y = p_map->get_height_at(p) + _relief_y(p, false);
 		}
 		const float lx = CLAMP(x - x0, 0.0f, float(lg - 1));
 		const float lz = CLAMP(z - z0, 0.0f, float(lg - 1));
@@ -3506,7 +3563,7 @@ void GrassField3D::_build_tile_gpu(const Vector2i &p_tile, int p_lod, TerrainDat
 				for (int i = 0; i < hp_w; i++) {
 					// The drawn ground's bank and cliff relief over the heightfield (WorldGround.relief_at), at the texel's
 					// centre, so the blades stand on the surface drawn, not the heightfield under it.
-					const float h = hd[(hp_z0 + j) * map_n + hp_x0 + i] + _relief_y(Vector3(map_rect.position.x + (hp_x0 + i + 0.5f) * mc, 0.0f, map_rect.position.y + (hp_z0 + j + 0.5f) * mc));
+					const float h = hd[(hp_z0 + j) * map_n + hp_x0 + i] + _relief_y(Vector3(map_rect.position.x + (hp_x0 + i + 0.5f) * mc, 0.0f, map_rect.position.y + (hp_z0 + j + 0.5f) * mc), false);
 					heights[j * hp_w + i] = h;
 					y_min = MIN(y_min, h);
 					y_max = MAX(y_max, h);
@@ -3845,6 +3902,7 @@ void GrassField3D::_build_ring_tile(const Vector3i &p_key, float p_near, Terrain
 	const Rect2 rect(p_key.x * size, p_key.y * size, size, size);
 	const bool rocks = !obstacle_grid.is_empty();
 	const bool holed = !holes.is_empty() && holes.any_in(rect.grow(OBSTACLE_MARGIN));
+	const bool excluded = !exclusions.is_empty() && exclusions.any_in(rect);
 	const bool fielded = crop_mask.any_in(rect);
 	const bool trodden = !path_grid.is_empty() && trample_resistance > 0.0f && path_grid.any_in(rect.grow(path_grid.max_reach));
 	// Only over the data map: past it there are no rules or heights.
@@ -3946,6 +4004,9 @@ void GrassField3D::_build_ring_tile(const Vector3i &p_key, float p_near, Terrain
 			if (holed && _blade_in_hole(p_map, x, z, ground_y)) {
 				continue;
 			}
+			if (excluded && exclusions.keep_out(q) >= 0.5f) {
+				continue;
+			}
 			if (use_gpu) {
 				if (p_map) {
 					// As grass_fill.glsl's suitability() and its pick, so the buffer holds only blades that grow (the
@@ -3999,7 +4060,7 @@ void GrassField3D::_build_ring_tile(const Vector3i &p_key, float p_near, Terrain
 					continue;
 				}
 				edge = _edge_height(suit / MAX(passes > 0.0f ? _trample_cover(passes) : 1.0f, 1e-4f));
-				y = p_map->get_height_at(p) + _relief_y(p);
+				y = p_map->get_height_at(p) + _relief_y(p, false);
 			}
 			const float light = (1.0f - (crowns ? crowns->get_shade_at(p) : 0.0f)) * (p_map ? VegetationLight::exposure(p_map, sun_mean, x, z) : 1.0f);
 			const float shade_t = 1.0f - CLAMP(light, 0.0f, 1.0f);
@@ -4074,7 +4135,7 @@ void GrassField3D::_fill_ring_tile_gpu(const Vector3i &p_key, const Rect2 &p_rec
 			y_max = -1e30f;
 			for (int j = 0; j < hp_h; j++) {
 				for (int i = 0; i < hp_w; i++) {
-					const float hv = hd[(hp_z0 + j) * map_n + hp_x0 + i] + _relief_y(Vector3(map_rect.position.x + (hp_x0 + i + 0.5f) * mc, 0.0f, map_rect.position.y + (hp_z0 + j + 0.5f) * mc));
+					const float hv = hd[(hp_z0 + j) * map_n + hp_x0 + i] + _relief_y(Vector3(map_rect.position.x + (hp_x0 + i + 0.5f) * mc, 0.0f, map_rect.position.y + (hp_z0 + j + 0.5f) * mc), false);
 					heights[j * hp_w + i] = hv;
 					y_min = MIN(y_min, hv);
 					y_max = MAX(y_max, hv);
@@ -4240,11 +4301,16 @@ void GrassField3D::_update_shell(const Vector2 &p_center, TerrainDataMap3D *p_ma
 		sh.instantiate();
 		String code = "shader_type spatial;\nrender_mode cull_disabled;\n\n";
 		code += "// GrassField3D far shell (docs/ideas/grass.md, \"Far grass\"): the sward as voxel columns on the ground.\n";
+		code += "uniform float sward_height = 0.3; // The blades' mean height (m) this season: how thin snow covers the sward.\n";
+		code += "uniform float season_height = 1.0; // The columns' height over their summer height (GrassField3D.season_height_for).\n";
 		code += "uniform vec2 shell_center;\nuniform vec4 shell_band; // x: where it is fully up, y: the band it rises over, z: where it is gone, w: the band it sinks over.\n";
 		// The climate code first: the turf (get_ground_shader_code()) cures by its wc_climate_cured.
 		code += "uniform bool climate_bare = true;\nglobal uniform sampler2D terrain_climate_map : hint_default_black, filter_linear;\nglobal uniform vec4 terrain_climate_rect;\nglobal uniform vec4 weather_climate;\n";
 		code += WorldContracts::climate_bare_shader_code();
 		code += get_ground_shader_code();
+		// Thin snow over the far sward, as on the blades (get_snow_sward_shader_code()).
+		code += BaseMaterial3D::get_snow_functions_code(true);
+		code += get_snow_sward_shader_code();
 		code += R"(
 varying vec3 v_wp;
 void vertex() {
@@ -4254,7 +4320,7 @@ void vertex() {
 	float grow_out = shell_band.w > 0.0 ? clamp((shell_band.z - d) / shell_band.w, 0.0, 1.0) : 1.0;
 	float g = grow_in * grow_out;
 	// UV2.x: the vertex's height over the ground; down under it where the shell is gone.
-	VERTEX.y += UV2.x * (g - 1.0) - 0.15 * (1.0 - g);
+	VERTEX.y += UV2.x * (g * season_height - 1.0) - 0.15 * (1.0 - g);
 	v_wp = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
 }
 void fragment() {
@@ -4269,6 +4335,12 @@ void fragment() {
 	}
 	ALBEDO = grass_ground(v_wp, vec3(0.2, 0.16, 0.1)) * COLOR.r;
 	ROUGHNESS = 0.95;
+	// Snow on the sward: its covered share whitens the columns (the snow's albedo, the blades' tips the rest).
+	float sw = grass_snow_cover(snow_pack_at(v_wp), sward_height);
+	if (sw > 0.0) {
+		ALBEDO = mix(ALBEDO, vec3(snow_cover_at(v_wp).y), sw);
+		ROUGHNESS = mix(ROUGHNESS, 0.7, sw);
+	}
 	// The ground's own sheen under the sward (little): a plain 0.5 lit the columns' tops grey with the sky at grazing.
 	SPECULAR = grass_ground_specular(v_wp, 0.3);
 }
@@ -4278,6 +4350,8 @@ void fragment() {
 		shell_material->set_shader(sh);
 		shell_material->set_shader_parameter("climate_bare", climate_bare);
 	}
+	shell_material->set_shader_parameter("sward_height", 0.5f * (blade_height.x + blade_height.y) * season_height);
+	shell_material->set_shader_parameter("season_height", season_height);
 	shell_material->set_shader_parameter("shell_center", p_center);
 	shell_material->set_shader_parameter("shell_band", Vector4(in_end, in_band, out_end, out_band));
 	const float start = in_end - in_band;
@@ -5042,8 +5116,8 @@ void GrassField3D::advance_lodging(double p_weather_seconds) {
 		return;
 	}
 	Vector3 center = get_global_position();
-	if (is_inside_tree() && get_viewport() && get_viewport()->get_camera_3d()) {
-		center = get_viewport()->get_camera_3d()->get_global_position();
+	if (const Camera3D *vcam = WorldContracts::get_view_camera(this)) {
+		center = vcam->get_global_position();
 	}
 	_lodge_place(center);
 	lodge_clock += p_weather_seconds;
@@ -6491,6 +6565,34 @@ void GrassField3D::_ground_bake_publish(const Vector4 &p_rect, const Ref<Image> 
 	rs->global_shader_parameter_set("grass_ground_params", Vector4(color_variation, trample_resistance, 0.0f, 0.0f));
 }
 
+// Thin snow on the sward (docs/ideas/vegetation.md, "Thin snow on the sward"). Snow falls onto the sward's canopy, not
+// under it: the blades catch the flakes and bow under them, so a centimetre or two whitens a short sward with only the
+// tips showing, long before the pack is deep enough to bury the blades. The share covered seen from above is Niu and
+// Yang's (2007) snow-covered fraction, tanh(d / (2.5 z0 (rho / rho_new))), with the sward's own roughness, z0 = 0.1 h
+// (the bare ground's is 0.004 m in snow_cover_at()): fresh snow (100 kg/m3) 1.6 cm deep covers 86% of a 5 cm sward,
+// 31% of a 20 cm one, 13% of a 50 cm one; settled, denser snow covers less for its depth. Each blade is laden or not
+// by that share, its lower 70% white and its tip clear; deeper, the pack buries the blades from the ground up (v_snow's
+// burial term).
+String GrassField3D::get_snow_sward_shader_code() {
+	return R"(
+// The share of a sward p_height (m) tall under snow seen from above, for a pack of depth p_pack.x (m) and density
+// p_pack.y (kg/m3). The sward's roughness length is a tenth of its height (the usual rule for grass, z0 = 0.1 h).
+float grass_snow_cover(vec2 p_pack, float p_height) {
+	if (p_pack.x <= 0.002) {
+		return 0.0;
+	}
+	float z0 = max(0.1 * p_height, 0.004);
+	return tanh(p_pack.x / (2.5 * z0 * max(p_pack.y / 100.0, 0.5)));
+}
+// How white a blade p_height (m) tall is at p_t along it (0 base, 1 tip) under that snow: the laden blades (p_rnd under
+// the share).
+float grass_snow_coat(vec2 p_pack, float p_rnd, float p_t, float p_height) {
+	float f = grass_snow_cover(p_pack, p_height);
+	return f > 0.0 ? step(fract(p_rnd * 29.37 + 0.71), f) * (1.0 - smoothstep(0.7, 0.97, p_t)) : 0.0;
+}
+)";
+}
+
 String GrassField3D::get_ground_shader_code() {
 	String code = R"(
 // GrassField3D turf under the grass, for terrain shaders. Where grass grows the ground becomes the
@@ -7354,6 +7456,23 @@ void GrassField3D::set_trample_resolution(int p_resolution) {
 	trample.clear();
 }
 
+void GrassField3D::set_editor_preview(bool p_enable) {
+	if (editor_preview == p_enable) {
+		return;
+	}
+	editor_preview = p_enable;
+	if (!is_inside_tree() || !Engine::get_singleton()->is_editor_hint()) {
+		return;
+	}
+	set_process_internal(editor_preview);
+	if (!editor_preview) {
+		for (KeyValue<Vector2i, Tile> &kv : tiles) {
+			_free_tile(kv.value);
+		}
+		tiles.clear();
+	}
+}
+
 void GrassField3D::update_at(const Vector3 &p_center) {
 	if (still_shot && still_frozen) {
 		if (p_center.distance_to(still_at) < 0.5f && generation == still_generation) {
@@ -7403,9 +7522,19 @@ void GrassField3D::_notification(int p_what) {
 				set_process_internal(true);
 				_season_step(); // The season's look from the first frame, not a frame later.
 				_queue_far_bake();
+			} else if (editor_preview) {
+				set_process_internal(true);
+				_season_step();
 			}
 		} break;
 		case NOTIFICATION_ENTER_TREE: {
+			if (WorldContracts *wc = WorldContracts::get_singleton()) {
+				const Callable cb = callable_mp(this, &GrassField3D::_on_exclusions_changed);
+				if (!wc->is_connected(SNAME("exclusions_changed"), cb)) {
+					wc->connect(SNAME("exclusions_changed"), cb);
+				}
+			}
+			exclusions.read(WorldExclusion3D::KIND_GRASS);
 			add_to_group(SNAME("grass_trample_field")); // keeps the trample field (VegetationField3D stands in without one)
 			_hay_register();
 			if (!meadows.is_empty()) {
@@ -7425,6 +7554,12 @@ void GrassField3D::_notification(int p_what) {
 			}
 		} break;
 		case NOTIFICATION_EXIT_TREE: {
+			if (WorldContracts *wc = WorldContracts::get_singleton()) {
+				const Callable cb = callable_mp(this, &GrassField3D::_on_exclusions_changed);
+				if (wc->is_connected(SNAME("exclusions_changed"), cb)) {
+					wc->disconnect(SNAME("exclusions_changed"), cb);
+				}
+			}
 			if (mow_published) {
 				RenderingServer::get_singleton()->global_shader_parameter_set("grass_mow_rect", Vector4());
 				mow_published = false;
@@ -7466,6 +7601,15 @@ void GrassField3D::_notification(int p_what) {
 			_free_rings();
 		} break;
 		case NOTIFICATION_INTERNAL_PROCESS: {
+			if (Engine::get_singleton()->is_editor_hint()) {
+				// Editor preview: the blades round the editor's view, in the season's look; no trampling, lodging,
+				// floods or far bake.
+				if (Camera3D *ecam = editor_preview ? WorldContracts::get_view_camera(this) : nullptr) {
+					update_at(ecam->get_global_position());
+				}
+				_season_step();
+				break;
+			}
 			Viewport *vp = get_viewport();
 			Camera3D *cam = vp ? vp->get_camera_3d() : nullptr;
 			if (cam) {
@@ -7548,6 +7692,15 @@ void GrassField3D::_follow_holes(TerrainDataMap3D *p_map) {
 	holes.read(gen);
 	if (!holes.is_empty()) {
 		generation++; // Holes cut before this field found them.
+	}
+}
+
+void GrassField3D::_on_exclusions_changed(const Rect2 &p_area) {
+	exclusions.read(WorldExclusion3D::KIND_GRASS);
+	for (KeyValue<Vector2i, Tile> &kv : tiles) {
+		if (Rect2(Vector2(kv.key) * tile_size, Vector2(tile_size, tile_size)).intersects(p_area)) {
+			kv.value.generation = generation - 1; // built again, the old one drawn until then
+		}
 	}
 }
 
@@ -7871,6 +8024,7 @@ void GrassField3D::set_season_source(const NodePath &p_path) {
 	season_wait = 0;
 	if (!_follows_season()) {
 		season_green = 1.0f;
+		_set_season_height(1.0f);
 		set_dryness(dryness);
 	}
 }
@@ -7880,6 +8034,7 @@ void GrassField3D::set_follow_weather(bool p_on) {
 	season_wait = 0;
 	if (!_follows_season()) {
 		season_green = 1.0f;
+		_set_season_height(1.0f);
 		set_dryness(dryness);
 	}
 }
@@ -7887,6 +8042,39 @@ void GrassField3D::set_follow_weather(bool p_on) {
 void GrassField3D::set_season_response(float p_response) {
 	season_response = CLAMP(p_response, 0.0f, 1.0f);
 	set_dryness(dryness);
+}
+
+// The sward's standing height over its summer height for a season state (docs/ideas/vegetation.md, "Seasonal sward
+// height"). Grass stands short through the winter: the summer's growth dies back and lodges under the autumn's rain and
+// wind, and what stands is the short new tillers; growth restarts in spring (the agronomists' T-sum of 200 degree days
+// from 1 January, about our forcing of 40 over 5 C) and a meadow is at full height by heading, about forcing 550 (late
+// May to June at 46 N). In autumn it declines with the senescence sum as the leaves die. The winter height, a third of
+// the summer's, is an estimate. 1 with no season.
+float GrassField3D::season_height_for(const Dictionary &p_season) {
+	if (p_season.is_empty() || !p_season.has("forcing")) {
+		return 1.0f;
+	}
+	const float winter = 0.35f;
+	const float forcing = float(p_season.get("forcing", 0.0f));
+	float g = Math::lerp(winter, 1.0f, Math::smoothstep(40.0f, 550.0f, forcing));
+	if (int(p_season.get("day_of_year", 180)) > 172) {
+		g = MIN(g, Math::lerp(1.0f, winter, Math::smoothstep(150.0f, 900.0f, float(p_season.get("senescence", 0.0f)))));
+	}
+	return g;
+}
+
+void GrassField3D::_set_season_height(float p_height) {
+	if (Math::abs(p_height - season_height) < 0.01f) {
+		return;
+	}
+	season_height = p_height;
+	if (material.is_valid()) {
+		material->set_shader_parameter("season_height", season_height);
+	}
+	if (shell_material.is_valid()) {
+		shell_material->set_shader_parameter("season_height", season_height);
+		shell_material->set_shader_parameter("sward_height", 0.5f * (blade_height.x + blade_height.y) * season_height);
+	}
 }
 
 // How green the sward is for a season state (WeatherMap3D.get_season()), 0 to 1. Grassland
@@ -7899,11 +8087,8 @@ float GrassField3D::season_greenness(const Dictionary &p_season) {
 	if (p_season.is_empty()) {
 		return 1.0f;
 	}
-	const float moisture = float(p_season.get("soil_moisture", 1.0f));
-	const float temperature = float(p_season.get("temperature", 10.0f));
-	const float wet = Math::smoothstep(0.1f, 0.4f, moisture);
-	const float warm = Math::smoothstep(-8.0f, 2.0f, temperature);
-	return CLAMP(wet * warm, 0.0f, 1.0f);
+	// The shared rule (WorldContracts::greenness_for_season): the terrain's cured cover follows the same.
+	return WorldContracts::greenness_for_season(float(p_season.get("soil_moisture", 1.0f)), float(p_season.get("temperature", 10.0f)));
 }
 
 // Once a second: the season's greenness into the blades' and the ground's dryness, and a new far
@@ -7944,6 +8129,7 @@ void GrassField3D::_season_step() {
 			_queue_far_bake();
 		}
 	}
+	_set_season_height(season_height_for(season_now));
 	const float g = season_greenness(season_now);
 	if (Math::abs(g - season_green) < 0.005f) {
 		return;
@@ -8056,6 +8242,7 @@ void GrassField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_season_green"), &GrassField3D::get_season_green);
 	ClassDB::bind_method(D_METHOD("get_effective_dryness"), &GrassField3D::get_effective_dryness);
 	ClassDB::bind_static_method("GrassField3D", D_METHOD("season_greenness", "season"), &GrassField3D::season_greenness);
+	ClassDB::bind_static_method("GrassField3D", D_METHOD("season_height_for", "season"), &GrassField3D::season_height_for);
 	GRASS_BIND(set_color_variation, get_color_variation, "amount")
 	GRASS_BIND(set_radius, get_radius, "radius")
 	GRASS_BIND(set_tile_size, get_tile_size, "size")
@@ -8131,6 +8318,9 @@ void GrassField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_build_time_msec"), &GrassField3D::get_build_time_msec);
 	ClassDB::bind_method(D_METHOD("get_material"), &GrassField3D::get_material);
 
+	ClassDB::bind_method(D_METHOD("set_editor_preview", "enable"), &GrassField3D::set_editor_preview);
+	ClassDB::bind_method(D_METHOD("is_editor_preview"), &GrassField3D::is_editor_preview);
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "editor_preview"), "set_editor_preview", "is_editor_preview");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "data_map", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "TerrainDataMap3D"), "set_data_map", "get_data_map");
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "rules", PROPERTY_HINT_RESOURCE_TYPE, "PlantSpecies"), "set_rules", "get_rules");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "canopy_field", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "VegetationField3D"), "set_canopy_field", "get_canopy_field");

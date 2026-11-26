@@ -4206,3 +4206,30 @@ from vertex() as a varying.
 - Plan: a cliff form (any conifer, plus yew and juniper-like shrubs): short, thick, leaning out from the face, part
   dead stem strips, roots that follow a rock's cracks (root_stone's rock link), placed on steep rocky ground from the
   terrain map.
+
+### 5bn. Close-up leaves: curved blades and scanned leaf cards (25 Nov; Paulo: "full geometry leaves close to the camera?", picked curved blades + scan outlines)
+
+- Technique: real-time trees draw each leaf as a small curved mesh near the camera and cut its outline from an alpha
+  atlas (SpeedTree leaf meshes and leaf cards; Quixel Megascans leaf atlases; Kingdom Come Deliverance II and Star
+  Citizen foliage). Teeth and holes stay a cut, never geometry: a 1 cm tooth is below a pixel past a few metres.
+- Curved blades (`near_leaf_detail`, on): the near mesh's LOD 0 leaf cards (scanned species only; drawn leaves stay
+  flat, as curving a cork oak's drawn lobes doubled its triangles and ran the test suite out of memory) are grid blades (a card: a row every 3.5 cm, two
+  to five; a drawn blade: its coarse rows, halved over 7 cm a step; 5 columns over 2.5 cm wide, else 3), with a droop (-0.25 L t^2), a cup across (0.12 w d^2) and a twist (+-0.26 rad t^2, hashed). A flat
+  copy of each leaf (the blade as before) is the first LOD level (error 0.1 x leaf width, 2 to 8 mm), so the curve
+  costs only within a few metres. The path tracer reads LOD 0.
+- Leaf cards: `leaf_atlas.py` lays each scanned leaf upright in a card, v base to tip along its own midline, alpha the
+  scan's opacity; the material uses alpha scissor 0.5 with alpha to coverage. The card is sized so the cut leaf keeps
+  the area of the blade it replaces (`_card_scale`, measured on the drawn blade), so the crown's density, light and
+  drag stay as they were (a first try sized it to the lens slot and darkened maple crowns by doubling leaf area).
+  Lobed and palmate leaves are one card. Twins and far leaves use the atlas's solid last column. Crown occlusion
+  weights leaf area by the card's fill.
+- Species: scan-textures.md lists the eleven ambientCG Leaf Sets and the 29 presets they cover.
+- Triangles, near mesh of one open-grown tree (bench `--view=leaf`): oak 24.3M drawn lobed leaves before, 6.8M flat
+  cards, 15.7M curved cards; white willow 14.1M, 10.1M, 18.6M; hazel 1.16M before, 1.88M curved cards; sycamore 5.4M,
+  6.9M. A first cut with a row every 1.2 cm made willow 37M and ran the cloud out of memory.
+- Docs review (25 Nov): leaves "flat, uniformly pale". Leaf to leaf colour was a brightness jitter only (0.85-1.15);
+  each leaf now also takes a hue between yellow-green (sun leaves: thicker, more carotenoid, higher chlorophyll a/b)
+  and blue-green (shade leaves), red +-22%, blue -+20%, by a hash of where it grows (Lichtenthaler et al. 1981, 2007;
+  Niinemets 2010). Translucency was already there (5bj, backlight 0.55/0.85/0.35 of the albedo): the docs frame is
+  lit from behind the camera, so it shows the leaves' undersides in reflected light; with the sun behind the crown the
+  leaves glow. The big leaf is 10-14 cm (real oak 7-14 cm), about 1 m from the camera.

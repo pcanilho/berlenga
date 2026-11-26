@@ -1,0 +1,1 @@
+- Landscape bench: `--snow-strata` keeps the season's avalanches, roof slabs and wall collapse off for its study pit (`--strata-avalanches=1`, `--strata-collapse=1` keep them), and takes `--strata-at=X,Z`.

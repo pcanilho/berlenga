@@ -126,6 +126,7 @@ var only_basics := false
 var only_clouds := false
 var haze := ""
 var no_sky_shadow := false
+var no_cloud_sky := false # WeatherMap3D.cloud_sky_occlusion off: the sky light ignores the clouds
 var froxel_haze := false
 var sun_up := 20.0
 var sun_yaw := -13.0
@@ -177,6 +178,7 @@ func _ready() -> void:
 		elif a == "--frozen": frozen = true
 		elif a.begins_with("--fire="): fire_w = float(a.substr(7))
 		elif a == "--no-sky-shadow": no_sky_shadow = true
+		elif a == "--no-cloud-sky": no_cloud_sky = true
 		elif a == "--froxel-haze": froxel_haze = true
 		elif a.begins_with("--sun-up="): sun_up = float(a.substr(9))
 		elif a.begins_with("--sun-yaw="): sun_yaw = float(a.substr(10))
@@ -1338,6 +1340,7 @@ func _build_clouds() -> void:
 	weather = ClassDB.instantiate("WeatherMap3D")
 	weather.extent = 4096.0
 	weather.resolution = 64
+	weather.cloud_sky_occlusion = not no_cloud_sky
 	weather.wind_speed = 6.0
 	weather.wind_direction = Vector2(0.6, -0.8)
 	weather.cloud_cover = 0.3 if view == "clouds_wide" else 0.45

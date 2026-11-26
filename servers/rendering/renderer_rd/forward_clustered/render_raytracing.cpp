@@ -399,7 +399,12 @@ static uint64_t _rt_merged_triangle_count(const RTInstanceSource &p_source, void
 	const uint64_t triangles = uint64_t(p_source.count) * (indexed ? index_count / 3 : vertex_count / 3);
 	// MultiMeshes above the cap, or asked to (multimesh_set_rt_instanced), use the expanded TLAS entries; particles and
 	// captured surfaces have none.
-	static const uint32_t MM_MERGED_BLAS_MAX_TRIANGLES = (uint32_t)GLOBAL_GET("rendering/pathtracing/multimesh_merged_blas_max_triangles");
+	// On a CPU device every MultiMesh is traced as instances over its shared mesh: a merged BLAS stores a copy of every
+	// instance's triangles (and its baked vertex buffer), which there is system memory, and its faster traversal is a
+	// graphics card's gain. The same triangles either way.
+	static const uint32_t MM_MERGED_BLAS_MAX_TRIANGLES = RD::get_singleton()->get_device_type() == RenderingDeviceEnums::DEVICE_TYPE_CPU
+			? MIN((uint32_t)GLOBAL_GET("rendering/pathtracing/multimesh_merged_blas_max_triangles"), 256u)
+			: (uint32_t)GLOBAL_GET("rendering/pathtracing/multimesh_merged_blas_max_triangles");
 	if (!p_source.particles && !p_captured && (p_source.instanced || triangles > MM_MERGED_BLAS_MAX_TRIANGLES)) {
 		return 0;
 	}
@@ -2764,7 +2769,10 @@ void RenderRaytracing::prepare_vertex_captures(const RenderDataRD *p_render_data
 static uint32_t _rt_capture_arena_target(uint64_t p_size) {
 	constexpr uint64_t MIN_SIZE = 64 * 1024;
 	constexpr uint64_t MAX_HEADROOM = 256 * 1024 * 1024;
-	return uint32_t(CLAMP(p_size + MIN(p_size / 2, MAX_HEADROOM), MIN_SIZE, uint64_t(UINT32_MAX)));
+	// A CPU device keeps no headroom: its buffers are system memory, and a reallocation there costs little.
+	static const bool cpu_device = RD::get_singleton()->get_device_type() == RenderingDeviceEnums::DEVICE_TYPE_CPU;
+	const uint64_t headroom = cpu_device ? 0 : MIN(p_size / 2, MAX_HEADROOM);
+	return uint32_t(CLAMP(p_size + headroom, MIN_SIZE, uint64_t(UINT32_MAX)));
 }
 
 // Makes the capture arena hold at least p_size bytes for the current view. Shrinks when the largest view of a full
@@ -4004,6 +4012,8 @@ RTMaterialData *RenderRaytracing::process_material(RID p_material_rid, uint16_t 
 		mat.subsurface.wetness_from_weather = rt_state.wetness_from_weather;
 		mat.subsurface_texture.wetness_canopy = rt_state.wetness_canopy;
 		mat.subsurface_texture.wetness_moving = rt_state.wetness_moving;
+		mat.hair.standing_water = rt_state.wetness_standing_water;
+		mat.hair.standing_relief = uint32_t(CLAMP(int(Math::round(get_float("wetness_standing_relief", 8.0f) / 4.0f)) - 1, 0, 7));
 	}
 	if (rt_state.snow) {
 		mat.subsurface.snow = 1;
@@ -7911,6 +7921,29 @@ RID RenderRaytracing::update_uniform_set(RTViewportState *p_state, const RenderD
 				const Vector4 nose = nose_var.get_type() == Variant::VECTOR4 ? Vector4(nose_var) : Vector4();
 				rt_ubo.params[SceneShaderRaytracing::RT_PARAM_PRECIP_NOSE] = nose.x;
 				rt_ubo.params[SceneShaderRaytracing::RT_PARAM_PRECIP_NOSE_BASE] = nose.y;
+				static const StringName rain_fallback_name = "weather_rain_fallback";
+				const Variant fallback_var = ms->global_shader_parameter_get_internal(rain_fallback_name);
+				rt_ubo.params[SceneShaderRaytracing::RT_PARAM_RAIN_FALLBACK] = fallback_var.get_type() == Variant::VECTOR4 ? MAX(Vector4(fallback_var).x, 0.0f) : 0.0f;
+				// Footsteps and splashes in the ground's standing water (GroundSurface3D's water_impacts row).
+				static const StringName impact_info_name = "water_impact_info";
+				static const StringName impacts_name = "water_impacts";
+				const Variant info_var = ms->global_shader_parameter_get_internal(impact_info_name);
+				const int impact_count = info_var.get_type() == Variant::VECTOR4 ? int(Vector4(info_var).x) : 0;
+				RID impacts_rd;
+				if (impact_count > 0) {
+					const Variant imp_var = ms->global_shader_parameter_get_internal(impacts_name);
+					RID imp_tex;
+					if (imp_var.get_type() == Variant::RID) {
+						imp_tex = imp_var;
+					} else if (imp_var.get_type() == Variant::OBJECT) {
+						Object *t = imp_var;
+						if (t) {
+							imp_tex = t->call(SNAME("get_rid"));
+						}
+					}
+					impacts_rd = imp_tex.is_valid() ? RendererRD::TextureStorage::get_singleton()->texture_get_rd_texture(imp_tex) : RID();
+				}
+				rt_ubo.params[SceneShaderRaytracing::RT_PARAM_WATER_IMPACTS] = impacts_rd.is_valid() ? float((bindless_block->add_texture(impacts_rd) + 1u) * 32u + uint32_t(MIN(impact_count, 31))) : 0.0f;
 				// Its rain map (weather_rain_map, same rect as the state map): the canopy's held water in green.
 				static const StringName rain_map_name = "weather_rain_map";
 				const Variant rain_var = ms->global_shader_parameter_get_internal(rain_map_name);
@@ -7939,6 +7972,28 @@ RID RenderRaytracing::update_uniform_set(RTViewportState *p_state, const RenderD
 				}
 				RID wind_rd = wind_tex.is_valid() ? RendererRD::TextureStorage::get_singleton()->texture_get_rd_texture(wind_tex) : RID();
 				rt_ubo.params[SceneShaderRaytracing::RT_PARAM_WIND_MAP] = (has_weather && wind_rd.is_valid()) ? float(bindless_block->add_texture(wind_rd)) : 0.0f;
+			}
+			// The clouds' sky map (weather_cloud_sky_map over weather_cloud_sky_rect): a bounce's sky through the clouds.
+			{
+				static const StringName sky_map_name = "weather_cloud_sky_map";
+				static const StringName sky_rect_name = "weather_cloud_sky_rect";
+				const Variant sky_rect_var = ms->global_shader_parameter_get_internal(sky_rect_name);
+				const Vector4 sky_rect = sky_rect_var.get_type() == Variant::VECTOR4 ? Vector4(sky_rect_var) : Vector4();
+				const Variant sky_var = ms->global_shader_parameter_get_internal(sky_map_name);
+				RID sky_tex;
+				if (sky_var.get_type() == Variant::RID) {
+					sky_tex = sky_var;
+				} else if (sky_var.get_type() == Variant::OBJECT) {
+					Object *t = sky_var;
+					if (t) {
+						sky_tex = t->call(SNAME("get_rid"));
+					}
+				}
+				RID sky_rd = sky_tex.is_valid() ? RendererRD::TextureStorage::get_singleton()->texture_get_rd_texture(sky_tex) : RID();
+				const bool has_sky = sky_rd.is_valid() && sky_rect.z > 0.0f;
+				rt_ubo.params[SceneShaderRaytracing::RT_PARAM_CLOUD_SKY_MAP] = has_sky ? float(bindless_block->add_texture(sky_rd)) : 0.0f;
+				rt_ubo.params[SceneShaderRaytracing::RT_PARAM_CLOUD_SKY_X] = sky_rect.x;
+				rt_ubo.params[SceneShaderRaytracing::RT_PARAM_CLOUD_SKY_Z] = sky_rect.y;
 			}
 			// The camera cut-out round the player (BaseMaterial3D camera_cutout): camera rays start past it.
 			{

@@ -99,6 +99,17 @@ class Landscape3D : public Node3D, public WorldReliefProvider {
 	};
 
 	NodePath source;
+	// The ground of a saved scene draws itself (docs/ideas/editor-tools.md, A): rebuilt once its TerrainGenerator3D
+	// source has a result and each time it generates again, in the editor and in the game; a TerrainMaterial3D as
+	// material is pointed at that generator. A script's own rebuild() before the deferred one cancels it.
+	bool auto_rebuild = true;
+	bool rebuild_pending = false;
+	ObjectID auto_source;
+	void _auto_connect();
+	void _auto_disconnect();
+	void _on_source_generated();
+	void _auto_rebuild();
+	void _auto_material(Node *p_source);
 	Ref<Image> height_image;
 	Vector2 origin;
 	real_t spacing = 1.0;
@@ -106,6 +117,7 @@ class Landscape3D : public Node3D, public WorldReliefProvider {
 	int lod_levels = 5;
 	real_t lod_error = 1.0;
 	real_t cliff_relief = 0.6; // m, rock ledges built into faces steeper than about 50 degrees at the finest level (0 = off)
+	real_t terracette_relief = 1.0; // share of the grazing terracettes' steps drawn (WorldContracts::terracette_at; 0 = off)
 	real_t bank_relief = 0.8; // m, slump scarps and lobes on banks of about 40 to 55 degrees at the finest level (0 = off)
 	Ref<Material> material;
 	bool cast_shadows = true;
@@ -152,15 +164,26 @@ class Landscape3D : public Node3D, public WorldReliefProvider {
 	bool have_camera = false;
 
 	// The stand's ground map (WorldStand worn trails and boar rooting) for TerrainMaterial3D: globals
-	// terrain_stand_map (RG8: r trail wear, g fresh rooting) and terrain_stand_rect, a STAND_SIZE square round the camera.
+	// terrain_stand_map (RGBA8: r trail wear, g fresh rooting, b burn scars) and terrain_stand_rect, a STAND_SIZE
+	// square round the camera.
 	static constexpr int STAND_RES = 512;
+	static constexpr float BURN_YEARS = 10.0f; // the burn channel's span: 1 just burnt, near 0 this many years on
 	static constexpr real_t STAND_SIZE = 256.0;
 	Ref<ImageTexture> stand_texture;
 	Vector2 stand_origin = Vector2(1e30, 1e30);
 	uint64_t stand_generation = UINT64_MAX;
 	ObjectID stand_id;
 	bool stand_published = false;
+	LocalVector<uint8_t> stand_trail;
+	LocalVector<float> stand_rooting;
+	LocalVector<float> stand_burn; // years since it burnt (-1 never), every 2 m
+	uint64_t stand_burn_generation = UINT64_MAX;
+	bool stand_fire = false;
+	bool stand_any = false;
+	bool stand_any_burn = false;
 	void _update_stand_map(const Vector3 &p_camera);
+	bool _raster_stand(class WorldStand *st, const Vector2 &origin, real_t texel);
+	void _unpublish_stand_map();
 	// The relief contract (WorldReliefProvider, WorldGround.relief_at) and its GPU map for placers: terrain_relief_map
 	// (RG16F: r the drawn height over the heightfield in m, g the relief's share) over terrain_relief_rect, a
 	// RELIEF_SIZE square round the camera at RELIEF_RES texels.
@@ -174,7 +197,9 @@ class Landscape3D : public Node3D, public WorldReliefProvider {
 	bool relief_registered = false;
 	void _update_relief_map(const Vector3 &p_camera);
 	void _clear_relief_map();
-	Vector2 _relief_at_local(const Vector3 &p_local) const;
+	// p_steps: the terracettes' too. r_drawn: the drawn face point the relief pushes out to (landscape space) and its
+	// metres up per metre out (tan slope), for the recess; r_drawn_tan 0 where no relief reaches.
+	Vector2 _relief_at_local(const Vector3 &p_local, bool p_steps = true, Vector3 *r_drawn = nullptr, real_t *r_drawn_tan = nullptr, Vector3 *r_drawn_dir = nullptr) const;
 	// The cliff relief's share (its face weight, 0..1) over a wider square for the terrain material (no soil on a
 	// shelf between walls): terrain_cliff_map (R8) over terrain_cliff_rect, CLIFF_MAP_SIZE round the camera at
 	// CLIFF_MAP_RES texels, rebuilt with the relief map.
@@ -189,7 +214,7 @@ class Landscape3D : public Node3D, public WorldReliefProvider {
 	// data of their own (GroundSurface3D's patch): global terrain_cliff_relief = (metres, grid spacing, grid origin),
 	// read in world space as the stand map is (the landscape is not moved).
 	Vector4 cliff_published;
-	real_t bank_published = -1.0;
+	Vector2 bank_published = Vector2(-1.0, -1.0); // terrain_bank_relief.xy: the bank relief, the terracettes' share
 	void _publish_cliff_relief(bool p_clear = false);
 
 	// Streaming.
@@ -215,6 +240,7 @@ class Landscape3D : public Node3D, public WorldReliefProvider {
 
 	float _h(int p_x, int p_z) const;
 	Vector3 _normal(int p_x, int p_z) const;
+	Vector3 _normal_eval(int p_x, int p_z) const; // _normal without the cliff build's cache
 	Vector3 _normal_central(int p_x, int p_z) const;
 	Vector3 _normal_central_at(real_t p_x, real_t p_z) const;
 	Vector3 _normal_at(real_t p_x, real_t p_z) const; // bilinear, in grid units
@@ -227,7 +253,29 @@ class Landscape3D : public Node3D, public WorldReliefProvider {
 	real_t _relief_fold_scale(real_t p_x, real_t p_z) const; // grid units
 	real_t _cliff_scale(const Vector3 &p, real_t p_k, real_t p_tan) const;
 	real_t _bank_scale(const Vector3 &p, real_t p_k, real_t p_tan) const;
+	real_t _cliff_scale_limit(const Vector3 &p, real_t p_tan) const; // _cliff_scale's bound, whatever p_k
+	real_t _bank_scale_limit(const Vector3 &p, real_t p_tan) const;
+	// What _cliff_point reads at a point besides the point itself, kept so the mesh build reads each once per vertex.
+	struct ReliefFrame {
+		Vector3 n; // _normal_at
+		real_t ml = 0.0; // its length in plan
+		Vector2 w; // _relief_weights_at
+		real_t fold = 1.0; // _relief_fold_scale
+		real_t cliff_limit = -1.0; // _cliff_scale_limit, -1 until read
+		real_t bank_limit = -1.0;
+		bool has_n = false;
+		bool has_w = false;
+	};
+	void _relief_frame_weights(real_t p_fx, real_t p_fz, ReliefFrame &r_frame) const;
 	Vector3 _cliff_point(const Vector3 &p_world, real_t p_weight_scale) const;
+	Vector3 _cliff_point_framed(const Vector3 &p_world, real_t p_weight_scale, ReliefFrame &r_frame) const;
+	// The cliff kit's recess (WorldGround.recess_at, docs/ideas/rocks.md "Cliff kit recess contract"): a drawn point c
+	// (landscape space) on the face whose heightfield normal is p_n, moved back along its horizontal normal by depth x
+	// share x p_keep; r_share the share. recess_on and recess_xform are set on the main thread before mesh jobs run.
+	Vector3 _recessed(const Vector3 &p_c, const Vector3 &p_n, real_t p_keep, real_t *r_share = nullptr) const;
+	bool recess_on = false;
+	Transform3D recess_xform;
+	void _on_recess_changed(const AABB &p_box);
 	void _build_cliff_surface(MeshJob &r_job) const;
 	const LocalVector<int> &_indices(int p_level, int p_mask);
 	void _crease_indices(int p_cx, int p_cz, int p_level, int p_mask, LocalVector<int> &r_indices) const;
@@ -269,7 +317,10 @@ protected:
 	static void _bind_methods();
 
 public:
-	void set_source(const NodePath &p_path) { source = p_path; }
+	void set_source(const NodePath &p_path);
+	void set_auto_rebuild(bool p_enable);
+	bool is_auto_rebuild() const { return auto_rebuild; }
+	Callable get_rebuild_button();
 	NodePath get_source() const { return source; }
 	void set_height_image(const Ref<Image> &p_image) { height_image = p_image; }
 	Ref<Image> get_height_image() const { return height_image; }
@@ -287,7 +338,9 @@ public:
 	real_t get_cliff_relief() const { return cliff_relief; }
 	void set_bank_relief(real_t p_metres);
 	real_t get_bank_relief() const { return bank_relief; }
-	Vector2 contract_relief_at(const Vector3 &p_position) const override;
+	void set_terracette_relief(real_t p_share);
+	real_t get_terracette_relief() const { return terracette_relief; }
+	Vector2 contract_relief_at(const Vector3 &p_position, bool p_steps = true, bool p_recess = true) const override;
 	const Object *contract_relief_object() const override { return this; }
 	void contract_relief_state(void (*p_add)(void *p_user, const void *p_data, size_t p_size), void *p_user) const override;
 	Vector3 get_cliff_point(const Vector3 &p_global_position) const;

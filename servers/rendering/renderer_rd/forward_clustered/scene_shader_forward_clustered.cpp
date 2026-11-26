@@ -1066,6 +1066,7 @@ void SceneShaderForwardClustered::init(const String p_defines) {
 		// True while the path tracer captures the geometry (vertex() run for its BLAS).
 		actions.renames["IN_PATH_TRACER"] = "SHADER_IN_PATH_TRACER";
 		actions.renames["CAMERA_CUTOUT_REACH"] = "(!sc_camera_cutout_off())";
+		actions.renames["IN_ANY_HIT"] = "false";
 		actions.renames["VIEWPORT_SIZE"] = "read_viewport_size";
 
 		actions.renames["FRAGCOORD"] = "gl_FragCoord";

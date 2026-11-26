@@ -716,7 +716,10 @@ void GroundSurface3D::_update_cells() {
 			// A fire burnt the litter off and left the soil water-repellent (WorldFire).
 			in.repel = 0.0f;
 			if (fire && fire->has_provider()) {
-				in.litter *= 1.0f - CLAMP(fire->burnt_at(p), 0.0f, 1.0f);
+				// The litter builds back from leaf fall over the years after (about five to its old depth).
+				const float age = fire->burn_age_at(p);
+				const float back = age < 0.0f ? 0.0f : Math::smoothstep(0.5f, 5.0f, age);
+				in.litter *= 1.0f - CLAMP(fire->burnt_at(p), 0.0f, 1.0f) * (1.0f - back);
 				in.repel = CLAMP(fire->water_repellency_at(p), 0.0f, 1.0f);
 			}
 			in.compacted = worn_tracks && _wear_any() ? wear_compaction(get_wear_at(p)) * (1.0f - 0.5f * sand) : 0.0f;
@@ -3070,6 +3073,53 @@ WorldGroundSoil GroundSurface3D::contract_ground_soil_at(const Vector3 &p_positi
 float GroundSurface3D::contract_water_height_at(const Vector3 &p_position) const {
 	const float water = get_standing_water_at(p_position);
 	return water > 0.002f ? get_surface_height_at(p_position) + water : -Math::INF;
+}
+
+// Footsteps, wheels and splashes in the standing water: the bodies' strikes this step (press_bodies()) where water stands,
+// then the row the shaders read (water_impact_ripple()).
+void GroundSurface3D::_water_impacts_update(double p_delta) {
+	for (const GroundDeformField::WaterImpact &e : water_impact_events) {
+		if (get_standing_water_at(e.position) <= 0.002f) {
+			continue;
+		}
+		if (e.owner == 0) {
+			water_impacts.add(e.position, e.strength);
+		} else {
+			water_impacts.move(e.owner, e.position, e.strength);
+		}
+	}
+	water_impact_events.clear();
+	if (water_impacts.update(p_delta)) {
+		const int n = water_impacts.fill_row();
+		_set_global("water_impacts", water_impacts.get_texture()->get_rid(), RSE::GLOBAL_VAR_TYPE_SAMPLER2D);
+		_set_global("water_impact_info", Vector4(float(n), 0.0f, 0.0f, 0.0f), RSE::GLOBAL_VAR_TYPE_VEC4);
+	}
+}
+
+// WorldWater.disturb / impulse (a script's splash, a thrown stone): trains where water stands. The impulse's strength
+// is a slope (height over radius, contract_water_wave()); a walker's step is about 0.3.
+void GroundSurface3D::contract_water_disturb(uint64_t p_owner, const Vector3 &p_position, float p_radius, float p_strength) {
+	if (standing_water && get_standing_water_at(p_position) > 0.002f) {
+		water_impacts.move(p_owner, p_position, CLAMP(p_strength / 0.3f, 0.0f, 2.0f));
+	}
+}
+
+PackedVector4Array GroundSurface3D::get_water_impacts() const {
+	PackedVector4Array r;
+	for (const GroundWaterImpacts::Impact &im : water_impacts.get_impacts()) {
+		r.push_back(Vector4(im.x, im.z, im.age, im.amplitude));
+	}
+	return r;
+}
+
+void GroundSurface3D::contract_water_clear(uint64_t p_owner) {
+	water_impacts.clear(p_owner);
+}
+
+void GroundSurface3D::contract_water_impulse(const Vector3 &p_position, float p_radius, float p_strength) {
+	if (standing_water && get_standing_water_at(p_position) > 0.002f) {
+		water_impacts.add(p_position, CLAMP(p_strength / 0.3f, 0.0f, 2.0f));
+	}
 }
 
 float GroundSurface3D::get_standing_water_at(Vector3 p_position) const {
@@ -7171,7 +7221,10 @@ void GroundSurface3D::_notification(int p_what) {
 				field.press_settle = c.deformable ? CLAMP(3.0f / MAX(c.rate, 1e-3f), 1.0f, 600.0f) : 1.0f;
 				// The bodies press as stamps for the GPU field (the same maths).
 				field.stamp_sink = &gpu_sink;
+				field.impact_sink = standing_water ? &water_impact_events : nullptr;
 				field.press_bodies(get_tree(), deform_groups, cols, character_mass, character_contact_area, contact_tolerance, delta);
+				field.impact_sink = nullptr;
+				_water_impacts_update(delta);
 				field.stamp_sink = nullptr;
 				_plough_bodies();
 				_avalanche_update(delta);
@@ -7194,7 +7247,10 @@ void GroundSurface3D::_notification(int p_what) {
 				cols.surface = this;
 				const Cell &c = _cell_at(center.x, center.y);
 				field.press_settle = c.deformable ? CLAMP(3.0f / MAX(c.rate, 1e-3f), 1.0f, 600.0f) : 1.0f;
+				field.impact_sink = standing_water ? &water_impact_events : nullptr;
 				field.press_bodies(get_tree(), deform_groups, cols, character_mass, character_contact_area, contact_tolerance, delta);
+				field.impact_sink = nullptr;
+				_water_impacts_update(delta);
 				_plough_bodies();
 				_avalanche_update(delta);
 				_update_mats(delta);
@@ -8208,7 +8264,7 @@ void GroundSurface3D::GPUSink::stamp(const GroundDeformField::Columns &p_columns
 	// The footprint's reach, as GroundDeformField::press works it out (no crusts in the ground).
 	const float ring = GroundDeformField::rim_ring(p_box, p_half, p_radius, f.rim_reach);
 	const float bow = CLAMP(p_velocity.length() / GroundDeformField::BOW_SPEED, 0.0f, 1.0f);
-	const float span = (p_box ? p_half.length() : p_radius) + ring * (1.0f + bow * GroundDeformField::BOW_REACH);
+	const float span = (p_box ? p_half.length() : p_radius) + MAX(ring * (1.0f + bow * GroundDeformField::BOW_REACH), 2.0f * f.texel()); // and the widest edge (GroundDeformField::edge_width)
 	int x0, x1, z0, z1;
 	if (!GroundDeformGPUHost::stamp_bounds(f, p_position, span, x0, x1, z0, z1)) {
 		return;
@@ -10486,6 +10542,7 @@ void GroundSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_standing_water", "enabled"), &GroundSurface3D::set_standing_water);
 	ClassDB::bind_method(D_METHOD("is_standing_water"), &GroundSurface3D::is_standing_water);
 	ClassDB::bind_method(D_METHOD("get_standing_water_at", "position"), &GroundSurface3D::get_standing_water_at);
+	ClassDB::bind_method(D_METHOD("get_water_impacts"), &GroundSurface3D::get_water_impacts);
 	ClassDB::bind_method(D_METHOD("set_desiccation_cracks", "enabled"), &GroundSurface3D::set_desiccation_cracks);
 	ClassDB::bind_method(D_METHOD("set_puddle_ice", "enabled"), &GroundSurface3D::set_puddle_ice);
 	ClassDB::bind_method(D_METHOD("is_puddle_ice"), &GroundSurface3D::is_puddle_ice);

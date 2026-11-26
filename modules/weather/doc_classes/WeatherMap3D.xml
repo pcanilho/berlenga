@@ -1310,6 +1310,9 @@
 		<member name="cloud_shadow_extent" type="float" setter="set_cloud_shadow_extent" getter="get_cloud_shadow_extent" default="6144.0">
 			Width of the square of ground the cloud shadow covers around the camera (or [member follow_target]), in metres. Beyond it, the sun is not shadowed by clouds.
 		</member>
+		<member name="cloud_sky_occlusion" type="bool" setter="set_cloud_sky_occlusion" getter="get_cloud_sky_occlusion" default="true">
+			The clouds dim the sky light on surfaces under them, raster and path traced: a cloud ambient occlusion map over the cloud light grid's box holds how much of the clear sky each spot sees through the clouds (the cosine-weighted hemisphere through each column's optical depth, by the cloud's diffuse transmission), published as the [code]weather_cloud_sky_map[/code] and [code]weather_cloud_sky_rect[/code] shader globals. The sky the surfaces read is the one the camera sees, so each spot takes its own visibility against the camera's. Needs a [WeatherSkyMaterial] and the sun up, as the light grid does.
+		</member>
 		<member name="cloud_shadow_interval" type="float" setter="set_cloud_shadow_interval" getter="get_cloud_shadow_interval" default="1.0">
 			Real seconds between cloud shadow bakes. Between bakes, the shadow slides with the clouds.
 		</member>

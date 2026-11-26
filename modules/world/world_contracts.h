@@ -684,14 +684,43 @@ class WorldReliefProvider {
 public:
 	// At the point's xz: x the drawn surface's height over the heightfield's (m, + above it; the relief pushes the
 	// surface out along the slope's horizontal normal by d, so about d tan(slope) here), y the relief's share
-	// (0..1, the cliff and bank weights). x NAN where the producer does not reach.
-	virtual Vector2 contract_relief_at(const Vector3 &p_position) const = 0;
+	// (0..1, the cliff and bank weights). x NAN where the producer does not reach. p_steps: with the terracettes' steps
+	// (WorldContracts::terracette_step); false for placers that add the step at their own roots, as the GPU's do.
+	virtual Vector2 contract_relief_at(const Vector3 &p_position, bool p_steps = true, bool p_recess = true) const = 0; // p_recess false: without the cliff kit's recess
 	// For results cached by what they read (the world cache): the node whose stored properties set the relief, and
 	// the rest of its state through p_add (called for each piece of bytes). A provider that returns null here is not
 	// cached against, so its readers compute.
 	virtual const Object *contract_relief_object() const { return nullptr; }
 	virtual void contract_relief_state(void (*p_add)(void *p_user, const void *p_data, size_t p_size), void *p_user) const {}
 	virtual ~WorldReliefProvider() {}
+};
+
+// The cliff kit's recess (docs/ideas/rocks.md, "Cliff kit recess contract"): where a stone field stands rock pillars
+// as the wall of a steep face, the drawn face steps back under them so the pillars are the visible wall (terrain sunk
+// under cliff meshes: Carrier, GDC 2018, "Procedural World Generation of Far Cry 5"). Produced by RockField3D, read
+// by the landscape's drawn relief mesh (not its collision: the pillars carry their own). Several may register; the
+// deepest (depth * share) answers.
+class WorldRecessProvider {
+public:
+	// At a point of the drawn, unrecessed face (world, the relief's displaced position): x how far the face steps back
+	// (m, >= 0) along its horizontal outward normal to stand behind the pillar there, y the share (0..1: 1 where a
+	// pillar's front covers the point, fading to 0 within its outline's last 0.5 m where no neighbour continues the
+	// wall). (0, 0) where no pillar stands. Const and thread-safe (read from mesh workers, per vertex): a producer
+	// computes lazily under its own lock and caches.
+	virtual Vector2 contract_recess_at(const Vector3 &p_position) const = 0;
+	// The same as the step back itself: x y z the world offset that sets the point behind the pillar (horizontal, along
+	// the pillar's own outward normal, depth times share), w the share. Along the pillar's normal, not the drawn
+	// face's: on a fluted face the flanks' normals point sideways and a step along them leaves the ridges standing.
+	virtual Vector4 contract_recess_vector_at(const Vector3 &p_position) const { return Vector4(0, 0, 0, contract_recess_at(p_position).y); }
+	virtual void contract_recess_points(const Vector3 *p_points, int p_count, Vector2 *r_recess) const {
+		for (int i = 0; i < p_count; i++) {
+			r_recess[i] = contract_recess_at(p_points[i]);
+		}
+	}
+	// For results cached by what they read (the world cache), as the relief's.
+	virtual const Object *contract_recess_object() const { return nullptr; }
+	virtual void contract_recess_state(void (*p_add)(void *p_user, const void *p_data, size_t p_size), void *p_user) const {}
+	virtual ~WorldRecessProvider() {}
 };
 
 class WorldGround : public RefCounted {
@@ -726,6 +755,8 @@ protected:
 	GDVIRTUAL1RC(PackedFloat32Array, _stones_near, Rect2)
 	GDVIRTUAL1RC(Color, _albedo_at, Vector3)
 	GDVIRTUAL1RC(Vector2, _relief_at, Vector3)
+	GDVIRTUAL1RC(Vector2, _recess_at, Vector3)
+	GDVIRTUAL1RC(Vector4, _recess_vector_at, Vector3)
 
 public:
 	bool has_provider() const { return provider != nullptr || get_script_instance() != nullptr; } // a script stub (set_*) counts
@@ -773,7 +804,22 @@ public:
 	// The drawn ground's relief over the heightfield at the point's xz: x the height to add to the heightfield's (m),
 	// y its share (0..1). (0, 0) with no relief producer. GPU placers read terrain_relief_map (R height m, G share)
 	// over terrain_relief_rect instead.
-	Vector2 relief_at(const Vector3 &p_position) const;
+	// p_steps false leaves out the terracettes' steps, for a placer that adds wc_terracette_step at each root itself (a
+	// height map sampled every few metres would alias them and count them twice). A script override ignores it.
+	// p_recess false: the relief without the cliff kit's recess (for the kit itself, which is fitted to the unrecessed
+	// face). The relief producer applies the recess (recess_at) when p_recess is true.
+	Vector2 relief_at(const Vector3 &p_position, bool p_steps = true, bool p_recess = true) const;
+	// The cliff kit's recess at a point of the drawn, unrecessed face (WorldRecessProvider): x depth m back along the
+	// face's horizontal outward normal, y share (0..1). (0, 0) with no producer. Thread-safe for the built-in producers.
+	Vector2 recess_at(const Vector3 &p_position) const;
+	// The step back as a world offset (xyz: horizontal, along the pillar's outward normal, depth times share; w the
+	// share): what the drawn face adds to the point. Use this rather than moving along the face's own normal.
+	Vector4 recess_vector_at(const Vector3 &p_position) const;
+	void recess_points(const Vector3 *p_points, int p_count, Vector2 *r_recess) const;
+	bool has_recess() const;
+	// A recess producer reports that the recess changed within a world box (it came or went, its pillars' settings
+	// changed): signal recess_changed(box), so the drawn relief there is built again.
+	void notify_recess_changed(const AABB &p_box);
 	// A relief producer reports that the relief over an area changed (its heights streamed in at full resolution, its
 	// relief settings changed, it came or went): signal relief_changed(area), so placers lay what sits there again.
 	void notify_relief_changed(const Rect2 &p_area);
@@ -888,6 +934,8 @@ struct WorldContactBody {
 	bool feet = false; // meta world_contact_feet: its feet are contact bodies of their own; deformers skip the walker
 };
 
+class Camera3D;
+
 class WorldContracts : public Object {
 	GDCLASS(WorldContracts, Object);
 
@@ -902,6 +950,7 @@ class WorldContracts : public Object {
 	LocalVector<WorldCoverProvider *> cover_providers;
 	LocalVector<WorldGroundColorProvider *> ground_color_providers;
 	LocalVector<WorldReliefProvider *> relief_providers;
+	LocalVector<WorldRecessProvider *> recess_providers;
 	LocalVector<WorldClimateProvider *> climate_providers;
 	LocalVector<WorldPlantColorProvider *> plant_color_providers;
 	Ref<WorldWater> builtin_water;
@@ -923,6 +972,12 @@ public:
 	static constexpr const char *CONTACT_GROUP = "world_contact";
 
 	static WorldContracts *get_singleton() { return singleton; }
+
+	// The camera a world system follows from p_node: the editor's 3D view while editing a scene (editor preview),
+	// else the node's viewport camera. Null when neither has one.
+	static Camera3D *get_view_camera(const Node *p_node);
+	// True when p_node is in the scene being edited (not running), where systems draw their editor preview.
+	static bool is_editor_preview(const Node *p_node);
 
 	// The contract objects: never null.
 	static WorldWeather *weather();
@@ -959,7 +1014,17 @@ public:
 	// mm stay green), so 1 at 500 mm and below, 0 from 1000 mm. The terrain material's soil and alluvium cover colour
 	// (its shader mirrors it: wc_climate_cured).
 	static float cured_share_for_precipitation(float p_mm);
-	// At a point, as climate_bare_share_at; -1 with no weather climate.
+	// How green grassland is for a season state, 0..1: greenness follows soil water and temperature (PhenoGrass,
+	// Hufkens et al. 2016; the Growing Season Index of Jolly et al. 2005 without its day-length term): drought cures it
+	// as the soil dries below about 40% of capacity, and a hard winter (daily means well below freezing) leaves it tan.
+	// One rule for the sward (GrassField3D's season greenness) and the ground's cover.
+	static float greenness_for_season(float p_soil_moisture, float p_temperature);
+	// The cured share for a season state: 1 - greenness_for_season. A dry climate's cover cures through its summer
+	// drought and greens in the wet season; a humid one stays green.
+	static float cured_share_for_season(float p_soil_moisture, float p_temperature);
+	// At a point: from the weather's season there (WorldWeather.season_at: soil_moisture, temperature), else from the
+	// year's precipitation (cured_share_for_precipitation); -1 with no weather. GLSL wc_climate_cured(p) the same, from
+	// the weather_climate global's y and z (WeatherMap3D publishes them), else the precipitation.
 	static float climate_cured_share_at(const Vector3 &p_position);
 	// Where on the ground the bare share falls (1 bare soil, 0 plant cover): drylands' cover is patchy, not thin, with
 	// clumps and bare soil between them metres across (Rietkerk et al. 2004). Bare where a two-octave value noise (4 m and
@@ -977,17 +1042,38 @@ public:
 	// a grazing model: bands parallel to the contours, regular by 40 degrees, about 3.4 m apart). One layout for the
 	// sward (GrassField3D.terracettes) and the ground's step relief: at p (world, its height in y) on ground of
 	// gradient p_gradient (dh/dx, dh/dz), x the tread (0..1: 1 on a tread's middle), y the phase up the step (0..1,
-	// the tread from 0 to about 0.2, then the riser), z how strongly the slope forms them (0 under about 25 degrees,
+	// the tread from 0 to TERRACETTE_TREAD, then the riser), z how strongly the slope forms them (0 under about 25 degrees,
 	// 1 from 35 to 45, 0 past about 51). Bands follow the height, wandering a few decimetres, and fade out in places.
-	static constexpr float TERRACETTE_SPACING = 3.4f; // Along the slope, m.
+	// The phase goes by height over a fixed rise (TERRACETTE_RISE), so a band keeps to one contour: a rise taken from the
+	// local slope (spacing times its sine) moved the phase by a whole step for a few hundredths of a metre's change in
+	// rise 100 m up, the bands a scribble of short dashes wherever the slope varied.
+	static constexpr float TERRACETTE_SPACING = 3.4f; // Along a 36 degree slope, m (closer on steeper ground).
+	static constexpr float TERRACETTE_RISE = 2.0f; // Height from one tread to the next, m.
+	// The tread's share of each step's phase: level treads of about a metre and risers some 10 degrees steeper than the
+	// slope at 35 degrees (0.6 m steps); at 0.185 the risers stood only 4 degrees steeper and the steps barely read.
+	static constexpr float TERRACETTE_TREAD = 0.3f;
 	static Vector3 terracette_at(const Vector3 &p_position, const Vector2 &p_gradient);
-	// GLSL of the same: vec3 wc_terracette(vec3 p, vec2 gradient). Needs climate_bare_shader_code() (wc_vn) first.
+	// The ground's steps (the relief every reader draws): the profile is level over the tread and climbs over the
+	// riser, less its mean, so the ground keeps its height on average; box-filtered over p_width metres along the fall
+	// line (the profile's integral is closed form), so a grid or pixel coarser than a tread gets the steps' mean, and
+	// faded out once the width nears a step. x the height to add to the smooth ground (m), y the change of its
+	// steepness (the surface's gradient is p_gradient times 1 + y). p_share scales them: the producer's setting
+	// (Landscape3D.terracette_relief, published in terrain_bank_relief.y) times terracette_soil_share.
+	static Vector2 terracette_step(const Vector3 &p_position, const Vector2 &p_gradient, float p_width, float p_share);
+	// Where the steps form, from the generator's geology (TerrainGenerator3D.get_material_geology_at: soil depth, rock,
+	// talus): open soil only, none on sand, thin soil or in a cell with any rock, talus or till.
+	static float terracette_soil_share(const Color &p_geology);
+	// GLSL of the same: vec3 wc_terracette(vec3 p, vec2 gradient), vec2 wc_terracette_step(vec3 p, vec2 gradient,
+	// float width, float share), float wc_terracette_soil(vec4 geology). Needs climate_bare_shader_code() (wc_vn) first.
 	static String terracette_shader_code();
 	static void register_ground_color(WorldGroundColorProvider *p_provider); // any number: the first that knows the point answers
 	static void unregister_ground_color(WorldGroundColorProvider *p_provider);
 	static void register_relief(WorldReliefProvider *p_provider); // any number: the first that knows the point answers
 	static void unregister_relief(WorldReliefProvider *p_provider);
 	static const LocalVector<WorldReliefProvider *> *relief_providers_list() { return singleton ? &singleton->relief_providers : nullptr; }
+	static void register_recess(WorldRecessProvider *p_provider); // any number: the deepest answers
+	static void unregister_recess(WorldRecessProvider *p_provider);
+	static const LocalVector<WorldRecessProvider *> *recess_providers_list() { return singleton ? &singleton->recess_providers : nullptr; }
 	static const LocalVector<WorldGroundColorProvider *> *ground_color_providers_list() { return singleton ? &singleton->ground_color_providers : nullptr; }
 	static void register_plant_color(WorldPlantColorProvider *p_provider); // any number: each lays its cover over the ground in turn
 	static void unregister_plant_color(WorldPlantColorProvider *p_provider);
