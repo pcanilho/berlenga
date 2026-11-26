@@ -43,6 +43,8 @@
 #include "scene/resources/physics_material.h"
 #include "servers/rendering/rendering_server_types.h"
 
+#include <atomic>
+
 class Camera3D;
 class TerrainGenerator3D;
 
@@ -138,6 +140,10 @@ class Landscape3D : public Node3D, public WorldReliefProvider {
 	// their own threads (relief_at from plant and stone placement) hold it to read, so they never see one without the
 	// other (a grid size ahead of its heights read past their end).
 	mutable RWLock heights_lock;
+	// Bumped (from one counter shared by every landscape, so no two grids share a value) whenever the heights or the
+	// spacing change: _normal() keeps grid normals in a small per-thread memo tagged with it.
+	std::atomic<uint64_t> height_gen{ 0 };
+	void _bump_height_gen();
 	int gw = 0;
 	int gh = 0;
 	int vw = 0; // valid points from the source; the grid repeats the last row and column past them
@@ -327,7 +333,10 @@ public:
 	Ref<Image> get_height_image() const { return height_image; }
 	void set_origin(const Vector2 &p_origin) { origin = p_origin; }
 	Vector2 get_origin() const { return origin; }
-	void set_spacing(real_t p_spacing) { spacing = MAX(p_spacing, real_t(0.05)); }
+	void set_spacing(real_t p_spacing) {
+		spacing = MAX(p_spacing, real_t(0.05));
+		_bump_height_gen();
+	}
 	real_t get_spacing() const { return spacing; }
 	void set_chunk_quads(int p_quads);
 	int get_chunk_quads() const { return chunk_quads; }

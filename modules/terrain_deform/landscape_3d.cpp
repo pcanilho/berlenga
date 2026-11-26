@@ -110,7 +110,47 @@ Vector3 Landscape3D::_normal(int p_x, int p_z) const {
 			return nc->normals[i];
 		}
 	}
-	return _normal_eval(p_x, p_z);
+	// Outside a chunk build (relief_at for plants and stones: a plant's bank-edge search reads the relief at a few
+	// hundred points 5 cm apart, each a tent of bilinear normals) the same grid normals come round again and again:
+	// a small direct-mapped memo per thread, its entries valid only for the heights they were worked out from.
+	struct Slot {
+		uint64_t gen;
+		int x, z;
+		Vector3 n;
+	};
+	static constexpr int SLOTS = 4096;
+	struct Memo {
+		Slot *slots = nullptr;
+		~Memo() {
+			if (slots) {
+				memdelete_arr(slots);
+			}
+		}
+	};
+	static thread_local Memo memo;
+	if (unlikely(!memo.slots)) {
+		memo.slots = memnew_arr(Slot, SLOTS);
+		for (int i = 0; i < SLOTS; i++) {
+			memo.slots[i].gen = 0;
+		}
+	}
+	const uint64_t gen = height_gen.load(std::memory_order_acquire);
+	Slot &s = memo.slots[(uint32_t(p_x) * 73856093u ^ uint32_t(p_z) * 19349663u) & (SLOTS - 1)];
+	if (s.gen == gen && s.x == p_x && s.z == p_z) {
+		return s.n;
+	}
+	const Vector3 n = _normal_eval(p_x, p_z);
+	s.gen = gen;
+	s.x = p_x;
+	s.z = p_z;
+	s.n = n;
+	return n;
+}
+
+static std::atomic<uint64_t> landscape_height_gen_next{ 0 };
+
+void Landscape3D::_bump_height_gen() {
+	height_gen.store(landscape_height_gen_next.fetch_add(1) + 1, std::memory_order_release);
 }
 
 Vector3 Landscape3D::_normal_eval(int p_x, int p_z) const {
@@ -1934,6 +1974,7 @@ void Landscape3D::_finish_heights(bool p_wait) {
 	WorkerThreadPool::get_singleton()->wait_for_group_task_completion(height_group);
 	height_group = -1;
 	const int row = chunk_quads + 1;
+	_bump_height_gen(); // before and after the copies: a normal worked out from a mix of the two is never kept
 	for (HeightJob &job : height_jobs) {
 		Chunk &c = chunks[job.chunk];
 		const int cx = job.chunk % cw;
@@ -1967,6 +2008,7 @@ void Landscape3D::_finish_heights(bool p_wait) {
 			need[job.chunk] = 0;
 		}
 	}
+	_bump_height_gen();
 	height_jobs.clear();
 	lods_dirty = true;
 }
@@ -2162,6 +2204,7 @@ void Landscape3D::clear() {
 		RWLockWrite hl(heights_lock);
 		heights.clear();
 		gw = gh = 0;
+		_bump_height_gen();
 	}
 	need.clear();
 	target_lod.clear();
@@ -2422,6 +2465,7 @@ bool Landscape3D::rebuild() {
 		gw = new_gw;
 		gh = new_gh;
 		heights.resize(gw * gh);
+		_bump_height_gen();
 	}
 	int max_levels = 1;
 	while ((chunk_quads >> max_levels) >= 2 && max_levels < 8) {
@@ -2459,6 +2503,7 @@ bool Landscape3D::rebuild() {
 			}
 		}
 	}
+	_bump_height_gen(); // the heights filled in
 	const uint64_t t_src = OS::get_singleton()->get_ticks_usec();
 	WorkerThreadPool::GroupID g = pool->add_template_group_task(this, &Landscape3D::_measure_task, (void *)nullptr, cw * ch, -1, true, SNAME("Landscape3D"));
 	pool->wait_for_group_task_completion(g);
