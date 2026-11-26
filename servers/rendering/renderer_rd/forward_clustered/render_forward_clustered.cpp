@@ -591,7 +591,7 @@ void RenderForwardClustered::_render_list_template(RenderingDevice::DrawListID p
 		RID vertex_array_rd;
 		RID index_array_rd;
 		RID pipeline_rd;
-		const uint32_t ubershader_iterations = 2;
+		const uint32_t ubershader_iterations = _ubershaders_skipped() ? 1 : 2; // no ubershader variants on a CPU device
 		bool pipeline_valid = false;
 		while (pipeline_key.ubershader < ubershader_iterations) {
 			// Skeleton and blend shape.

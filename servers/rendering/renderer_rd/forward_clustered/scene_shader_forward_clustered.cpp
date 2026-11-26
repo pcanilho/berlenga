@@ -1009,6 +1009,24 @@ void SceneShaderForwardClustered::init(const String p_defines) {
 		dynamic_buffers.push_back(ShaderRD::DynamicBuffer::encode(RenderForwardClustered::RENDER_PASS_UNIFORM_SET, 2));
 		shader.initialize(shader_versions, p_defines, Vector<RD::PipelineImmutableSampler>(), dynamic_buffers);
 
+		if (RD::get_singleton()->get_device_type() == RenderingDeviceEnums::DEVICE_TYPE_CPU) {
+			// On a CPU device draws never use an ubershader (RenderForwardClustered: each waits for its specialised
+			// pipeline), so its ubershader variants are not compiled: half of every group a material compiles. The
+			// advanced group (enabled with TAA's motion vectors) compiles 20 variants for each of a landscape's 200
+			// or so materials on its first drawn frame; skipping the unused half saves about 0.5 GB there.
+			// The default material's SDF depth ubershader stays: SDFGI asks for it by name.
+			for (int i = 0; i < ShaderVersion::SHADER_VERSION_COLOR_PASS; i++) {
+				if (i != ShaderVersion::SHADER_VERSION_DEPTH_PASS_WITH_SDF) {
+					shader.set_variant_enabled(ShaderVersion::SHADER_VERSION_COLOR_PASS + i, false);
+				}
+			}
+			for (int i = 0; i < SHADER_COLOR_PASS_FLAG_COUNT; i++) {
+				if (i & SHADER_COLOR_PASS_FLAG_UBERSHADER) {
+					shader.set_variant_enabled(ShaderVersion::SHADER_VERSION_COLOR_PASS * 2 + i, false);
+				}
+			}
+		}
+
 		if (RendererCompositorRD::get_singleton()->is_xr_enabled()) {
 			shader.enable_group(SHADER_GROUP_MULTIVIEW);
 		}
