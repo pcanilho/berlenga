@@ -353,6 +353,7 @@ private:
 	bool detail_rivers = true; // ground detail on the river beds
 	bool ground_wear = true; // ground detail worn by game trails and turned by boar rooting (WorldStand)
 	bool frost_sorting = true; // frost-sorted circles and stripes of stones on cold, wet, gentle soil (WorldWeather climate)
+	bool block_fields = true; // frost-shattered block fields (felsenmeer) on cold, gentle, thin-soiled ground above the tree line
 	bool runoff_gravel = true; // a coarse lag in the terrain's rill and gully floors, fine grains on their fans
 	bool snow_burial = true; // stones under the snowpack are left out of the ground detail
 	float snow_check = 0.0f; // s to the next look at the pack over the laid cells
@@ -931,6 +932,24 @@ public:
 		rebuild();
 	}
 	real_t get_cliff_block_max_slope() const { return cliff_block_max_slope; }
+	void set_block_fields(bool p_enabled) {
+		if (block_fields == p_enabled) {
+			return;
+		}
+		block_fields = p_enabled;
+		rebuild();
+	}
+	bool is_block_fields() const { return block_fields; }
+	// The block field at a point: x the gate (0..1), y the block streams' stripe share there (1 on a stripe).
+	Vector2 get_block_field_at(const Vector3 &p_position) const;
+	struct BlockClimate {
+		bool on = false;
+		float maat = 99.0f, warm = 99.0f; // mean annual and warmest month air at the reference height, C
+		float lapse = 5.5f, lapse_warm = 5.5f; // K/km
+		float reference = 0.0f;
+	};
+	static void _block_climate(BlockClimate &r_climate);
+	float _block_gate(const TerrainGenerator3D *p_gen, const BlockClimate &p_climate, const Vector3 &p_at, float &r_slope_deg, Vector3 &r_fall) const;
 	void set_cliff_kit(bool p_enabled) {
 		cliff_kit = p_enabled;
 		_kit_reset(true);

@@ -1606,3 +1606,16 @@ while it is stale is built and not stored. `get_kit_stats()`: squares built and 
 box. Check (rocks bench cliff view): warm 17,456 squares loaded, none built, the same box hash; the cliff stage
 13.1 s cold to 3.7 s warm (10.9 s of kit building gone); a warm raster still byte-identical to one with the kit
 rebuilt.
+
+## Frost-shattered block fields, built (26 Nov)
+`block_fields` (on), in the scree layer's packing. Gate (`get_block_field_at`): periglacial cold (MAAT under -1 to
+-3 C at the point's height) and a tundra summer (warmest month under 11 to 8 C: Koeppen ET, the tree line's 6 to
+10 C) from the weather's climate; slopes under 20 to 26 degrees (Ballantyne 1998: blockfields only under about 25
+degrees, steeper is talus); thin regolith, the complement of the frost sorting's soil gates (deep, fine soil sorts
+into circles and stripes, thin or rocky ground stays blocks); no water, sand, sea or ice. Blocks 0.25 to 2 m, a power
+law (2.2), angular (the scree family), 85% cover, little sunk (openwork: resting on each other), leaning to 25
+degrees. On 4 to 20 degrees they gather in block streams, downslope stripes 8 m apart, long axes down the fall line
+and dipping upslope (imbrication; Boelhouwers and Sumner 2003). The climate joins the obstacle cache's key. Bench:
+`--world --uplift=0.5 --frost=-6 --view=scree --block-spot[=stream] --eye=1.7 --dist=10 --beyond=25`,
+`--no-block-fields` for the before frame. Not yet: a second tier of blocks perched on the first, far cover maps
+(the far tier's big blocks only), lichen-dark tops by age (the shared lichen terms apply as on other stones).
