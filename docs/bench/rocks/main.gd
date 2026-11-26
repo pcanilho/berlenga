@@ -88,6 +88,7 @@ extends Node3D
 #   --save-far-cover=p    with --world: save the far cover map (32 m texels to 4 km) and count its stony texels
 #   --frost[=C]           with --world: a cold, wet climate (mean annual air C, -4) so the ground sorts into stone
 #                         circles and stripes (RockField3D.frost_sorting); --no-frost for the before frame;
+#                         --frost-contract checks WorldGround.frost_sorted_at against get_frost_at (main + worker);
 #                         --frost-spot (flat soil: circles) or --frost-spot=stripes (4 to 9 degrees); --no-frost-ground
 #                         keeps the stones but not the material's silt centres and gravel lag (a before frame)
 #   --trail[=passes]      with --world: a game trail across the spot, 1.5 m before it (WorldStand.set_trails, 0.8 m wide,
@@ -841,6 +842,46 @@ func _world() -> void:
 					found_f = p
 		spot = found_f
 		print("frost spot ", spot, " (", tried, " points fully sorting)")
+	if args.has("frost-contract"):
+		# --frost-contract (with --frost): WorldGround.frost_sorted_at against RockField3D.get_frost_at over the world
+		# every 8 m and a 16 m square every 0.5 m round the first sorting point, on the main thread and from a
+		# worker; prints the worst difference.
+		var wg: WorldGround = WorldContracts.get_ground()
+		var pts: Array[Vector3] = []
+		var first := Vector3(INF, 0, 0)
+		for zz in range(-800, 801, 8):
+			for xx in range(-800, 801, 8):
+				pts.append(Vector3(xx, 0, zz))
+				if first.x == INF and rocks.get_frost_at(pts[-1]).y > 0.0:
+					first = pts[-1]
+		if first.x != INF:
+			for j in 33:
+				for i in 33:
+					pts.append(first + Vector3(i * 0.5 - 8.0, 0, j * 0.5 - 8.0))
+		var want: Array[Vector2] = []
+		var main_d := 0.0
+		var on := 0
+		for p in pts:
+			var a: Vector2 = rocks.get_frost_at(p)
+			want.append(a)
+			main_d = maxf(main_d, (wg.frost_sorted_at(p) - a).length())
+			on += 1 if a.x > 0.0 else 0
+		var got: Array = []
+		got.resize(pts.size())
+		var tid := WorkerThreadPool.add_group_task(func(k: int): got[k] = wg.frost_sorted_at(pts[k]), pts.size())
+		WorkerThreadPool.wait_for_group_task_completion(tid)
+		var worker_d := 0.0
+		for k in pts.size():
+			worker_d = maxf(worker_d, (got[k] - want[k]).length())
+		print("frost contract: %d/%d sorting, max diff main %.5f worker %.5f" % [on, pts.size(), main_d, worker_d])
+		if first.x != INF:
+			var fr := ""
+			for k in 9:
+				var q := first + Vector3(k * 0.5, 0, 0)
+				fr += " %.2f/%.2f" % [wg.frost_sorted_at(q).x, wg.frost_sorted_at(q).y]
+			print("frost contract from ", first, ":", fr)
+		get_tree().quit()
+		return
 	# --rain-climate=P: a mild climate of P mm a year (350 by default: dry, half-bare soil) on a WeatherMap3D, so bare soil
 	# carries stones on rain splash pedestals (RockField3D.rain_pedestals; --no-rain-pedestals off).
 	if args.has("rain-climate") and not args.has("frost"):

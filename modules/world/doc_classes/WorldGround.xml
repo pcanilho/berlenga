@@ -53,6 +53,13 @@
 				A stub's [method frost_at].
 			</description>
 		</method>
+		<method name="_frost_sorted_at" qualifiers="virtual const">
+			<return type="Vector2" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Override in a stub to replace [method frost_sorted_at].
+			</description>
+		</method>
 		<method name="_height_at" qualifiers="virtual const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
@@ -260,6 +267,13 @@
 			<param index="0" name="position" type="Vector3" />
 			<description>
 				Needle ice: its height (m) and the loose crumbs its thaw left (0 to 1). Default zero.
+			</description>
+		</method>
+		<method name="frost_sorted_at" qualifiers="const">
+			<return type="Vector2" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Frost-sorted patterned ground at [param position]'s xz: x the sorting's strength (0..1: cold, wet, gentle ground with soil deep enough), y the stone share of the pattern there (0 a fine centre, 1 a stone border). Circles on the flat, stripes down slopes from about 3 degrees. CPU placers (cover plants) keep off the borders and thin out on the churned centres, as grass does from the global [code]terrain_frost_map[/code] (r the strength, g the stone share). Produced by RockField3D ([member RockField3D.frost_sorting]); the strongest producer answers. (0, 0) with none. Thread-safe.
 			</description>
 		</method>
 		<method name="has_recess" qualifiers="const">

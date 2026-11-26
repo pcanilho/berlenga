@@ -232,6 +232,8 @@ func _ready() -> void:
 			await _run_percolation_tests()
 		elif only == "roofs":
 			await _run_roof_tests()
+		elif only == "surface":
+			await _run_surface_tests()
 		elif only == "walls":
 			await _run_wall_tests()
 		elif only == "stones":
@@ -1886,7 +1888,18 @@ func _run_surface_tests() -> void:
 	var hy: float = hit.position.y if hit else -99.0
 	# The print as it is now (its walls may have given way since, follow-up 54).
 	var now_y := d0 - surface.get_dent_at(p) + surface.get_rim_at(p)
-	_check("collision sits in the print", absf(hy - now_y) < 0.03 and now_y < d0 - 0.05, "ray hits %.3f m, surface %.3f m (pressed to %.3f m)" % [hy, now_y, d0 - dent])
+	# The collision heightfield samples the surface every two texels (_update_collision), so over a lumpy debris toe it
+	# lies within the surface's range round the point at that spacing, not on the point's own height.
+	var csp := 2.0 * surface.deform_extent / surface.deform_resolution
+	var c_lo := now_y
+	var c_hi := now_y
+	for zi in 9:
+		for xi in 9:
+			var cq := p + Vector3((xi - 4) * csp / 4.0, 0, (zi - 4) * csp / 4.0)
+			var cy_ := d0 - surface.get_dent_at(cq) + surface.get_rim_at(cq)
+			c_lo = minf(c_lo, cy_)
+			c_hi = maxf(c_hi, cy_)
+	_check("collision sits in the print", hy > c_lo - 0.03 and hy < c_hi + 0.03 and now_y < d0 - 0.05, "ray hits %.3f m, surface %.3f m (%.3f to %.3f within a collision cell; pressed to %.3f m)" % [hy, now_y, c_lo, c_hi, d0 - dent])
 
 	# A 25 kg ball (radius 0.25 m) dropped on the snow sinks by Bekker and rests in its own print.
 	var ball := RigidBody3D.new()

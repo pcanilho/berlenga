@@ -193,7 +193,10 @@ should show: half a texel 50 mm rms (30 mm wobble of the wall's mid-depth line),
 texels 15 mm (none). A wider ramp than two texels softens the wall for little more.
 
 So the edge width follows the print's depth at its centre (GroundDeformField::edge_width, the same in the GPU
-stamp): half a texel up to two texels deep, so boots and shallow prints stay crisp; rising to two texels by six
-texels deep; never past twice the footprint's inner half-width, so a narrow print still reaches full depth in its
-middle. Shallow prints are as before; deep trenches, ruts and furrows get straight walls at any angle.
-Snow bench: `--view=strata --trench-yaw=11 --strata-texel=0.0625`.
+stamp): half a texel up to two texels deep, so boots and shallow prints stay crisp; rising to one texel (a pixel's
+own box filter) by six texels deep; never past 2 inner - 1 texel, so a narrow print keeps a full-depth core a
+texel wide. Two texels was tried first (e453fcf9: wobble gone at mid-depth) but the snow's wall collapse, which
+reads faces texel by texel, kept re-cutting its own debris on the wider ramp (debris 1.18 instead of 1.25 of the
+wall's snow) and a narrow boot print came out shallow. At one texel the 0.7 m trench at 11 degrees wobbles 10 mm
+(from 30) at mid-depth; the snow surface's shader (65d0eab4) straightens the lip and foot it draws.
+Snow bench: `--view=strata --trench-yaw=11 --strata-texel=0.0625` (`--trench-probe`, TRENCH_LEVEL=0.1 for the lip).

@@ -2427,6 +2427,13 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 	// The climate's bare share (WorldContracts::climate_bare_share_at) on 32 m cells: it follows the climate map's
 	// slow change, the patches themselves come from bare_patch at each plant.
 	HashMap<Vector2i, float> bare_cells;
+	// The July mean on the same cells (WorldContracts::climate_july_at at the cell's ground), for the cover's cold stature.
+	HashMap<Vector2i, float> july_cells;
+	// Frost-sorted ground's producer (RockField3D), when one is registered.
+	const WorldGround *frost_ground = nullptr;
+	if (const LocalVector<WorldFrostSortedProvider *> *fl = WorldContracts::frost_sorted_providers_list(); fl && !fl->is_empty()) {
+		frost_ground = WorldContracts::ground();
+	}
 	const int species_count = p_setup.species.size();
 	const float ts = p_setup.tile_size;
 	const Rect2 &rect = p_setup.rect;
@@ -2824,9 +2831,23 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 						// Drylands: the climate's bare soil patches (WorldContracts::bare_patch), as the ground and sward.
 						const Vector2i bc(int(Math::floor(xz.x / 32.0f)), int(Math::floor(xz.y / 32.0f)));
 						const float *bp = bare_cells.getptr(bc);
-						const float bare_share = bp ? *bp : bare_cells.insert(bc, WorldContracts::climate_bare_share_at(Vector3((bc.x + 0.5f) * 32.0f, 0.0f, (bc.y + 0.5f) * 32.0f)))->value;
+						// (at the cell's ground: a cold summer's share follows the height, WorldContracts::bare_share_for_july)
+						const Vector3 bc3((bc.x + 0.5f) * 32.0f, 0.0f, (bc.y + 0.5f) * 32.0f);
+						const float bare_share = bp ? *bp : bare_cells.insert(bc, WorldContracts::climate_bare_share_at(Vector3(bc3.x, map ? map->get_height_at(bc3) : 0.0f, bc3.z)))->value;
 						if (bare_share > 0.0f && WorldContracts::bare_patch(p3, bare_share) > 0.5f) {
 							continue;
+						}
+					}
+					if (ps.bare_cover && climate_bare && suit > 0.0f && frost_ground) {
+						// Frost-sorted ground (WorldGround.frost_sorted_at: x the gate, y the stones' share): the churned fine
+						// centres stay almost bare, the plants keep to the margins against the stone borders (WorldContracts::
+						// sorted_keep, as GrassField3D's blades; docs/ideas/vegetation.md, "Cold summers and frost-sorted ground").
+						const Vector2 fs = frost_ground->frost_sorted_at(Vector3(xz.x, map ? map->get_height_at(p3) : 0.0f, xz.y));
+						if (fs.x > 0.0f) {
+							const float roll = float(hash_murmur3_one_float(xz.x, hash_murmur3_one_float(xz.y, uint32_t(p_setup.seed) ^ 0x66726f73u)) & 0xFFFFFF) / float(0x1000000);
+							if (roll >= Math::lerp(1.0f, WorldContracts::sorted_keep(float(fs.y)), float(fs.x))) {
+								continue;
+							}
 						}
 					}
 					bool hay_stalk = false;
@@ -3136,6 +3157,19 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 						if (age >= 0.0f) {
 							scale *= Math::lerp(0.1f, 1.0f, Math::smoothstep(0.0f, burn_years, age));
 						}
+					}
+					if (ps.bare_cover && climate_bare) {
+						// A cold summer keeps the cover low (the same rule as its cold bare share, WorldContracts::
+						// bare_share_for_july): tundra's plants grow a few centimetres high where July stays under 5 C,
+						// prostrate and cushion forms, rising to a full meadow's height by about 11 C (the Arctic
+						// bioclimate subzones' growth forms, Walker et al. 2005; Gould et al. 2003). As GrassField3D's blades.
+						const Vector2i bc(int(Math::floor(xz.x / 32.0f)), int(Math::floor(xz.y / 32.0f)));
+						const float *jp = july_cells.getptr(bc);
+						if (!jp) {
+							const Vector3 bc3((bc.x + 0.5f) * 32.0f, 0.0f, (bc.y + 0.5f) * 32.0f);
+							jp = &july_cells.insert(bc, WorldContracts::climate_july_at(Vector3(bc3.x, map ? map->get_height_at(bc3) : 0.0f, bc3.z)))->value;
+						}
+						scale *= WorldContracts::stature_for_july(*jp);
 					}
 					if (canopy_r > 0.0f) {
 						Crown crown = { xz, canopy_r * scale, sp->get_canopy_opacity(), ps.canopy_top * scale, sp->is_canopy_conifer() ? 1.0f : 0.0f, ps.stem_foot * scale, ps.canopy_base * scale };
@@ -5186,7 +5220,7 @@ void VegetationField3D::_cover_row(void *p_job, uint32_t p_row) {
 		// afar the ground shows the bare share between them (the patches' mean, as the terrain material draws it).
 		float a_cover = a_plants;
 		if (job.climate_bare) {
-			const float share = WorldContracts::climate_bare_share_at(p);
+			const float share = WorldContracts::climate_bare_share_at(Vector3(p.x, map ? map->get_height_at(p) : 0.0f, p.z)); // (the cold share follows the ground's height)
 			if (share > 0.0f) {
 				g *= 1.0f - share;
 				a_cover *= 1.0f - share;

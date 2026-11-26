@@ -73,7 +73,7 @@ class StaticBody3D;
 // river stones carry the rock of their headwaters. Each layer streams in square cells round the follow target (or
 // the camera) out to its radius; instances share one mesh per shape (MultiMesh), so one acceleration structure per
 // shape serves every stone of it.
-class RockField3D : public Node3D, public WorldCoverProvider, public WorldRecessProvider {
+class RockField3D : public Node3D, public WorldCoverProvider, public WorldRecessProvider, public WorldFrostSortedProvider {
 	GDCLASS(RockField3D, Node3D);
 
 public:
@@ -459,6 +459,7 @@ private:
 	// Frost-sorted patterned ground (docs/ideas/ground-detail.md, "Frost-sorted patterned ground"): the climate a
 	// detail job reads, from WorldWeather's season climate on the main thread.
 	void _frost_climate(const Rect2 &p_rect, FrostClimate &r_frost) const;
+	void _frost_climate_with(const TerrainGenerator3D *p_gen, const Rect2 &p_rect, FrostClimate &r_frost, bool p_any) const;
 	// The drawn ground's relief over the heightfield (WorldGround.relief_at: Landscape3D's cliff and bank relief), sampled
 	// on the main thread for a detail job: no tile is cut over it.
 	struct ReliefGrid {
@@ -1070,6 +1071,8 @@ public:
 	// WorldGround.recess_at: where the cliff kit's pillars stand, how far the drawn face steps back to stand behind
 	// them (x m along its horizontal outward normal) and the share (y). Thread-safe.
 	Vector2 contract_recess_at(const Vector3 &p_position) const override;
+	// WorldGround.frost_sorted_at: x the sorting's gate, y the stone share. Thread-safe.
+	Vector2 contract_frost_sorted_at(const Vector3 &p_position) const override;
 	Vector4 contract_recess_vector_at(const Vector3 &p_position) const override;
 	Vector2 _recess_query(const Vector3 &p_position, Vector3 *r_out) const;
 	void contract_recess_points(const Vector3 *p_points, int p_count, Vector2 *r_recess) const override;

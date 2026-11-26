@@ -155,16 +155,16 @@ public:
 		return MAX(base, p_reach * width);
 	}
 	// The width of a print's antialiased edge (docs/ideas/ground-deform.md, "Print edges off the grid"): the texel's
-	// coverage by the footprint is a linear ramp of the signed distance to its edge over this width. Half a texel
-	// keeps a shallow print crisp (and a boot two texels wide at full depth in the middle); a cut several texels
-	// deep widens to two texels, the support of the bilinear reconstruction the surface is drawn with, so a wall off
-	// the grid axis is a straight ramp and not a staircase of texel steps (the box-filtered edge of signed-distance
-	// rendering, Green 2007, widened to the reconstruction filter's support). Never past twice the footprint's
-	// inner half-width, so its middle still reaches full depth.
+	// coverage by the footprint is a linear ramp of the signed distance to its edge over this width, the box-filtered
+	// edge of signed-distance rendering (Green 2007). Half a texel keeps a shallow print crisp; a cut several texels
+	// deep widens to one texel, a pixel's own box filter, so a wall off the grid axis is a ramp and not a staircase of
+	// texel steps. Not wider: the wall collapse (SnowSurface3D::crumble) reads faces texel by texel, and a two-texel
+	// ramp kept re-cutting its own debris. Only where the footprint keeps a core a texel wide at full depth inside
+	// the edge (2 inner - 1 texel), so a boot, a narrow print, sinks as deep as before.
 	static float edge_width(float p_texel, float p_depth, float p_inner) {
 		const float x = CLAMP((p_depth - 2.0f * p_texel) / (4.0f * p_texel), 0.0f, 1.0f);
-		const float k = 0.5f + 1.5f * x * x * (3.0f - 2.0f * x);
-		return p_texel * MAX(MIN(k, 2.0f * p_inner / p_texel), 0.5f);
+		const float k = 0.5f + 0.5f * x * x * (3.0f - 2.0f * x);
+		return p_texel * MAX(MIN(k, 2.0f * p_inner / p_texel - 1.0f), 0.5f);
 	}
 	static float edge_inner(bool p_box, bool p_sole, Vector2 p_half, float p_radius) {
 		return p_box ? (p_sole ? 0.6f : 1.0f) * MIN(p_half.x, p_half.y) : p_radius;

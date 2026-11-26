@@ -3482,8 +3482,13 @@ void RockField3D::_sample_wear(const Rect2 &p_rect, StandWear &r_wear) const {
 
 // Main thread: the climate for the detail job (WorldWeather's season climate), and whether its cell can sort at all.
 void RockField3D::_frost_climate(const Rect2 &p_rect, FrostClimate &r_frost) const {
+	_frost_climate_with(_get_generator(), p_rect, r_frost, true);
+}
+
+// Any thread when p_gen comes from kit_generator: p_any false skips the cell test (a point query gates itself).
+void RockField3D::_frost_climate_with(const TerrainGenerator3D *p_gen, const Rect2 &p_rect, FrostClimate &r_frost, bool p_any) const {
 	r_frost = FrostClimate();
-	const TerrainGenerator3D *gen = _get_generator();
+	const TerrainGenerator3D *gen = p_gen;
 	WeatherSeason::Climate cl;
 	if (!frost_sorting || !gen || !WorldContracts::weather()->season_climate(cl)) {
 		return;
@@ -3498,7 +3503,7 @@ void RockField3D::_frost_climate(const Rect2 &p_rect, FrostClimate &r_frost) con
 		return;
 	}
 	rf_frost_build();
-	for (int k = 0; k < 9 && !r_frost.any; k++) {
+	for (int k = 0; k < 9 && p_any && !r_frost.any; k++) {
 		const Vector3 p(p_rect.position.x + (k % 3) * 0.5f * p_rect.size.x, 0, p_rect.position.y + (k / 3) * 0.5f * p_rect.size.y);
 		Vector3 n;
 		r_frost.any = _frost_gate(gen, r_frost, p, n) > 0.0f;
@@ -3754,6 +3759,33 @@ Vector2 RockField3D::get_frost_at(const Vector3 &p_position) const {
 	const float g = _frost_gate(gen, fc, p_position, n);
 	const float slope = Math::rad_to_deg(Math::acos(CLAMP(float(n.y), -1.0f, 1.0f)));
 	return Vector2(g, g > 0.0f ? rf_frost_share(gen, float(p_position.x), float(p_position.z), slope) : 0.0f);
+}
+
+// WorldGround.frost_sorted_at: the gate and the stone share at a point, for CPU placers (cover plants keep off the
+// stone borders as grass does from terrain_frost_map). Thread-safe: the generator comes from kit_generator.
+Vector2 RockField3D::contract_frost_sorted_at(const Vector3 &p_position) const {
+	if (!frost_sorting) {
+		return Vector2();
+	}
+	const TerrainGenerator3D *gen = Object::cast_to<TerrainGenerator3D>(ObjectDB::get_instance(kit_generator));
+	if (!gen && Thread::is_main_thread() && is_inside_tree()) {
+		gen = _get_generator();
+	}
+	if (!gen) {
+		return Vector2();
+	}
+	FrostClimate fc;
+	_frost_climate_with(gen, Rect2(p_position.x, p_position.z, 0, 0), fc, false);
+	if (!fc.on || fc.wet <= 0.0f) {
+		return Vector2();
+	}
+	Vector3 n;
+	const float g = _frost_gate(gen, fc, p_position, n);
+	if (g <= 0.0f) {
+		return Vector2();
+	}
+	const float slope = Math::rad_to_deg(Math::acos(CLAMP(float(n.y), -1.0f, 1.0f)));
+	return Vector2(g, rf_frost_share(gen, float(p_position.x), float(p_position.z), slope));
 }
 
 // Main thread: the relief over the rect, for the tiles (none is cut over relief: _rest seats each grain on it, a tile's
@@ -10725,6 +10757,7 @@ void RockField3D::_notification(int p_what) {
 		case NOTIFICATION_ENTER_TREE: {
 			WorldContracts::register_cover(this);
 			WorldContracts::register_recess(this);
+			WorldContracts::register_frost_sorted(this);
 			_kit_reset(true); // a landscape built before the field draws its recess now
 			// Before any node is ready, so the weather's first shelter bake finds the boulders.
 			if (wind_obstacles) {
@@ -10785,6 +10818,7 @@ void RockField3D::_notification(int p_what) {
 			}
 			WorldContracts::unregister_cover(this);
 			WorldContracts::unregister_recess(this);
+			WorldContracts::unregister_frost_sorted(this);
 			{
 				bool had = false;
 				{

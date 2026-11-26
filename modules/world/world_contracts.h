@@ -723,6 +723,17 @@ public:
 	virtual ~WorldRecessProvider() {}
 };
 
+// Frost-sorted patterned ground (docs/ideas/ground-detail.md, "Frost-sorted patterned ground"): where freeze-thaw
+// sorts stones from fines into circles and stripes. Produced by RockField3D (frost_sorting); read by CPU placers
+// (cover plants keep off the stone borders and the churned centres' edges as grass does from terrain_frost_map).
+class WorldFrostSortedProvider {
+public:
+	// At the point's xz: x the sorting's strength (0..1: the gate of cold, wet, gentle, deep soil), y the stone share
+	// of the pattern there (0 a fine centre .. 1 a stone border). (0, 0) where the producer does not sort. Thread-safe.
+	virtual Vector2 contract_frost_sorted_at(const Vector3 &p_position) const = 0;
+	virtual ~WorldFrostSortedProvider() {}
+};
+
 class WorldGround : public RefCounted {
 	GDCLASS(WorldGround, RefCounted);
 
@@ -756,6 +767,7 @@ protected:
 	GDVIRTUAL1RC(Color, _albedo_at, Vector3)
 	GDVIRTUAL1RC(Vector2, _relief_at, Vector3)
 	GDVIRTUAL1RC(Vector2, _recess_at, Vector3)
+	GDVIRTUAL1RC(Vector2, _frost_sorted_at, Vector3)
 	GDVIRTUAL1RC(Vector4, _recess_vector_at, Vector3)
 
 public:
@@ -812,6 +824,10 @@ public:
 	// The cliff kit's recess at a point of the drawn, unrecessed face (WorldRecessProvider): x depth m back along the
 	// face's horizontal outward normal, y share (0..1). (0, 0) with no producer. Thread-safe for the built-in producers.
 	Vector2 recess_at(const Vector3 &p_position) const;
+	// Frost-sorted ground at the point's xz (WorldFrostSortedProvider): x the sorting's strength (0..1), y the stone
+	// share (0 a fine centre .. 1 a stone border). (0, 0) with no producer; the strongest answers. Thread-safe for the
+	// built-in producers. GPU readers: terrain_frost_map (r the gate, g the stone share).
+	Vector2 frost_sorted_at(const Vector3 &p_position) const;
 	// The step back as a world offset (xyz: horizontal, along the pillar's outward normal, depth times share; w the
 	// share): what the drawn face adds to the point. Use this rather than moving along the face's own normal.
 	Vector4 recess_vector_at(const Vector3 &p_position) const;
@@ -951,6 +967,7 @@ class WorldContracts : public Object {
 	LocalVector<WorldGroundColorProvider *> ground_color_providers;
 	LocalVector<WorldReliefProvider *> relief_providers;
 	LocalVector<WorldRecessProvider *> recess_providers;
+	LocalVector<WorldFrostSortedProvider *> frost_sorted_providers;
 	LocalVector<WorldClimateProvider *> climate_providers;
 	LocalVector<WorldPlantColorProvider *> plant_color_providers;
 	Ref<WorldWater> builtin_water;
@@ -1006,7 +1023,26 @@ public:
 	// rangelands, Le Houerou 1984), so the bare share falls from 0.9 to 0 over 200 to 700 mm. One rule for every
 	// reader: the terrain material's soil colour (its shader mirrors it), the stones' rain splash pedestals.
 	static float bare_share_for_precipitation(float p_mm);
-	// At a point: the season climate's precipitation times the climate's factor there; -1 with no weather climate.
+	// The share of soil left bare by a cold summer (0..0.97), from the July mean air temperature: tundra's vascular cover
+	// follows summer warmth (the Circumpolar Arctic Vegetation Map's bioclimate subzones, Walker et al. 2005; their
+	// July means from the CAVM legend: cushion forbs 0 to 3 C, prostrate dwarf shrubs 3 to 5 C, hemiprostrate 5 to 7 C,
+	// erect dwarf shrubs 7 to 9 C, low shrubs 9 to 12 C), from a few percent of the ground in polar desert to a closed
+	// sward by about 11 C: cover 0.03 + 0.97 smoothstep(2, 11, July). Alpine belts follow the same warmth.
+	static float bare_share_for_july(float p_july_c);
+	// The July mean air temperature at a point from the season climate (its July value less the July lapse rate up
+	// from its reference height; p_position.y the ground's height, as the shaders' p.y); 99 with no weather climate.
+	static float climate_july_at(const Vector3 &p_position);
+	// The cover's height over its summer height for a July mean (0.3..1): the cold subzones' growth forms are prostrate
+	// and cushion plants a few centimetres high, erect dwarf shrubs and herbs at 7 to 9 C, a full sward by about 11 C
+	// (Walker et al. 2005; Gould et al. 2003): 0.3 + 0.7 smoothstep(3, 11, July); 1 with no climate (99).
+	static float stature_for_july(float p_july_c);
+	// On frost-sorted ground (WorldGround.frost_sorted_at's y, the stones' share): the share of cover plants kept, about a
+	// fiftieth on the churned fine centres and on the stones, a fifth on the margins between (D'Amico et al. 2015:
+	// "almost bare centers and better vegetated margins"). GLSL wc_sorted_keep the same.
+	static float sorted_keep(float p_stones);
+	// At a point (p_position.y the ground's height: the cold share follows it): the dry share (the season climate's precipitation times the
+	// climate's factor there) and the cold share (bare_share_for_july) together, 1 - (1 - dry)(1 - cold); -1 with no
+	// weather climate.
 	static float climate_bare_share_at(const Vector3 &p_position);
 	// The share of the plant cover on soil that is cured (dry, straw-coloured) through the dry season (0..1): annual and
 	// perennial grasses of semi-arid and Mediterranean climates senesce in the summer drought and stand as straw until
@@ -1034,7 +1070,8 @@ public:
 	static float bare_patch(const Vector3 &p_position, float p_share, float p_footprint = 0.0f);
 	static float climate_bare_patch_at(const Vector3 &p_position);
 	// GLSL of the same: wc_climate_bare(vec3 p) the share (0 with no climate; reads the globals terrain_climate_map,
-	// terrain_climate_rect and weather_climate, which the including shader declares) and wc_bare_patch(vec3 p, float
+	// terrain_climate_rect and weather_climate, which the including shader declares, and weather_climate_july, which
+	// this code declares; wc_climate_july(p) the July temperature, 99 with none) and wc_bare_patch(vec3 p, float
 	// share, float footprint_m) the pattern, fading to the share past a footprint of about half a metre.
 	static String climate_bare_shader_code();
 	// Terracettes: on steep grazed hillsides stock walk the slope across along the contours, and their paths settle into
@@ -1074,6 +1111,9 @@ public:
 	static void register_recess(WorldRecessProvider *p_provider); // any number: the deepest answers
 	static void unregister_recess(WorldRecessProvider *p_provider);
 	static const LocalVector<WorldRecessProvider *> *recess_providers_list() { return singleton ? &singleton->recess_providers : nullptr; }
+	static void register_frost_sorted(WorldFrostSortedProvider *p_provider); // any number: the strongest answers
+	static void unregister_frost_sorted(WorldFrostSortedProvider *p_provider);
+	static const LocalVector<WorldFrostSortedProvider *> *frost_sorted_providers_list() { return singleton ? &singleton->frost_sorted_providers : nullptr; }
 	static const LocalVector<WorldGroundColorProvider *> *ground_color_providers_list() { return singleton ? &singleton->ground_color_providers : nullptr; }
 	static void register_plant_color(WorldPlantColorProvider *p_provider); // any number: each lays its cover over the ground in turn
 	static void unregister_plant_color(WorldPlantColorProvider *p_provider);
