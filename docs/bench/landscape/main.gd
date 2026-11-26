@@ -956,7 +956,7 @@ func _ready() -> void:
 		await get_tree().process_frame
 		bw += 1
 		if bw % 10 == 0:
-			_log("far bake wait: %d frames, %d s" % [bw, (Time.get_ticks_msec() - tw) / 1000])
+			_log("far bake wait: %d frames, %d s, cover %s" % [bw, (Time.get_ticks_msec() - tw) / 1000, str(cover.get_stream_stats()) if cover != null else "none"])
 	get_viewport().disable_3d = false
 	_log("grass far colours baked and cover idle after %d frames" % bw)
 	_mem_log("after first frames")
