@@ -1339,7 +1339,26 @@ float WorldContracts::climate_bare_share_at(const Vector3 &p_position) {
 	if (!w || !w->season_climate(cl)) {
 		return -1.0f;
 	}
-	return bare_share_for_precipitation(cl.precipitation * climate_precipitation_factor_at(p_position));
+	const float dry = bare_share_for_precipitation(cl.precipitation * climate_precipitation_factor_at(p_position));
+	const float cold = bare_share_for_july(cl.temperature_july - cl.lapse_rate_july * (float(p_position.y) - cl.reference_height) * 0.001f);
+	return 1.0f - (1.0f - dry) * (1.0f - cold);
+}
+
+float WorldContracts::bare_share_for_july(float p_july_c) {
+	return 0.97f * (1.0f - Math::smoothstep(2.0f, 11.0f, p_july_c));
+}
+
+float WorldContracts::stature_for_july(float p_july_c) {
+	return 0.3f + 0.7f * Math::smoothstep(3.0f, 11.0f, p_july_c);
+}
+
+float WorldContracts::climate_july_at(const Vector3 &p_position) {
+	WeatherSeason::Climate cl;
+	const WorldWeather *w = weather();
+	if (!w || !w->season_climate(cl)) {
+		return 99.0f;
+	}
+	return cl.temperature_july - cl.lapse_rate_july * (float(p_position.y) - cl.reference_height) * 0.001f;
 }
 
 float WorldContracts::cured_share_for_precipitation(float p_mm) {
@@ -1553,10 +1572,29 @@ float wc_climate_mm(vec3 p) {
 	}
 	return mm;
 }
-// WorldContracts::bare_share_for_precipitation at p (0 with no climate).
+// WeatherMap3D's season climate in July: x July mean air temperature C at z (the reference height, m), y the July lapse
+// rate K/km, w 1 when set.
+global uniform vec4 weather_climate_july;
+// WorldContracts::climate_july_at: the July mean at p (p.y the ground's height), 99 with no climate.
+float wc_climate_july(vec3 p) {
+	return weather_climate_july.w > 0.0 ? weather_climate_july.x - weather_climate_july.y * (p.y - weather_climate_july.z) * 0.001 : 99.0;
+}
+// WorldContracts::climate_bare_share_at: the dry share (bare_share_for_precipitation) and the cold one
+// (bare_share_for_july) together (0 with no climate).
 float wc_climate_bare(vec3 p) {
 	float mm = wc_climate_mm(p);
-	return mm < 0.0 ? 0.0 : 0.9 * (1.0 - smoothstep(200.0, 700.0, mm));
+	float dry = mm < 0.0 ? 0.0 : 0.9 * (1.0 - smoothstep(200.0, 700.0, mm));
+	float cold = 0.97 * (1.0 - smoothstep(2.0, 11.0, wc_climate_july(p)));
+	return 1.0 - (1.0 - dry) * (1.0 - cold);
+}
+// WorldContracts::stature_for_july at p: the cover's height over its summer height (1 with no climate).
+float wc_climate_stature(vec3 p) {
+	return 0.3 + 0.7 * smoothstep(3.0, 11.0, wc_climate_july(p));
+}
+// On frost-sorted ground (RockField3D's terrain_frost_map, g the stones' share): the share of plants kept, about a
+// fiftieth on the churned fine centres and on the stones, a fifth on the margins between (WorldContracts::sorted_keep).
+float wc_sorted_keep(float stones) {
+	return 0.02 + 0.18 * smoothstep(0.15, 0.4, stones) * (1.0 - smoothstep(0.6, 0.85, stones));
 }
 // WorldContracts::cured_share_for_season from the weather's season (weather_climate y soil moisture, z temperature),
 // else cured_share_for_precipitation from the climate map (0 with neither).

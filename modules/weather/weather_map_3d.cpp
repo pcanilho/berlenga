@@ -1413,6 +1413,7 @@ void WeatherMap3D::_publish_globals() {
 	_set_global("weather_wind_info", Vector4(cur_wind_direction.x, cur_wind_direction.y, gust_sigma_scale, z0), RSE::GLOBAL_VAR_TYPE_VEC4);
 	_set_global("weather_ground_height", ground_height, RSE::GLOBAL_VAR_TYPE_FLOAT);
 	climate_published = Vector4();
+	july_published = Vector4();
 	_publish_season_global();
 	// Vortices added before this map was active (a dust devil spawned on ready) reach the shaders here.
 	if (vortices_unpublished) {
@@ -1492,7 +1493,15 @@ int WeatherMap3D::get_day_of_year() const {
 // 1 while published. Set again when the day (or the live anomaly) moves the season.
 void WeatherMap3D::_publish_season_global() {
 	const Dictionary s = get_season();
-	const Vector4 v(_season_climate().precipitation, float(s.get("soil_moisture", 1.0f)), float(s.get("temperature", 10.0f)), 1.0f);
+	const WeatherSeason::Climate cl = _season_climate();
+	// weather_climate_july: the July mean at the reference height and the July lapse rate, for the cold summer's bare
+	// share (WorldContracts::bare_share_for_july, wc_climate_july).
+	const Vector4 jul(cl.temperature_july, cl.lapse_rate_july, cl.reference_height, 1.0f);
+	if (!jul.is_equal_approx(july_published)) {
+		july_published = jul;
+		_set_global("weather_climate_july", jul, RSE::GLOBAL_VAR_TYPE_VEC4);
+	}
+	const Vector4 v(cl.precipitation, float(s.get("soil_moisture", 1.0f)), float(s.get("temperature", 10.0f)), 1.0f);
 	if (v.is_equal_approx(climate_published)) {
 		return;
 	}
@@ -1594,6 +1603,7 @@ void WeatherMap3D::_notification(int p_what) {
 				published_rects.clear();
 				if (publish_shader_globals && wind_texture.is_valid()) { // published with the maps (_publish_globals)
 					RenderingServer::get_singleton()->global_shader_parameter_set("weather_climate", Vector4());
+					RenderingServer::get_singleton()->global_shader_parameter_set("weather_climate_july", Vector4());
 				}
 			}
 			WorldContracts::unregister_weather(this);

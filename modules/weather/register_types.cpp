@@ -83,6 +83,7 @@ void initialize_weather_module(ModuleInitializationLevel p_level) {
 		{ "weather_dust_optics", "vec4" },
 		{ "weather_dust_albedo", "vec4" },
 		{ "weather_dust_near", "vec4" },
+		{ "weather_climate_july", "vec4" }, // WorldContracts::climate_bare_shader_code (wc_climate_july)
 	};
 	for (const auto &g : globals) {
 		Dictionary d;

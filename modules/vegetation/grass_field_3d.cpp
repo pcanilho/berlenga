@@ -571,7 +571,7 @@ void GrassField3D::_build_material() {
 	code += "uniform sampler2D mow_map : filter_nearest, repeat_disable, hint_default_black;\nuniform sampler2D mow_state : filter_nearest, repeat_disable, hint_default_black;\nuniform vec4 mow_rect;\n";
 	// Bare soil by the climate's dryness (WorldContracts::bare_patch, the terrain material's patches): no sward there.
 	// The terrain material module registers these globals.
-	code += "uniform bool climate_bare = true;\nglobal uniform sampler2D terrain_climate_map : hint_default_black, filter_linear;\nglobal uniform vec4 terrain_climate_rect;\nglobal uniform vec4 weather_climate;\n";
+	code += "uniform bool climate_bare = true;\nglobal uniform sampler2D terrain_climate_map : hint_default_black, filter_linear;\nglobal uniform vec4 terrain_climate_rect;\nglobal uniform vec4 weather_climate;\nglobal uniform sampler2D terrain_frost_map : hint_default_black, filter_linear;\nglobal uniform vec4 terrain_frost_rect;\n";
 	code += WorldContracts::climate_bare_shader_code();
 	code += WorldContracts::terracette_shader_code();
 	// The ground's terracette steps (WorldContracts::terracette_step): Landscape3D's share in terrain_bank_relief.y, gated
@@ -1253,11 +1253,29 @@ void vertex() {
 	// Drylands (climate_bare, WorldContracts::bare_patch): the sward grows in the clumps of cover, none on the bare soil
 	// between them, which the terrain material draws from the same pattern. The patch's edge is a few centimetres of
 	// the noise, so its blades thin out across it rather than stop on a line.
+	// A cold summer's share is bare too (WorldContracts::bare_share_for_july: tundra's open cover), and what grows
+	// there is low (stature_for_july, as VegetationField3D's cover plants).
 	if (climate_bare) {
 		float cb = wc_climate_bare(base_w);
 		if (cb > 0.0 && fract(rnd * 23.17) < wc_bare_patch(base_w, cb, 0.0)) {
 			h = 0.0;
 			w = 0.0;
+		}
+		h *= wc_climate_stature(base_w);
+		// Frost-sorted ground (RockField3D frost_sorting, terrain_frost_map: r the gate, g the stones' share): the
+		// fine centres are churned by frost heave every year and stay almost bare, the plants keep to the margins
+		// against the stone borders, and few of them (D'Amico et al. 2015, sorted circles in the Alps: "almost bare
+		// centers and better vegetated margins"). Kept at about a fiftieth on the centres and the stones, a fifth
+		// on the margins.
+		if (terrain_frost_rect.z > 0.0) {
+			vec2 fuv = (base_w.xz - terrain_frost_rect.xy) / terrain_frost_rect.zw;
+			if (all(greaterThanEqual(fuv, vec2(0.0))) && all(lessThanEqual(fuv, vec2(1.0)))) {
+				vec2 fr = textureLod(terrain_frost_map, fuv, 0.0).rg;
+				if (fr.x > 0.0 && fract(rnd * 31.71) >= mix(1.0, wc_sorted_keep(fr.y), fr.x)) {
+					h = 0.0;
+					w = 0.0;
+				}
+			}
 		}
 	}
 	// Hay meadows (docs/ideas/vegetation.md, "Mowing and hay rows"): mown to a stubble of 7.5 to 10 cm (UNH Extension,
@@ -4305,7 +4323,7 @@ void GrassField3D::_update_shell(const Vector2 &p_center, TerrainDataMap3D *p_ma
 		code += "uniform float season_height = 1.0; // The columns' height over their summer height (GrassField3D.season_height_for).\n";
 		code += "uniform vec2 shell_center;\nuniform vec4 shell_band; // x: where it is fully up, y: the band it rises over, z: where it is gone, w: the band it sinks over.\n";
 		// The climate code first: the turf (get_ground_shader_code()) cures by its wc_climate_cured.
-		code += "uniform bool climate_bare = true;\nglobal uniform sampler2D terrain_climate_map : hint_default_black, filter_linear;\nglobal uniform vec4 terrain_climate_rect;\nglobal uniform vec4 weather_climate;\n";
+		code += "uniform bool climate_bare = true;\nglobal uniform sampler2D terrain_climate_map : hint_default_black, filter_linear;\nglobal uniform vec4 terrain_climate_rect;\nglobal uniform vec4 weather_climate;\nglobal uniform sampler2D terrain_frost_map : hint_default_black, filter_linear;\nglobal uniform vec4 terrain_frost_rect;\n";
 		code += WorldContracts::climate_bare_shader_code();
 		code += get_ground_shader_code();
 		// Thin snow over the far sward, as on the blades (get_snow_sward_shader_code()).
@@ -4320,7 +4338,9 @@ void vertex() {
 	float grow_out = shell_band.w > 0.0 ? clamp((shell_band.z - d) / shell_band.w, 0.0, 1.0) : 1.0;
 	float g = grow_in * grow_out;
 	// UV2.x: the vertex's height over the ground; down under it where the shell is gone.
-	VERTEX.y += UV2.x * (g * season_height - 1.0) - 0.15 * (1.0 - g);
+	// A cold summer's low cover (wc_climate_stature, as the blades).
+	float st = climate_bare ? wc_climate_stature(wp) : 1.0;
+	VERTEX.y += UV2.x * (g * season_height * st - 1.0) - 0.15 * (1.0 - g);
 	v_wp = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
 }
 void fragment() {
@@ -4331,6 +4351,16 @@ void fragment() {
 		float cb = wc_climate_bare(v_wp);
 		if (cb > 0.0 && wc_bare_patch(v_wp, cb, 0.0) > 0.5) {
 			discard;
+		}
+		// Frost-sorted ground: as the blades, the columns only on the margins (wc_sorted_keep).
+		if (terrain_frost_rect.z > 0.0) {
+			vec2 fuv = (v_wp.xz - terrain_frost_rect.xy) / terrain_frost_rect.zw;
+			if (all(greaterThanEqual(fuv, vec2(0.0))) && all(lessThanEqual(fuv, vec2(1.0)))) {
+				vec2 fr = textureLod(terrain_frost_map, fuv, 0.0).rg;
+				if (fr.x * (1.0 - wc_sorted_keep(fr.y)) > 0.5) {
+					discard;
+				}
+			}
 		}
 	}
 	ALBEDO = grass_ground(v_wp, vec3(0.2, 0.16, 0.1)) * COLOR.r;

@@ -31,6 +31,8 @@ extends Node3D
 #   --drought        with --day: a dry climate (300 mm a year, falling in winter), for a summer drought; the sward and
 #                    plants keep off the climate's bare soil patches (climate_bare; env GRASS_BARE=0: they don't)
 #   --frost          with --day: a dry continental climate (January -8 C, July 18 C, little snow), for a hard frost
+#   --tundra[=C]     with --day: a cold, wet climate with a July mean of C (default 6) C at the ground: tundra's open, low
+#                    cover (WorldContracts::bare_share_for_july; env GRASS_BARE=0: the before frame)
 #   --pollen-cloud   a meadow in flower shedding pollen in a dry 10 m/s wind (PollenCloud3D; use --day=165, --frames)
 #   --river          river scout: a PhysXRiver3D down a valley with a floodplain; its flood mark
 #                    (WorldWater.high_water_at) lays wrack lines and combs the grass. Seen from the bank.
@@ -139,6 +141,7 @@ var grass: GrassField3D
 var season_day := 0
 var drought := false
 var frost := false
+var tundra := -99.0 # --tundra: the July mean, C (-99 off)
 var snowy := false
 var thin_snow := 0.0 # --thin-snow=D: a uniform fresh snowpack D m deep (100 kg/m3) on the snow globals, no SnowCover3D.
 var seed_down := false
@@ -411,6 +414,8 @@ func _ready() -> void:
 			flood = Vector2(float(fp[0]), float(fp[1]) if fp.size() > 1 else 10.0)
 		elif a.begins_with("--spp="): spp = int(a.substr(6))
 		elif a.begins_with("--frames="): frames = int(a.substr(9))
+		elif a == "--tundra": tundra = 6.0
+		elif a.begins_with("--tundra="): tundra = float(a.substr(9))
 		elif a.begins_with("--out="): out = a.substr(6)
 		elif a.begins_with("--clip="): clip = a.substr(7)
 		elif a.begins_with("--wind="):
@@ -433,6 +438,12 @@ func _ready() -> void:
 			rf.precipitation_seasonality = 0.9
 			rf.precipitation_peak_month = 6
 			season_map.climate = rf
+		if tundra > -90.0:
+			var rt := ClimateRecipe.new()
+			rt.temperature_january = tundra - 24.0
+			rt.temperature_july = tundra
+			rt.precipitation = 450.0
+			season_map.climate = rt
 		if snowy:
 			var rs := ClimateRecipe.new()
 			rs.temperature_january = -6.0

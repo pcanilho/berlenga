@@ -2330,3 +2330,32 @@ dimensions; not read).
   pattern, so their heights take WorldGround.relief_at(p, steps = false) and each blade and crop stem adds
   wc_terracette_step at its root in the vertex stage (filtered over 0.5 m as the near ground, gated by
   wc_terracette_soil). Before, the steps sampled at texel centres left blades up to about 0.37 m off the drawn ground.
+
+## Cold summers and frost-sorted ground
+
+Plant cover thinned only for dryness, so a cold climate (frost-sorted ground at a mean year of 0 to -3 C) still drew
+a closed, flowering meadow.
+
+- **Cover follows summer warmth.** The Circumpolar Arctic Vegetation Map divides the tundra into five bioclimate
+  subzones by July mean temperature and growth form (Walker et al. 2005; CAVM legend): cushion forbs 0 to 3 C,
+  prostrate dwarf shrubs 3 to 5 C, hemiprostrate dwarf shrubs 5 to 7 C, erect dwarf shrubs 7 to 9 C, low shrubs 9 to
+  12 C. Cover runs from a few percent in polar desert to closed tundra in the warmest subzone (Arctic Centre, Univ. of
+  Lapland: subzone A "sparse ... and bare ground", D "continuous tundra"). Gould et al. (2003) tie the growth forms to
+  the same July means. The cold share of bare soil is `0.97 (1 - smoothstep(2, 11, July))`; with the dry share it
+  makes `1 - (1 - dry)(1 - cold)`. It is one rule (`WorldContracts::bare_share_for_july`, GLSL `wc_climate_bare`), so
+  the ground's bare patches, the sward and the cover plants agree. Alpine belts follow the same warmth.
+- **Cover stays low.** Height over summer height is `0.3 + 0.7 smoothstep(3, 11, July)`
+  (`stature_for_july`, `wc_climate_stature`), applied to the blades, the far sward and the cover plants.
+- **Sorted circles.** The fine centres heave each winter and stay almost bare; plants keep to the margins against
+  the stone borders (D'Amico et al. 2015, Catena, sorted circles in the Alps: "almost bare centers and better
+  vegetated margins"). The sward reads RockField3D's `terrain_frost_map` (r gate, g stones' share) and keeps about
+  2% of the blades on centres and stones and 20% on the margins (`wc_sorted_keep`). Cover plants placed on the CPU
+  cannot read that map yet; they get only the cold share.
+- **July climate on the GPU.** WeatherMap3D publishes `weather_climate_july` (July mean at the reference height, July
+  lapse K/km, reference height, 1). `wc_climate_july(p)` lapses it to p.y, as RockField3D's frost gate does for its
+  mean year.
+
+Sources: [CAVM bioclimate subzones](https://data.arcticatlas.org/geodata/maps/cp/oldversions/cp_biozone_la.pdf);
+[Arctic Centre, bioclimatic subzones](https://arcticcentre.org/en/arctic-region/maps/bioclimatic-subzones/);
+[Gould et al. 2003, JGR 108(D2) 8167](https://www.geobotany.uaf.edu/library/pubs/GouldWA2003_jgr_108_8167.pdf);
+[D'Amico et al. 2015, Catena](https://iris.unito.it/retrieve/handle/2318/1522811/161168/D'Amico%20et%20al.,%202015%20Catena%20patterned%20ground%20Post%20Print_4aperto.pdf).

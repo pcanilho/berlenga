@@ -1006,7 +1006,22 @@ public:
 	// rangelands, Le Houerou 1984), so the bare share falls from 0.9 to 0 over 200 to 700 mm. One rule for every
 	// reader: the terrain material's soil colour (its shader mirrors it), the stones' rain splash pedestals.
 	static float bare_share_for_precipitation(float p_mm);
-	// At a point: the season climate's precipitation times the climate's factor there; -1 with no weather climate.
+	// The share of soil left bare by a cold summer (0..0.97), from the July mean air temperature: tundra's vascular cover
+	// follows summer warmth (the Circumpolar Arctic Vegetation Map's bioclimate subzones, Walker et al. 2005; their
+	// July means from the CAVM legend: cushion forbs 0 to 3 C, prostrate dwarf shrubs 3 to 5 C, hemiprostrate 5 to 7 C,
+	// erect dwarf shrubs 7 to 9 C, low shrubs 9 to 12 C), from a few percent of the ground in polar desert to a closed
+	// sward by about 11 C: cover 0.03 + 0.97 smoothstep(2, 11, July). Alpine belts follow the same warmth.
+	static float bare_share_for_july(float p_july_c);
+	// The July mean air temperature at a point from the season climate (its July value less the July lapse rate up
+	// from its reference height; p_position.y the ground's height, as the shaders' p.y); 99 with no weather climate.
+	static float climate_july_at(const Vector3 &p_position);
+	// The cover's height over its summer height for a July mean (0.3..1): the cold subzones' growth forms are prostrate
+	// and cushion plants a few centimetres high, erect dwarf shrubs and herbs at 7 to 9 C, a full sward by about 11 C
+	// (Walker et al. 2005; Gould et al. 2003): 0.3 + 0.7 smoothstep(3, 11, July); 1 with no climate (99).
+	static float stature_for_july(float p_july_c);
+	// At a point (p_position.y the ground's height: the cold share follows it): the dry share (the season climate's precipitation times the
+	// climate's factor there) and the cold share (bare_share_for_july) together, 1 - (1 - dry)(1 - cold); -1 with no
+	// weather climate.
 	static float climate_bare_share_at(const Vector3 &p_position);
 	// The share of the plant cover on soil that is cured (dry, straw-coloured) through the dry season (0..1): annual and
 	// perennial grasses of semi-arid and Mediterranean climates senesce in the summer drought and stand as straw until
@@ -1034,7 +1049,8 @@ public:
 	static float bare_patch(const Vector3 &p_position, float p_share, float p_footprint = 0.0f);
 	static float climate_bare_patch_at(const Vector3 &p_position);
 	// GLSL of the same: wc_climate_bare(vec3 p) the share (0 with no climate; reads the globals terrain_climate_map,
-	// terrain_climate_rect and weather_climate, which the including shader declares) and wc_bare_patch(vec3 p, float
+	// terrain_climate_rect and weather_climate, which the including shader declares, and weather_climate_july, which
+	// this code declares; wc_climate_july(p) the July temperature, 99 with none) and wc_bare_patch(vec3 p, float
 	// share, float footprint_m) the pattern, fading to the share past a footprint of about half a metre.
 	static String climate_bare_shader_code();
 	// Terracettes: on steep grazed hillsides stock walk the slope across along the contours, and their paths settle into
