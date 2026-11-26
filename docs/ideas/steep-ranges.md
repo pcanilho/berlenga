@@ -70,7 +70,15 @@ side bowl over a glacial trough that drops 316 m free off the lip, on three guid
 5. **A ring-basin bench at city scale.** A `--layout=ring` with guides (a raise ring, a valley basin, one hanging
    valley) at a larger world, to measure generation, memory and streaming cost before a game uses it.
 
-Recommended order: 5 (proves the scale), then 1 (the asked-for fall), then 3, 2, 4.
+## TODO (Paulo, 26 Nov: nothing yet, start the week of 30 Nov)
+
+- [ ] 5. City-scale ring-basin bench (cost, memory, streaming).
+- [ ] 1. Falls that start on the face: spring-line falls from the strata, tested snowmelt ribbons.
+- [ ] 3. Year-round caps (multi-year bake, firn) and drawn glaciers.
+- [ ] 2. Frozen falls in winter.
+- [ ] 4. Overhanging walls.
+
+Order as listed. Research is above; each item still goes through Paulo's pick before building.
 
 ## Sources
 
