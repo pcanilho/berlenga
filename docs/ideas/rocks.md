@@ -1578,4 +1578,20 @@ Agreed with terrain on 25 Nov.
   stand just proud of the ridges as before. All together: the cliff-foot bench, raster pair and a cloud PT frame.
 - **Cache.** `contract_recess_object()` is the field; its state is cliff_kit, cliff_recess, the cliff layer's
   on/density, cliff_block_max_slope and a rules version, bumped whenever `_kit_square` changes.
+- **Second pass (26 Nov), from the first frames with the landscape's recess.**
+  - Pillars are square joint-bounded prisms: four upright sides near square to the face, flat bed-joint tops, no
+    taper or lean (the stack family's pointed tops read as spikes).
+  - Each segment is set by the 3 m square nearest its root; before, a segment whose root fell between two squares'
+    planes was dropped by both, and the wall showed gaps.
+  - The skyline test read single grooves as the wall's edge and dropped half the pillars. Now each edge (top, foot,
+    sides) holds where the face beyond it stands within 1.5 m of the step back at two of three points (one of three
+    at the sides), and under the foot it must reach the step back itself (else the underside shows). The kit covers
+    55% of the steep face in the cliff-foot view, up from 31% (`--recess-probe` in the rocks bench).
+  - No pillar where the rock 2.5 m behind the step back is air: on a fin thinner than that the step back cut through
+    it and the far side's pillars hung in the sky. None on a fin's nose either.
+  - Pillars fill their segment's height (width up to 1.5 times the column's); scaled to the width, the segments of a
+    column left gaps.
+  - The contract gains `recess_vector_at(p) -> (offset xyz, share)`: the step back along the pillar's own normal.
+    Along the drawn face's normal the flanks of a flute moved sideways and the ridges stayed in front of the pillars.
+    Landscape3D uses it.
 

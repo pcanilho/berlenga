@@ -1166,6 +1166,8 @@ void WorldGround::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("recess_at", "position"), &WorldGround::recess_at);
 	ClassDB::bind_method(D_METHOD("has_recess"), &WorldGround::has_recess);
 	GDVIRTUAL_BIND(_recess_at, "position");
+	ClassDB::bind_method(D_METHOD("recess_vector_at", "position"), &WorldGround::recess_vector_at);
+	GDVIRTUAL_BIND(_recess_vector_at, "position");
 	ClassDB::bind_method(D_METHOD("notify_recess_changed", "box"), &WorldGround::notify_recess_changed);
 	ADD_SIGNAL(MethodInfo("recess_changed", PropertyInfo(Variant::AABB, "box")));
 	ClassDB::bind_method(D_METHOD("notify_relief_changed", "area"), &WorldGround::notify_relief_changed);
@@ -1644,6 +1646,30 @@ Vector2 WorldGround::recess_at(const Vector3 &p_position) const {
 			const Vector2 v = p->contract_recess_at(p_position);
 			if (Math::is_finite(v.x) && Math::is_finite(v.y) && v.x * v.y > best.x * best.y) {
 				best = Vector2(MAX(v.x, 0.0f), CLAMP(v.y, 0.0f, 1.0f));
+			}
+		}
+	}
+	return best;
+}
+
+Vector4 WorldGround::recess_vector_at(const Vector3 &p_position) const {
+	Vector4 r;
+	if (GDVIRTUAL_CALL(_recess_vector_at, p_position, r)) {
+		return r;
+	}
+	Vector4 best;
+	float best_len = 0.0f;
+	const LocalVector<WorldRecessProvider *> *list = WorldContracts::recess_providers_list();
+	if (list) {
+		for (const WorldRecessProvider *p : *list) {
+			const Vector4 v = p->contract_recess_vector_at(p_position);
+			if (!Math::is_finite(v.x) || !Math::is_finite(v.y) || !Math::is_finite(v.z) || !Math::is_finite(v.w)) {
+				continue;
+			}
+			const float l = Vector3(v.x, v.y, v.z).length() + 0.001f * v.w;
+			if (l > best_len) {
+				best_len = l;
+				best = Vector4(v.x, v.y, v.z, CLAMP(v.w, 0.0f, 1.0f));
 			}
 		}
 	}

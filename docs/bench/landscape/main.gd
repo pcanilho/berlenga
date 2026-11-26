@@ -7846,6 +7846,33 @@ func _frost_sorted_cam() -> void:
 						bu = up
 			zz += 16.0
 		xx += 16.0
+	if args.has("fs-why") and rocks.has_method("get_frost_factors"):
+		# --fs-why: on the flat (under --fs-flat), which factor of the sorting gate closes it, over the same 16 m grid.
+		var n_flat := 0
+		var shut := {"cold": 0, "wet": 0, "water": 0, "talus": 0, "sand": 0, "sea": 0, "deep": 0, "soil": 0, "steep": 0}
+		var hsum := 0.0
+		var xw := wr.position.x + 100.0
+		while xw < wr.end.x - 100.0:
+			var zw := wr.position.y + 100.0
+			while zw < wr.end.y - 100.0:
+				var pw := Vector3(xw, 0, zw)
+				if rad_to_deg(atan(_slip_grad(pw).length())) < float(args.get("fs-flat", "2")):
+					var f: Dictionary = rocks.call("get_frost_factors", pw)
+					if not f.is_empty():
+						n_flat += 1
+						hsum += float(f["height"])
+						if float(f["cold"]) <= 0.0: shut["cold"] += 1
+						if float(f["wet"]) <= 0.0: shut["wet"] += 1
+						if float(f["water"]) > 0.03: shut["water"] += 1
+						if float(f["talus"]) > 0.25: shut["talus"] += 1
+						if float(f["sand"]) > 0.05: shut["sand"] += 1
+						if bool(f["sea"]): shut["sea"] += 1
+						if float(f["soil_depth"]) <= 0.1: shut["deep"] += 1
+						if float(f["rock_exposure"]) >= 0.7: shut["soil"] += 1
+						if float(f["slope"]) >= 15.0: shut["steep"] += 1
+				zw += 16.0
+			xw += 16.0
+		_log("frost why: %d flat points, mean height %.0f m; shut by %s" % [n_flat, hsum / maxi(n_flat, 1), str(shut)])
 	if best < 0.0 and bfg > fmin and bf != Vector3.INF:
 		# No spot with its whole 15 m ring sorted (small patches): the strongest flat point, looking up its steepest rise.
 		var rise2 := -INF

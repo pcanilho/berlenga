@@ -987,6 +987,7 @@ public:
 	PackedVector4Array get_pedestal_spots(const Rect2 &p_rect, real_t p_step = 2.0, int p_max_count = 64) const;
 	bool is_frost_sorting() const { return frost_sorting; }
 	// How strongly the ground sorts at a point (0..1), and its stone share there (x: gate, y: share), for benches.
+	Dictionary get_frost_factors(const Vector3 &p_position) const;
 	Vector2 get_frost_at(const Vector3 &p_position) const;
 	void set_ground_wear(bool p_enabled);
 	bool is_ground_wear() const { return ground_wear; }
@@ -1069,6 +1070,8 @@ public:
 	// WorldGround.recess_at: where the cliff kit's pillars stand, how far the drawn face steps back to stand behind
 	// them (x m along its horizontal outward normal) and the share (y). Thread-safe.
 	Vector2 contract_recess_at(const Vector3 &p_position) const override;
+	Vector4 contract_recess_vector_at(const Vector3 &p_position) const override;
+	Vector2 _recess_query(const Vector3 &p_position, Vector3 *r_out) const;
 	void contract_recess_points(const Vector3 *p_points, int p_count, Vector2 *r_recess) const override;
 	const Object *contract_recess_object() const override { return this; }
 	void contract_recess_state(void (*p_add)(void *p_user, const void *p_data, size_t p_size), void *p_user) const override;

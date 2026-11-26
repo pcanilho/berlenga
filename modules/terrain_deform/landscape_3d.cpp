@@ -709,14 +709,16 @@ Vector3 Landscape3D::_recessed(const Vector3 &p_c, const Vector3 &p_n, real_t p_
 	if (ml < 1e-4f) {
 		return p_c;
 	}
-	const Vector2 r = WorldContracts::ground()->recess_at(recess_xform.xform(p_c));
-	if (!(r.x > 0.0f) || !(r.y > 0.0f)) {
+	// Along the pillar's own outward normal (WorldGround.recess_vector_at), not the face's: on a fluted face the
+	// flanks' normals point sideways, and a step along them left the ridges standing in front of the pillars.
+	const Vector4 r = WorldContracts::ground()->recess_vector_at(recess_xform.xform(p_c));
+	if (!(r.w > 0.0f)) {
 		return p_c;
 	}
 	if (r_share) {
-		*r_share = r.y;
+		*r_share = r.w;
 	}
-	return p_c - Vector3(p_n.x / ml, 0.0, p_n.z / ml) * (real_t(r.x) * real_t(r.y) * p_keep);
+	return p_c + recess_xform.basis.xform_inv(Vector3(r.x, r.y, r.z)) * p_keep;
 }
 
 Vector3 Landscape3D::_cliff_point_framed(const Vector3 &p, real_t p_weight_scale, ReliefFrame &r_frame) const {

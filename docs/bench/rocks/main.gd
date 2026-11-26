@@ -21,6 +21,8 @@ extends Node3D
 #   --hide=Node[,Node...]  hide those children of the bench (A/B which object draws something)
 #   --lod-error=px        Landscape3D.lod_error
 #   --no-cliff-kit        RockField3D.cliff_kit off (the fluted walls bare of their pillars: a before frame)
+#   --recess-probe=cx,cz,half,step  print the share of the 45 degree and steeper face the cliff kit recesses there
+#   --pick=x0,y0,x1,y1    print the cliff layer's stones whose centre the saved frame shows in that pixel rectangle
 #   --no-cliff-recess     RockField3D.cliff_recess off (the pillars stand proud of the ridges; no recess published)
 #   --recess-stub=x,y,z,nx,nz,w,h,d  a WorldGround stub answering recess_at alone: a w by h box (m, up and across the
 #                         face) centred at x,y,z whose face (horizontal outward normal nx,nz) steps back d m, fading
@@ -151,6 +153,11 @@ class RecessBoxStub extends WorldGround:
 			return Vector2.ZERO
 		var share := clampf((half.x - v) / 0.5, 0.0, 1.0) * clampf((half.y - u) / 0.5, 0.0, 1.0)
 		return Vector2(depth, share)
+
+	func _recess_vector_at(p: Vector3) -> Vector4:
+		var r := _recess_at(p)
+		var off := -normal * r.x * r.y
+		return Vector4(off.x, off.y, off.z, r.y)
 
 
 class SwellStub extends WorldWater:
@@ -1281,8 +1288,35 @@ func _world() -> void:
 		if args.has("streaming"):
 			rocks.streaming = true # --streaming: the field streams and thins every frame as in play (stills draw every cell whole)
 		print("rocks: %d cells, %d stones in %d ms (shape libraries %.0f ms, %d library triangles)" % [built, rocks.get_stone_count(), Time.get_ticks_msec() - tb, rocks.get_last_library_msec(), rocks.get_library_triangle_count()])
+		if args.has("recess-probe"):
+			# --recess-probe=cx,cz,half,step: over that square, how much of the steep face the cliff kit recesses (WorldGround.recess_at at the unrecessed drawn face).
+			var rp: PackedStringArray = str(args["recess-probe"]).split(",")
+			var wg2: WorldGround = WorldContracts.get_ground()
+			var n_face := 0
+			var n_cov := 0
+			var dsum := 0.0
+			var hist := [0, 0, 0, 0, 0]
+			var zz3 := -float(rp[2])
+			while zz3 <= float(rp[2]):
+				var xx3 := -float(rp[2])
+				while xx3 <= float(rp[2]):
+					var q := Vector3(float(rp[0]) + xx3, 0, float(rp[1]) + zz3)
+					var sx := gen.get_height(q + Vector3(1, 0, 0)) - gen.get_height(q - Vector3(1, 0, 0))
+					var sz := gen.get_height(q + Vector3(0, 0, 1)) - gen.get_height(q - Vector3(0, 0, 1))
+					if rad_to_deg(atan(Vector2(sx, sz).length() / 2.0)) >= 45.0:
+						var h := gen.get_height(q)
+						q.y = h + wg2.relief_at(Vector3(q.x, h, q.z), true, false).x
+						n_face += 1
+						var r := wg2.recess_at(q)
+						if r.y > 0.0:
+							n_cov += 1
+							dsum += r.x * r.y
+							hist[mini(int(r.x * r.y), 4)] += 1
+					xx3 += float(rp[3])
+				zz3 += float(rp[3])
+			print("recess probe: %d face points, %d covered (%.0f%%), mean step %.2f m, by metre %s" % [n_face, n_cov, 100.0 * n_cov / maxi(n_face, 1), dsum / maxi(n_cov, 1), str(hist)])
 		if args.has("repetition"):
-			_repetition_audit(Rect2(spot.x - 120, spot.z - 120, 240, 240))
+			_repetition_audit(Rect2(spot_pos.x - 120, spot_pos.z - 120, 240, 240))
 		if rocks.far_radius > 0.0:
 			# The far tier: big stones and landmarks past each layer's radius, to far_radius (streaming is off here).
 			var tfar := Time.get_ticks_msec()
@@ -2039,7 +2073,7 @@ func _live_falls(spot: Vector3, land: Landscape3D) -> void:
 	land.load_all_heights()
 	rocks.collision_enabled = true
 	rocks.rebuild()
-	rocks.build_area(Rect2(spot.x - 120, spot.z - 120, 240, 240))
+	rocks.build_area(Rect2(spot_pos.x - 120, spot_pos.z - 120, 240, 240))
 	breaking = true
 	var n := [0]
 	var cb := func(p: Vector3, m: float) -> void:
@@ -3500,6 +3534,15 @@ func _render_later() -> void:
 		if rd:
 			print("acceleration structures: %d MB" % [rd.get_memory_usage(RenderingDevice.MEMORY_ACCELERATION_STRUCTURES) >> 20])
 			print(rd.get_driver_and_device_memory_report())
+	if args.has("pick"):
+		# --pick=x0,y0,x1,y1: the cliff layer's stones whose centre the frame shows in that pixel rectangle.
+		var pk: PackedStringArray = str(args["pick"]).split(",")
+		var pr := Rect2(float(pk[0]), float(pk[1]), float(pk[2]) - float(pk[0]), float(pk[3]) - float(pk[1]))
+		var pcam := get_viewport().get_camera_3d()
+		for st in rocks.get_stones(RockField3D.LAYER_CLIFF, Rect2(spot_pos.x - 120, spot_pos.z - 120, 240, 240)):
+			var sp: Vector3 = st["position"]
+			if not pcam.is_position_behind(sp) and pr.has_point(pcam.unproject_position(sp)):
+				print("pick: ", st)
 	get_viewport().get_texture().get_image().save_png(out)
 	print("saved ", out)
 	get_tree().quit(0)

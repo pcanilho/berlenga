@@ -69,6 +69,13 @@
 				The far cover map the terrain reads as [code]rock_far_cover_map[/code]: 256 x 256 texels of 32 m centred on the target, rgb the stones' weathered colour, alpha their plan cover (rockfall blocks, glacial boulders on till and coarse river beds). Null while [member far_radius] is 0.
 			</description>
 		</method>
+		<method name="get_frost_factors" qualifiers="const">
+			<return type="Dictionary" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				For tests: each factor of the frost sorting gate at [param position] (height, maat, cold, wet, water, talus, sand, soil_depth, rock_exposure, slope, sea, gate), so a bench can tell which one closes it. Empty with sorting off or no climate.
+			</description>
+		</method>
 		<method name="get_frost_at" qualifiers="const">
 			<return type="Vector2" />
 			<param index="0" name="position" type="Vector3" />

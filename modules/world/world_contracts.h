@@ -708,6 +708,10 @@ public:
 	// wall). (0, 0) where no pillar stands. Const and thread-safe (read from mesh workers, per vertex): a producer
 	// computes lazily under its own lock and caches.
 	virtual Vector2 contract_recess_at(const Vector3 &p_position) const = 0;
+	// The same as the step back itself: x y z the world offset that sets the point behind the pillar (horizontal, along
+	// the pillar's own outward normal, depth times share), w the share. Along the pillar's normal, not the drawn
+	// face's: on a fluted face the flanks' normals point sideways and a step along them leaves the ridges standing.
+	virtual Vector4 contract_recess_vector_at(const Vector3 &p_position) const { return Vector4(0, 0, 0, contract_recess_at(p_position).y); }
 	virtual void contract_recess_points(const Vector3 *p_points, int p_count, Vector2 *r_recess) const {
 		for (int i = 0; i < p_count; i++) {
 			r_recess[i] = contract_recess_at(p_points[i]);
@@ -752,6 +756,7 @@ protected:
 	GDVIRTUAL1RC(Color, _albedo_at, Vector3)
 	GDVIRTUAL1RC(Vector2, _relief_at, Vector3)
 	GDVIRTUAL1RC(Vector2, _recess_at, Vector3)
+	GDVIRTUAL1RC(Vector4, _recess_vector_at, Vector3)
 
 public:
 	bool has_provider() const { return provider != nullptr || get_script_instance() != nullptr; } // a script stub (set_*) counts
@@ -807,6 +812,9 @@ public:
 	// The cliff kit's recess at a point of the drawn, unrecessed face (WorldRecessProvider): x depth m back along the
 	// face's horizontal outward normal, y share (0..1). (0, 0) with no producer. Thread-safe for the built-in producers.
 	Vector2 recess_at(const Vector3 &p_position) const;
+	// The step back as a world offset (xyz: horizontal, along the pillar's outward normal, depth times share; w the
+	// share): what the drawn face adds to the point. Use this rather than moving along the face's own normal.
+	Vector4 recess_vector_at(const Vector3 &p_position) const;
 	void recess_points(const Vector3 *p_points, int p_count, Vector2 *r_recess) const;
 	bool has_recess() const;
 	// A recess producer reports that the recess changed within a world box (it came or went, its pillars' settings

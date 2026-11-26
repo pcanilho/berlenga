@@ -358,6 +358,9 @@ static real_t rf_height(const TerrainGenerator3D *p_gen, const Vector3 &p) {
 // The cliff kit's boxes (docs/ideas/rocks.md, "Cliff kit recess contract"): fixed by the world (hashes of world
 // positions, no cell's random state), so the pillars a cell lays and the recess a mesh worker reads agree.
 static const float RF_KIT_SQUARE = 8.0f;
+static float box_recess_probe(float p_tmean, float p_width) {
+	return p_tmean + 0.15f - CLAMP(0.35f * p_width, 0.5f, 1.1f); // the step back's plane (its least front)
+}
 struct KitBoxLess {
 	_FORCE_INLINE_ bool operator()(const RockField3D::KitBox &p_a, const RockField3D::KitBox &p_b) const {
 		return p_a.cid != p_b.cid ? p_a.cid < p_b.cid : (p_a.column != p_b.column ? p_a.column < p_b.column : p_a.segment < p_b.segment);
@@ -1646,9 +1649,10 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_cell_rect, uint32_t p_see
 						}
 					}
 					const Vector3 axes = lib->axes[var];
-					// Fills its segment and its column, less the open joints (segments meet with a little overlap: no
-					// dark slot between them).
-					const float sc = MIN(1.06f * tier / MAX(2.0f * axes.x, 0.05f), 1.05f * width / MAX(2.0f * axes.y, 0.05f));
+					// Fills its segment's height (segments meet with a little overlap: a gap between two of a column showed
+					// the recessed face and the upper one's underside), its width the column's or a little over it (the
+					// neighbours' sides interlock).
+					const float sc = MIN(1.06f * tier / MAX(2.0f * axes.x, 0.05f), 1.5f * width / MAX(2.0f * axes.y, 0.05f));
 					const float ext_up = float(axes.x * sc), ext_in = float(axes.z * sc);
 					// Its back buried behind the recessed face, however thin the shape.
 					const float pfront = cliff_recess ? MIN(b.front, b.recess + 2.0f * ext_in - 0.15f) : b.front;
@@ -3708,6 +3712,35 @@ float RockField3D::_frost_gate(const TerrainGenerator3D *p_gen, const FrostClima
 	const float flat = 1.0f - Math::smoothstep(10.0f, 15.0f, slope);
 	const float soil = 1.0f - Math::smoothstep(0.4f, 0.7f, float(p_gen->get_rock_exposure(at)));
 	return cold * p_frost.wet * flat * soil * deep;
+}
+
+// For tests: each factor of the sorting gate at a point (_frost_gate), so a bench can tell which one closes it.
+Dictionary RockField3D::get_frost_factors(const Vector3 &p_position) const {
+	Dictionary d;
+	const TerrainGenerator3D *gen = _get_generator();
+	FrostClimate fc;
+	_frost_climate(Rect2(p_position.x, p_position.z, 0, 0), fc);
+	if (!gen || !fc.on) {
+		return d;
+	}
+	const float h = float(rf_height(gen, p_position));
+	const Vector3 at(p_position.x, h, p_position.z);
+	const float maat = fc.maat - fc.lapse * (h - fc.reference) / 1000.0f;
+	const Vector3 n = ground_normal(gen, p_position.x, p_position.z, 4.0);
+	d["height"] = h;
+	d["maat"] = maat;
+	d["cold"] = Math::smoothstep(1.0f, -2.0f, maat);
+	d["wet"] = fc.wet;
+	d["water"] = gen->get_water_depth(at);
+	d["talus"] = gen->get_talus(at);
+	d["sand"] = gen->get_sand_depth_at(at);
+	d["soil_depth"] = gen->get_soil_depth(at);
+	d["rock_exposure"] = gen->get_rock_exposure(at);
+	d["slope"] = Math::rad_to_deg(Math::acos(CLAMP(float(n.y), -1.0f, 1.0f)));
+	d["sea"] = gen->has_sea_result() && h < float(gen->get_sea_level()) + 2.5f;
+	Vector3 nn;
+	d["gate"] = _frost_gate(gen, fc, p_position, nn);
+	return d;
 }
 
 Vector2 RockField3D::get_frost_at(const Vector3 &p_position) const {
@@ -10051,6 +10084,7 @@ void RockField3D::_kit_square(const TerrainGenerator3D *p_gen, const Vector2i &p
 		// a segment above and below it: neighbouring segments of a column then stand at much the same front, so none
 		// overhangs the one under it.
 		float tmax = -1e9f, tmin = 1e9f, tsum = 0.0f;
+		float tmid[3] = { 0.0f, 0.0f, 0.0f }; // across the segment's middle
 		int tn = 0;
 		bool off = false;
 		for (int a = -3; a <= 3 && !off; a++) {
@@ -10066,9 +10100,30 @@ void RockField3D::_kit_square(const TerrainGenerator3D *p_gen, const Vector2i &p
 				tmin = MIN(tmin, tq);
 				tsum += tq;
 				tn++;
+				if (a == 0) {
+					tmid[b2 + 1] = tq;
+				}
 			}
 		}
 		if (off) {
+			continue;
+		}
+		// Rock behind it: 2.5 m behind the step back the point must still lie inside the hill (the ground above it).
+		// On a fin thinner than that the step back cut through it, and the pillar on its far side stood in the air.
+		if (cliff_recess) {
+			int inside = 0;
+			for (int a = -1; a <= 1; a++) {
+				const Vector3 q = surface + cd.up * (0.8f * half_up * a) + kn * (box_recess_probe(tsum / float(tn), cd.width) - 2.5f);
+				const real_t hq = kit_h(q);
+				inside += (Math::is_finite(hq) && hq >= q.y + 0.3f) ? 1 : 0;
+			}
+			if (inside < 3) {
+				continue;
+			}
+		}
+		// Not on a fin's nose or a spire: there the face falls away on both sides of the segment, the plane fitted
+		// over a flute's width stands off it, and the step back would leave the pillar hanging in the air.
+		if (MAX(tmid[0], tmid[2]) < tmid[1] - 0.6f * half_along) {
 			continue;
 		}
 		KitBox box;
@@ -10092,12 +10147,26 @@ void RockField3D::_kit_square(const TerrainGenerator3D *p_gen, const Vector2i &p
 				continue;
 			}
 		}
-		// And the wall goes on past its top and sides (no segment above the skyline).
+		// And the wall goes on past its top, its foot and its sides: no segment above the skyline or hanging over
+		// air. Beyond each edge the face must stand no further behind the pillar's back than a joint's width and a
+		// bit, at two of three points along the edge at the top and the foot (a narrow spire's tip under a wide
+		// segment holds only its middle), at one of three at the sides (a groove there is no edge: the ridge beside
+		// it carries the wall on).
 		bool fits = true;
-		for (int e2 = 0; e2 < 3 && fits; e2++) {
-			const Vector3 q = surface + (e2 == 0 ? cd.up * half_up : cd.along * (e2 == 1 ? half_along : -half_along));
-			const real_t hq = kit_h(q);
-			fits = Math::is_finite(hq) && hq >= q.y - (e2 == 0 ? 0.25f * half_up : 0.6f * half_along);
+		const float back = box.recess - 1.5f;
+		for (int e2 = 0; e2 < 4 && fits; e2++) {
+			int held = 0;
+			for (int b3 = -1; b3 <= 1; b3++) {
+				const float side = e2 == 0 ? 1.0f : (e2 == 1 ? -1.0f : 0.0f);
+				const Vector3 q = e2 < 2 ? surface + cd.up * (side * (half_up + 0.5f)) + cd.along * (0.8f * half_along * b3)
+										 : surface + cd.along * ((e2 == 2 ? 1.0f : -1.0f) * (half_along + 0.5f)) + cd.up * (0.8f * half_up * b3);
+				const real_t hq = kit_h(q);
+				// (Under the foot the face must reach the recessed plane: behind it the pillar's underside shows.)
+				if (Math::is_finite(hq) && float(hq - q.y) * kn.y >= (e2 == 1 ? box.recess : back)) {
+					held++;
+				}
+			}
+			fits = held >= (e2 < 2 ? 2 : 1);
 		}
 		if (!fits) {
 			continue;
@@ -10165,6 +10234,17 @@ void RockField3D::_kit_reset(bool p_notify) {
 }
 
 Vector2 RockField3D::contract_recess_at(const Vector3 &p_position) const {
+	return _recess_query(p_position, nullptr);
+}
+
+Vector4 RockField3D::contract_recess_vector_at(const Vector3 &p_position) const {
+	Vector3 dir;
+	const Vector2 r = _recess_query(p_position, &dir);
+	const Vector3 off = -dir * (r.x * r.y);
+	return Vector4(off.x, off.y, off.z, r.y);
+}
+
+Vector2 RockField3D::_recess_query(const Vector3 &p_position, Vector3 *r_out) const {
 	if (!cliff_kit || !cliff_recess || !_layer_on(LAYER_CLIFF) || layer_density[LAYER_CLIFF] <= 0.0) {
 		return Vector2();
 	}
@@ -10236,6 +10316,9 @@ Vector2 RockField3D::contract_recess_at(const Vector3 &p_position) const {
 			if (score > best_score) {
 				best_score = score;
 				best = Vector2(depth, share);
+				if (r_out) {
+					*r_out = Vector3(a.out.x, 0.0f, a.out.z) / hn;
+				}
 			}
 		}
 	}
@@ -10873,6 +10956,7 @@ void RockField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_frost_sorting", "enabled"), &RockField3D::set_frost_sorting);
 	ClassDB::bind_method(D_METHOD("is_frost_sorting"), &RockField3D::is_frost_sorting);
 	ClassDB::bind_method(D_METHOD("get_frost_at", "position"), &RockField3D::get_frost_at);
+	ClassDB::bind_method(D_METHOD("get_frost_factors", "position"), &RockField3D::get_frost_factors);
 	ClassDB::bind_method(D_METHOD("is_ground_wear"), &RockField3D::is_ground_wear);
 	ClassDB::bind_method(D_METHOD("set_ground_detail_tiles", "enabled"), &RockField3D::set_ground_detail_tiles);
 	ClassDB::bind_method(D_METHOD("is_ground_detail_tiles"), &RockField3D::is_ground_detail_tiles);

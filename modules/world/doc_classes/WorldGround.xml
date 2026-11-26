@@ -95,6 +95,13 @@
 				Override in a stub to replace [method recess_at] (a bench recessing a test box on a cliff).
 			</description>
 		</method>
+		<method name="_recess_vector_at" qualifiers="virtual const">
+			<return type="Vector4" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Override in a stub to replace [method recess_vector_at].
+			</description>
+		</method>
 		<method name="_rim_at" qualifiers="virtual const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
@@ -280,6 +287,13 @@
 			<param index="0" name="position" type="Vector3" />
 			<description>
 				The cliff kit's recess at [param position], a point of the drawn, unrecessed face (world space): x how far the face steps back (m, 0 or more) along its horizontal outward normal to stand behind the rock pillar there, y the share (0..1: 1 where the pillar's front covers the point, fading to 0 within the last 0.5 m of its outline where no neighbouring pillar continues the wall). The drawn relief mesh moves its vertices back by x times y, so the pillars are the visible wall (terrain sunk under cliff pieces, as in Far Cry 5's world generation); collision is left alone, the pillars carry their own. The deepest of all producers (RockField3D) answers. (0, 0) with none. Thread-safe.
+			</description>
+		</method>
+		<method name="recess_vector_at" qualifiers="const">
+			<return type="Vector4" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The cliff kit's recess at [param position] as a world offset: x y z what the drawn face adds to the point (horizontal, along the pillar's own outward normal, depth times share), w the share. Prefer it to [method recess_at] with the face's own normal: on a fluted face the flanks' normals point sideways, and a step along them leaves the ridges standing in front of the pillars. Zero with no producer. Thread-safe.
 			</description>
 		</method>
 		<method name="relief_at" qualifiers="const">
