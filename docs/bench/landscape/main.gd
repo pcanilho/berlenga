@@ -1057,6 +1057,15 @@ func _ready() -> void:
 	if args.has("sea-effect"):
 		await _sea_effect()
 	await _docs_links_setup()
+	if args.has("ped-burn") and veg != null and veg.has_method("get_stream_pending"):
+		# The pedestals' burn scar went in after the vegetation was built: its plants thin and shrink under it once
+		# the field has reprocessed the burnt cells (vegetation 201179c6).
+		var pbw := 0
+		await get_tree().process_frame
+		while int(veg.call("get_stream_pending")) > 0 and pbw < 1200:
+			await get_tree().process_frame
+			pbw += 1
+		_log("pedestal burn: vegetation settled after %d frames" % pbw)
 	# Raster: 160 frames, so the sky's reprojected clouds (one pixel of each 4x4 block a frame) have had ten
 	# samples a pixel; fewer leave the first frame's upsampled blocks and the march jitter in the picture
 	# (a game reaches that within a second or two of a cut).
