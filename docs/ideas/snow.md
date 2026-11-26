@@ -2406,3 +2406,12 @@ keeps the cover's own surface: hollows fill, knolls and lips stand out, as deep 
 (Veitinger et al. 2014). Only the catch map's shelter (roofs, overhangs, water) still leaves the ground under it bare.
 Thin relief is draped as before. The shader (snow_fill) and SnowSurface3D._cover_depth_at (surface heights, the
 deformation columns) agree.
+
+### Slush that reads wet (26 Nov 2026)
+
+The slush scout's pack was fully saturated (wet channel 2.0) and drawn grey, but as one even tone with no grain, and
+its pooled prints as dark bowls: it read as dry snow under a cloud. Water-filled pores scatter little (ice 1.31 against
+water 1.33), so saturated snow is darker and bluish (albedo 0.4-0.6; Warren 1982), and the water table reaches the
+surface unevenly, where the snow's micro-relief dips under it. Now: seeps a few decimetres across (a 0.6 m noise where
+the slush fills more than 85% of the depth), glassy and darker blue-grey; between them wet grains, rougher, keeping
+half the scan's grain; and the water standing in a print is level, a flat mirror of the sky over the bowl.

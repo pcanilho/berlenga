@@ -39,6 +39,7 @@ summary: "Rocks and stones as geometry, broken along each rock type's joints and
 
   *Shingle shore: before, scattered pebbles on bare sand; after, a band of gravel and small pebbles runs along the shore below the cobbles.*
 
+- **Block fields** (`RockField3D.block_fields`): frost-shattered angular blocks cover cold, gentle, thin-soiled ground above the tree line, open between them, and gather into block streams down slopes.
 - **Frost-sorted ground** (`RockField3D.frost_sorting`): on cold, wet, gentle soil, frost sorts the stones into circles round fine-soil centres, drawn out into stripes on slopes.
 - **Runoff gravel** (`RockField3D.runoff_gravel`): coarse lag gathers on gully floors and fine grains spread on the fans below.
 - **Rain splash pedestals** (`RockField3D.rain_pedestals`): on bare, rained-on soil, stones stand on little columns of the soil they shielded from the splash, and some topple off.

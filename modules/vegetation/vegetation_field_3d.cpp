@@ -6675,6 +6675,7 @@ void VegetationField3D::_stream_update(double p_delta) {
 	const Rect2 &rect = stream_setup.rect;
 	const int species_count = stream_setup.species.size();
 	bool busy = false;
+	uint32_t why = 0;
 
 	// Placed tiles back from the workers.
 	for (uint32_t i = 0; i < stream_jobs.size();) {
@@ -6935,6 +6936,7 @@ void VegetationField3D::_stream_update(double p_delta) {
 		}
 		if (OS::get_singleton()->get_ticks_usec() - t0 > budget) {
 			busy = true;
+			why |= 1;
 			break;
 		}
 	}
@@ -6970,6 +6972,7 @@ void VegetationField3D::_stream_update(double p_delta) {
 		}
 		missing.sort();
 		busy = busy || !missing.is_empty();
+		why |= missing.is_empty() ? 0 : 2;
 		for (uint32_t i = 0; i < missing.size() && int(stream_jobs.size()) < max_jobs; i++) {
 			StreamJob *job = memnew(StreamJob);
 			job->field = this;
@@ -6981,7 +6984,11 @@ void VegetationField3D::_stream_update(double p_delta) {
 		}
 	}
 	busy = busy || !stream_jobs.is_empty();
-	busy = _update_far_shell(centre, t0, budget) || busy;
+	why |= stream_jobs.is_empty() ? 0 : 4;
+	if (_update_far_shell(centre, t0, budget)) {
+		busy = true;
+		why |= 8;
+	}
 
 	// The maps (canopy, stand, floor, far colour), a couple of times a second at most.
 	stream_maps_wait -= p_delta;
@@ -6996,6 +7003,7 @@ void VegetationField3D::_stream_update(double p_delta) {
 	stream_frame_max_msec = MAX(stream_frame_max_msec, (OS::get_singleton()->get_ticks_usec() - t0) / 1000.0);
 	const bool was_idle = stream_idle;
 	stream_idle = !busy && !stream_maps_dirty && !stream_maps_job;
+	stream_busy_why = why | (stream_maps_dirty ? 16 : 0) | (stream_maps_job ? 32 : 0);
 	if (stream_idle && !was_idle) {
 		emit_signal(SNAME("populated"));
 	}
@@ -7058,6 +7066,7 @@ Dictionary VegetationField3D::get_stream_stats() {
 	d["jobs"] = stream_jobs.size();
 	d["frame_max_msec"] = stream_frame_max_msec;
 	d["publish_msec"] = stream_publish_msec;
+	d["busy"] = stream_busy_why;
 	stream_frame_max_msec = 0.0;
 	return d;
 }

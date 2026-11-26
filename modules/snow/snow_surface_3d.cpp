@@ -660,9 +660,13 @@ void fragment() {
 	vec2 road = snow_road(p);
 	float packed = clamp(road.x, 0.0, 1.0);
 	float polish = 1.0 - exp(-max(road.y, 0.0) / 0.3);
-	ALBEDO = tint * pack.g * (1.0 - 0.08 * compact) * mix(vec3(1.0), vec3(0.5, 0.56, 0.62), slush) * mix(1.0, 0.35, pool);
+	// Slush is not even: where the snow's micro-relief dips under the water table the water reaches the surface in
+	// patches a few decimetres across (seeps: glassy and darker, the grains drowned), between them wet grains, coarse,
+	// grey and blue-tinged, that still show their texture. A 0.6 m noise stands in for that relief.
+	float seep = slush * smoothstep(0.85, 1.0, share) * smoothstep(0.4, 0.7, snow_vnoise(vec3(p / 0.6, 3.0)));
+	ALBEDO = tint * pack.g * (1.0 - 0.08 * compact) * mix(vec3(1.0), vec3(0.5, 0.56, 0.62), slush) * mix(vec3(1.0), vec3(0.62, 0.7, 0.78), seep) * mix(1.0, 0.35, pool);
 	ALBEDO *= mix(vec3(1.0), vec3(0.86, 0.85, 0.83), packed) * mix(vec3(1.0), vec3(0.55, 0.6, 0.66), polish);
-	ROUGHNESS = mix(mix(clamp(mix(0.7, 0.35, wet) - 0.15 * compact, 0.05, 1.0), 0.08, slush), 0.02, pool);
+	ROUGHNESS = mix(mix(mix(clamp(mix(0.7, 0.35, wet) - 0.15 * compact, 0.05, 1.0), 0.2, slush), 0.03, seep), 0.02, pool);
 	ROUGHNESS = mix(mix(ROUGHNESS, 0.45, packed), 0.04, polish);
 	// The pack's grain and crust from the snow scan, the one the ground's snow draws (docs/ideas/scan-textures.md):
 	// its normal over the surface's and its roughness as a ratio round the pack's. Two samples, one turned 37
@@ -680,13 +684,19 @@ void fragment() {
 		vec2 g_n0 = textureGrad(snow_grain_normal, g_u0, g_dx, g_dy).xy * 2.0 - 1.0;
 		vec2 g_n1 = transpose(g_rot) * (textureGrad(snow_grain_normal, g_u1, g_rot * g_dx, g_rot * g_dy).xy * 2.0 - 1.0);
 		vec2 g_n = mix(g_n0, g_n1, g_k) * snow_grain_params.y;
-		float g_keep = (1.0 - compact) * (1.0 - slush) * (1.0 - pool) * (1.0 - polish) * smoothstep(0.35, 0.65, nf.y);
+		float g_keep = (1.0 - compact) * (1.0 - 0.5 * slush - 0.5 * seep) * (1.0 - pool) * (1.0 - polish) * smoothstep(0.35, 0.65, nf.y);
 		nf = normalize(nf + vec3(g_n.x, 0.0, g_n.y) * g_keep);
 		tn = vec3(dot(nf, fb_t), dot(nf, fb_b), dot(nf, fb_n));
 		if (snow_grain_params.z > 0.0) {
 			float g_r = mix(textureGrad(snow_grain_roughness, g_u0, g_dx, g_dy).g, textureGrad(snow_grain_roughness, g_u1, g_rot * g_dx, g_rot * g_dy).g, g_k) / snow_grain_params.z;
 			ROUGHNESS = clamp(ROUGHNESS * mix(1.0, g_r, g_keep * (1.0 - wet)), 0.02, 1.0);
 		}
+	}
+	// The water standing in a print is level: its face is the water table's, a flat mirror of the sky, not the
+	// print's bowl under it (a bowl's normal drew the pool as a dark dent).
+	if (pool > 0.0) {
+		nf = normalize(mix(nf, vec3(0.0, 1.0, 0.0), pool));
+		tn = vec3(dot(nf, fb_t), dot(nf, fb_b), dot(nf, fb_n));
 	}
 	// The pack's layers in the walls of ruts and prints (follow-up 53): a steep face at depth d under the
 	// untouched surface shows the band the cover's layers put there, as a snow pit's wall is read (Fierz et al.

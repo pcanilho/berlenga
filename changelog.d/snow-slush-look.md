@@ -1,0 +1,1 @@
+- Snow: saturated slush shows glassy blue-grey seeps between wet grains, and water stands level in prints.

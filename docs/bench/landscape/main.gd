@@ -574,9 +574,29 @@ func _ready() -> void:
 			# --storm-wind-turn=DEG: the wind turned DEG from toward the camera (90: across the view, a side-on tower
 			# with its anvil and cirrus shield spreading sideways).
 			weather.wind_direction = (-sf2).rotated(deg_to_rad(float(args["storm-wind-turn"])))
-		weather.add_storm(sp, float(args.get("storm-radius", "2500")), float(args.get("storm-rain", "40")), float(args.get("storm-outflow", "15")), 0.0)
-		weather.advance(float(args.get("storm-grow", "900")))
-		_log("storm approach: cell at %s, %.1f km ahead, wind toward the camera %s" % [str(sp.round()), skm, str(-sf2)])
+		# The cell rides the steering wind while it grows (WeatherMap3D.get_cloud_steering, some 10 to 25 m/s): added
+		# there, it stood behind the camera after 900 s. So it starts that far upwind and grows into place, the wind
+		# snapped to the settings first so the drift is the one measured.
+		weather.snap_to_settings()
+		var grow := float(args.get("storm-grow", "900"))
+		var steer: Vector2 = weather.get_cloud_steering()
+		var start := sp - steer * grow
+		weather.add_storm(start, float(args.get("storm-radius", "2500")), float(args.get("storm-rain", "40")), float(args.get("storm-outflow", "15")), 0.0)
+		weather.advance(grow)
+		_log("storm approach: cell at %s, %.1f km ahead, wind toward the camera %s; started %.1f km upwind (steering %.1f m/s)" % [str(sp.round()), skm, str(-sf2), start.distance_to(sp) / 1000.0, steer.length()])
+		# Where the grown cell stands now: the cloud base along the view (WeatherMap3D.get_cloud_base_at), every 2 km
+		# ahead; the storm's base sags under it (lowered toward the rain), so the dip marks the cell.
+		var c2 := Vector2(sc.global_position.x, sc.global_position.z)
+		var line := "storm approach: cloud base along the view (km ahead: m):"
+		for k in range(0, 31, 2):
+			var q := c2 + sf2 * k * 1000.0
+			line += " %d: %.0f," % [k, weather.get_cloud_base_at(Vector3(q.x, 0.0, q.y))]
+		_log(line + " %d storm(s)" % int(weather.get_storm_count()))
+		# Whether the frame holds it: the view's pitch and how far above the horizon its top edge and the cell's base are.
+		var pitch := rad_to_deg(asin(clampf(sf.y, -1.0, 1.0)))
+		var half_v := 0.5 * sc.fov
+		var base_el := rad_to_deg(atan2(weather.get_cloud_base_at(Vector3(sp.x, 0.0, sp.y)) - sc.global_position.y, skm * 1000.0))
+		_log("storm approach: view pitch %.1f deg, frame top %.1f deg above the horizon, the cell's base %.1f deg%s" % [pitch, pitch + half_v, base_el, "" if pitch + half_v > base_el + 3.0 else " (above the frame: raise --pitch)"])
 	if args.has("deer-lawn"):
 		# --deer-lawn[=P]: deer browse a disc --lawn-dist (25) m ahead of the camera, --lawn-radius (22) m, pressure P
 		# (0.9) through WorldStand.add_browse (cef8dbd7): grass grazes to a lawn there, bramble bitten at its edge,
@@ -589,6 +609,16 @@ func _ready() -> void:
 		var lpress := _arg_num("deer-lawn", 0.9)
 		WorldContracts.get_stand().add_browse(lp, float(args.get("lawn-radius", "22")), lpress)
 		_log("deer lawn at %s, browse %.2f there" % [str(lp.round()), WorldContracts.get_stand().browse_at(lp)])
+	if args.has("grazing") and not args.has("deer-lawn"):
+		# --grazing: the stock graze a disc round the camera (vegetation 7be13a0a: every grazing set keys off the
+		# WorldStand browse disc): --graze-radius (50) m centred --graze-dist (10) m ahead, pressure --graze-press (0.9).
+		var gcam: Camera3D = get_viewport().get_camera_3d()
+		var gf := -gcam.global_basis.z
+		gf.y = 0.0
+		var gp := gcam.global_position + gf.normalized() * float(args.get("graze-dist", "10"))
+		gp.y = height_at(gp.x, gp.z)
+		WorldContracts.get_stand().add_browse(gp, float(args.get("graze-radius", "50")), float(args.get("graze-press", "0.9")), 1.5)
+		_log("grazing disc at %s, browse %.2f there" % [str(gp.round()), WorldContracts.get_stand().browse_at(gp)])
 	if args.has("sand-vista") and "sand_sea_rect" in gen:
 		# --sand-vista: from the sand sea's edge (--vista-at, 0.12 of its width in) --vista-h (8) m up, looking across
 		# its middle to the far dunes, so the near ripples and the dune-scale tone far off share the frame.
@@ -946,7 +976,7 @@ func _ready() -> void:
 		await get_tree().process_frame
 		bw += 1
 		if bw % 10 == 0:
-			_log("far bake wait: %d frames, %d s" % [bw, (Time.get_ticks_msec() - tw) / 1000])
+			_log("far bake wait: %d frames, %d s, cover %s" % [bw, (Time.get_ticks_msec() - tw) / 1000, str(cover.get_stream_stats()) if cover != null else "none"])
 	get_viewport().disable_3d = false
 	_log("grass far colours baked and cover idle after %d frames" % bw)
 	_mem_log("after first frames")
@@ -1075,6 +1105,8 @@ func _ready() -> void:
 					await get_tree().process_frame
 					fw += 1
 				_log("frost sorted: stones laid round the camera (%d frames for the detail)" % fw)
+	if args.has("block-field"):
+		await _block_field_cam()
 	if args.has("walker-snow"):
 		await _walker_snow()
 	if args.has("lodging"):
@@ -7843,6 +7875,74 @@ func _lobster_net(n: Node3D) -> void:
 		mi.material_override = mat
 		n.add_child(mi)
 
+
+# --block-field: frost-shattered block fields (RockField3D.block_fields, rocks a3fdfc1a; cold, gentle, thin-soiled
+# ground, so a cold climate: --climate-shift=-10). On a 16 m grid, the point whose block-field gate is strong
+# (over --bf-min, 0.8) with --bf-ring (0.5) of that all round it (eight points --bf-ring-m, 10, m out; failing that the
+# strongest ring), on a --bf-min-deg..--bf-max-deg (4..20) slope over
+# 8 m, away from sand and the sea, block streams (the gate's stripe share) counting extra. The camera stands
+# --bf-back (14) m downslope, --bf-up (6) m above the ground, looking up the slope at the spot so the streams run
+# away from it; the rocks are laid again round it and its detail waited for.
+func _block_field_cam() -> void:
+	if rocks == null or not rocks.has_method("get_block_field_at"):
+		_log("block field: no RockField3D block fields")
+		return
+	var wr: Rect2 = gen.get_world_rect()
+	var bmin := float(args.get("bf-min", "0.8"))
+	var dmin := float(args.get("bf-min-deg", "4"))
+	var dmax := float(args.get("bf-max-deg", "20"))
+	var best := -INF
+	var bp := Vector3.INF
+	var gmax := 0.0
+	var n_gate := 0
+	var n_dry := 0
+	var n_slope := 0
+	var xx := wr.position.x + 100.0
+	while xx < wr.end.x - 100.0:
+		var zz := wr.position.y + 100.0
+		while zz < wr.end.y - 100.0:
+			var p := Vector3(xx, 0, zz)
+			var g: Vector2 = rocks.call("get_block_field_at", p)
+			gmax = maxf(gmax, g.x)
+			if g.x >= bmin:
+				n_gate += 1
+			if g.x >= bmin and gen.get_height(p) > gen.sea_level + 30.0 and gen.get_sand_depth_at(Vector3(xx, gen.get_height(p), zz)) <= 0.05:
+				n_dry += 1
+				var deg := rad_to_deg(atan(_fs_grad(p).length()))
+				if deg >= dmin and deg <= dmax:
+					n_slope += 1
+					var lo := 1.0
+					var stripe := g.y
+					for k in 8:
+						var q := p + Vector3(cos(TAU * k / 8.0), 0, sin(TAU * k / 8.0)) * float(args.get("bf-ring-m", "10"))
+						var gq: Vector2 = rocks.call("get_block_field_at", q)
+						lo = minf(lo, gq.x)
+						stripe += gq.y
+					# (no ring passing: the field round the point still ranks it, below every point whose ring passes)
+					var score := lo + 0.05 * stripe - (0.0 if lo >= bmin * float(args.get("bf-ring", "0.5")) else 2.0)
+					if score > best:
+						best = score
+						bp = Vector3(xx, gen.get_height(p), zz)
+			zz += 16.0
+		xx += 16.0
+	if bp == Vector3.INF:
+		_log("block field: none found (strongest gate %.2f; %d points over %.2f, %d of them dry and above the sea, %d on %.0f..%.0f deg)" % [gmax, n_gate, bmin, n_dry, n_slope, dmin, dmax])
+		return
+	var gr := _fs_grad(bp)
+	var down := Vector3(-gr.x, 0, -gr.y).normalized()
+	var cp := bp + down * float(args.get("bf-back", "14"))
+	cp.y = height_at(cp.x, cp.z) + float(args.get("bf-up", "6"))
+	var c3: Camera3D = get_viewport().get_camera_3d()
+	c3.fov = 55.0
+	c3.global_position = cp
+	c3.look_at(bp + Vector3.UP * float(args.get("bf-look-up", "0")))
+	_log("block field: spot %s (score %.2f, %.1f deg), camera %s" % [str(bp.round()), best, rad_to_deg(atan(gr.length())), str(cp.round())])
+	rocks.build_area(Rect2(cp.x - 40.0, cp.z - 40.0, 80.0, 80.0))
+	var w := 0
+	while rocks.has_method("get_ground_detail_pending") and int(rocks.get_ground_detail_pending()) > 0 and w < 1200:
+		await get_tree().process_frame
+		w += 1
+	_log("block field: rocks laid round the camera (%d frames for the detail)" % w)
 
 func _frost_sorted_cam() -> void:
 	# --frost-sorted: frost-sorted patterned ground (RockField3D frost_sorting, 94c5a825/1a8aff72). On a 16 m grid, the

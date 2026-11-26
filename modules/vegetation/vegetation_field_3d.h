@@ -620,6 +620,7 @@ private:
 	Vector2 stream_maps_centre = Vector2(1e30f, 1e30f);
 	bool stream_idle = false;
 	double stream_frame_max_msec = 0.0; // The slowest frame of _stream_update(), for the bench.
+	uint32_t stream_busy_why = 0; // Why the last _stream_update() was not idle, for the bench: 1 commits over budget, 2 missing tiles, 4 jobs, 8 far shell, 16 maps dirty, 32 maps job.
 	double stream_publish_msec = 0.0;
 	struct StreamMapsJob {
 		VegetationField3D *field = nullptr;
