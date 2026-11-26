@@ -1130,6 +1130,7 @@ public:
 	// in the northern hemisphere, by about 20 degrees over the sea and 30 over land, Holton 2004), then the
 	// free-air wind growing by wind_shear_aloft per km (the thermal wind). p_altitude: m above the ground.
 	Vector2 get_wind_aloft(Vector3 p_position, float p_altitude) const;
+	Vector2 get_cloud_steering() const;
 	void set_boundary_layer_height(float p_height) { boundary_layer_height = MAX(p_height, 50.0f); }
 	float get_boundary_layer_height() const { return boundary_layer_height; }
 	void set_wind_shear_aloft(float p_shear) { wind_shear_aloft = p_shear; }

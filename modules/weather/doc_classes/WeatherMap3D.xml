@@ -793,6 +793,12 @@
 				The last cloud shadow bake: the sun's transmittance over [member cloud_shadow_extent], in the plane of [member sun_light], sRGB encoded. The map gives it to that light as its projector.
 			</description>
 		</method>
+		<method name="get_cloud_steering" qualifiers="const">
+			<return type="Vector2" />
+			<description>
+				The wind the clouds and storm cells drift with now (x, z, m/s): the current wind lifted by the log law to about 1 km. A storm added at a point moves this far each second of weather time, so one meant to stand at a place after [method advance] is added that much upwind.
+			</description>
+		</method>
 		<method name="get_cloud_time" qualifiers="const">
 			<return type="float" />
 			<description>
