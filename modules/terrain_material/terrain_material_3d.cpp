@@ -2438,7 +2438,7 @@ void fragment() {
 			// The shared rule (WorldContracts::cliff_varnish_shader_code), which the cliff kit's wall pieces read too.
 			float vv = clamp(tm_varnish * wc_varnish(wp) * fw_face, 0.0, 1.0);
 			if (vv > 0.0) {
-				vec4 vf = wc_cliff_varnish(fw_p, wn, tm_fp0, fw_k, shade, vv, wc_cliff_above_foot(wp));
+				vec4 vf = wc_cliff_varnish(fw_p, wn, tm_fp0, fw_k, shade, 1.0 - smoothstep(0.45, 0.7, tm_macro_n.y), vv, wc_cliff_above_foot(wp));
 				albedo *= vf.rgb;
 				rough = mix(rough, rough * 0.85, vf.a);
 			}

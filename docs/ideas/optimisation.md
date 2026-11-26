@@ -655,3 +655,12 @@ sites of each callee's size); the remedy is one call site per heavy function.
   and was killed before saving. Two changes, both CPU device only: ubershader variants are no longer compiled (draws
   there never use them), and the heap is trimmed after a pipeline compile, at most once a second. The same view now
   holds at 12.2 GB through the capture. Raster frames are byte for byte the same.
+- Ground cover tiles (VegetationField3D streaming, a cloud meadow view that never settled): two thirds of a tile went
+  on the landscape's grid normals, read by relief_at for a plant's bank-edge search (16 directions, up to 20 steps 5 cm
+  apart, each read a tent of bilinear normals). Landscape3D now keeps the grid normals it works out outside a chunk
+  build in a small per-thread memo, each entry tagged with a generation that changes whenever the heights or spacing
+  do, so it only ever returns what working them out again would. A grazing meadow's cover settled in about 218 frames
+  instead of 524, the same plants, the frame byte for byte the same (both at --fixed-fps 30 with --min-settle=600, as
+  the grass sway and clouds otherwise follow the wall clock). The tiles still run one at a time on a four-core machine:
+  they are low-priority tasks, held to 30% of the workers. Raising the bench's low_priority_thread_ratio settles the
+  cover in 97 frames but lays the tiles in another order and moves a few pixels, so it is left as it was.

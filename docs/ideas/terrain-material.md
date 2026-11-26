@@ -563,8 +563,10 @@ orange-brown varnish sits low on the face, in the band the talus and soil keep m
   rule the stones (RockField3D) and the cliffs share; GLSL `wc_varnish(p)` from the climate map, else the weather's
   season climate. Zero with no climate, so wet worlds are unchanged.
 - **Shader (face weathering block, `tm_varnish`, 1 on):** a tint over the rock's own colour, never paint, so the
-  texture and cracks show through (path tracing keeps the detail): patina x(0.62, 0.56, 0.5); curtains x(0.13, 0.11,
-  0.1) as crisp drip stripes (tm_drip) 0.3 to 2.5 m wide from lips 30 m apart, running 12 to 45 m; iron x(0.85, 0.52,
+  texture and cracks show through (path tracing keeps the detail): patina x(0.62, 0.56, 0.5); curtains x(0.07, 0.06,
+  0.055), dark through their width, as crisp drip stripes (tm_drip) 0.5 to 6 m wide from lips 60 m apart, running 35
+  to 80 m (references: Canyonlands and Capitol Reef walls, NPS "Desert varnish", streaks most of the wall's height),
+  with thinner trickles 0.15 to 1.2 m between; iron x(0.85, 0.52,
   0.3) up to 1.5 to 4 m over the foot, fading out by 7 m. Lichen thins with it (it needs frequent wetting and its
   acids etch varnish). Shaded faces carry a third less curtain.
 - **Foot:** Landscape3D publishes `terrain_cliff_foot_map` (R half float, over `terrain_cliff_rect`): for each wall

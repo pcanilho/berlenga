@@ -1146,7 +1146,7 @@ public:
 	// so a piece and the wall round it carry the same film, curtains and iron band. Needs climate_bare_shader_code
 	// (wc_vn) before it, and the globals terrain_cliff_rect and terrain_cliff_foot_map declared by the includer.
 	// wc_drip(p, n, t, fp, seed, C, wmin, wmax): crisp drip stripes down a face (0..1 cover); wc_cliff_above_foot(p):
-	// metres over the wall's foot (1e3 off the map); wc_cliff_varnish(p, n, fp, k, shade, amount, above_foot): rgb the
+	// metres over the wall's foot (1e3 off the map); wc_cliff_varnish(p, n, fp, k, shade, wall, amount, above_foot): rgb the
 	// albedo factor, a the curtains' share (for the sheen).
 	static String cliff_varnish_shader_code();
 	// Terracettes: on steep grazed hillsides stock walk the slope across along the contours, and their paths settle into

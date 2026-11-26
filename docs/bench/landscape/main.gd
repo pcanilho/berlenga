@@ -969,7 +969,10 @@ func _ready() -> void:
 	var sw := 0
 	get_viewport().disable_3d = true # placing only: the frames draw nothing
 	var tw := Time.get_ticks_msec()
-	while cover != null and not cover.is_stream_idle() and sw < 1200:
+	# --min-settle=N: wait at least N frames here (A/B pictures: run godot with --fixed-fps so both sides draw at the
+	# same shader time whatever their streaming speed).
+	var min_settle := int(args.get("min-settle", "0"))
+	while cover != null and (not cover.is_stream_idle() or sw < min_settle) and sw < 1200:
 		await get_tree().process_frame
 		sw += 1
 		if sw % 10 == 0:
@@ -1353,7 +1356,10 @@ func _ready() -> void:
 			get_tree().paused = true
 			for kv in String(args.get("mat-pair-prop", "")).split(";", false):
 				var pv := kv.split(":")
-				landscape.material.set(pv[0], str_to_var(pv[1]))
+				if pv[0].begins_with("tm_"): # a shader uniform (tm_varnish:0 for the cliff varnish's before frame)
+					landscape.material.set_shader_parameter(pv[0], str_to_var(pv[1]))
+				else:
+					landscape.material.set(pv[0], str_to_var(pv[1]))
 			for i in int(args.get("mat-pair-frames", "12")):
 				await get_tree().process_frame
 			await RenderingServer.frame_post_draw

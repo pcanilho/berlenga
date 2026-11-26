@@ -1700,23 +1700,28 @@ float wc_cliff_above_foot(vec3 p) {
 // Desert varnish on a cliff face (Dorn and Oberlander 1981, Dorn 2009, Liu and Broecker 2000): a manganese and iron
 // oxide film laid over millennia on faces that dry out between rare wettings. Manganese-black curtains hang down a face
 // from where runoff pours over a ledge or the rim (Canyonlands' "tapestry" walls: stripes a fraction of a metre to
-// metres wide, tens of metres long, from lips about 30 m apart), over a thin patchy film on the whole face; iron
+// metres wide, tens of metres long, from lips about 60 m apart), over a thin patchy film on the whole face; iron
 // orange-brown low on the face, in the band the talus and soil keep moist. A tint over the rock's own colour, not
 // paint: the film is micrometres thick. p: the face point (world metres), n its normal, fp the pixel's footprint (m),
-// k the fine detail's weight (1 near, 0 far), shade 0 sunny .. 1 shaded (shaded faces stay damper), amount 0..1 (the
+// k the fine detail's weight (1 near, 0 far), shade 0 sunny .. 1 shaded (shaded faces stay damper), wall 0..1 how much
+// of a wall the face is (the curtains hang on walls, not the talus under them), amount 0..1 (the
 // climate's, wc_varnish, times the face's share), above_foot from wc_cliff_above_foot.
-vec4 wc_cliff_varnish(vec3 p, vec3 n, float fp, float k, float shade, float amount, float above_foot) {
+vec4 wc_cliff_varnish(vec3 p, vec3 n, float fp, float k, float shade, float wall, float amount, float above_foot) {
 	float vv = clamp(amount, 0.0, 1.0);
 	if (vv <= 0.0) {
 		return vec4(1.0, 1.0, 1.0, 0.0);
 	}
-	float v_sy = p.y + 6.0 * wc_vn(vec3(p.x / 25.0, 0.0, p.z / 25.0) + 41.0);
-	float v_band = floor(v_sy / 30.0);
-	float v_below = 30.0 * (1.0 - fract(v_sy / 30.0)); // metres under the pour-off lip
-	float v_run = 12.0 + 33.0 * wc_vn_hash(vec3(v_band, 83.0, 0.0));
-	float curtain = wc_drip(p, n, v_below / v_run, fp, v_band * 2.3 + 97.0, 3.0, 0.3, 2.5);
-	curtain *= smoothstep(0.25, 0.45, wc_vn(vec3(p.x / 9.0, v_band * 1.7, p.z / 9.0) + 23.0));
-	curtain *= 1.0 - 0.35 * shade;
+	// Curtains run from the lip most of the way down the wall (Canyonlands, Capitol Reef: tapestry streaks the height
+	// of the face), 0.5 to 6 m wide, near black against the pale rock, in groups where the rim sheds.
+	float v_sy = p.y + 10.0 * wc_vn(vec3(p.x / 40.0, 0.0, p.z / 40.0) + 41.0);
+	float v_band = floor(v_sy / 60.0);
+	float v_below = 60.0 * (1.0 - fract(v_sy / 60.0)); // metres under the pour-off lip
+	float v_run = 35.0 + 45.0 * wc_vn_hash(vec3(v_band, 83.0, 0.0));
+	float curtain = wc_drip(p, n, v_below / v_run, fp, v_band * 2.3 + 97.0, 7.0, 0.5, 6.0);
+	curtain = max(curtain, 0.7 * wc_drip(p, n, v_below / (0.6 * v_run), fp, v_band * 3.1 + 151.0, 2.5, 0.15, 1.2));
+	curtain *= smoothstep(0.2, 0.4, wc_vn(vec3(p.x / 18.0, v_band * 1.7, p.z / 18.0) + 23.0));
+	curtain = smoothstep(0.03, 0.35, curtain); // a curtain is dark through its width, not a faded wash
+	curtain *= (1.0 - 0.35 * shade) * wall; // walls, not the talus under them
 	float film = 0.5 + 0.5 * mix(0.5, wc_vn(p / 7.0 + 31.0), k);
 	float iron = clamp((1.0 - smoothstep(1.5 + 2.5 * wc_vn(vec3(p.x / 11.0, 0.0, p.z / 11.0) + 7.0), 7.0, above_foot)) * smoothstep(-0.5, 0.5, above_foot), 0.0, 1.0);
 	float v_n = mix(0.5, wc_vn(p * 0.7 + 13.0), k);
@@ -1724,7 +1729,7 @@ vec4 wc_cliff_varnish(vec3 p, vec3 n, float fp, float k, float shade, float amou
 	// orange-brown.
 	vec3 f = mix(vec3(1.0), vec3(0.62, 0.56, 0.5), vv * film * (1.0 - iron));
 	f *= mix(vec3(1.0), vec3(0.85, 0.52, 0.3) * (0.9 + 0.2 * v_n), vv * 0.75 * iron);
-	f *= mix(vec3(1.0), vec3(0.13, 0.11, 0.1) * (0.8 + 0.4 * v_n), vv * curtain * (1.0 - iron));
+	f *= mix(vec3(1.0), vec3(0.07, 0.06, 0.055) * (0.8 + 0.4 * v_n), vv * curtain * (1.0 - iron));
 	return vec4(f, vv * curtain * (1.0 - iron));
 }
 )";

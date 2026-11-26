@@ -3574,7 +3574,7 @@ void fragment() {
 			// Shaded as the terrain shades a face: by its insolation from the equator side (pole_direction the other way).
 			vec3 eq = -normalize(vec3(pole_direction.x, 0.0, pole_direction.z) + vec3(1e-5, 0.0, 0.0));
 			float shade_v = 1.0 - smoothstep(0.1, 0.7, clamp(dot(wn, normalize(eq * 0.64 + vec3(0.0, 0.77, 0.0))), 0.0, 1.0));
-			vec4 vf = wc_cliff_varnish(wp_v, wn, fp_v, 1.0 - smoothstep(0.15, 0.6, fp_v), shade_v, vv, wc_cliff_above_foot(wp_v));
+			vec4 vf = wc_cliff_varnish(wp_v, wn, fp_v, 1.0 - smoothstep(0.15, 0.6, fp_v), shade_v, 1.0 - smoothstep(0.45, 0.7, wn.y), vv, wc_cliff_above_foot(wp_v));
 			col *= vf.rgb;
 			rough = mix(rough, rough * 0.85, vf.a);
 			varnish_film = vf.a;
