@@ -1629,8 +1629,11 @@ and Williams, Karst Hydrogeology and Geomorphology (2007), ch. 5 (recharge, sink
   dried ends `"dry"`; the main stem starts again where a tributary or the spring water reaches it. A spring off every
   wet river gets a river of its own from the spring pool down the receivers to the first wet one (`resurgence` id,
   `spring_flow`), widths from w = a Q^0.5 as everywhere. A spring on a cell a river already runs through (a cave
-  mouth on its valley wall) gets a two-point outfall from the pool to the river's nearest point when it stands more
-  than half the river's width plus 1 m off it; its water is already in the river below. With no producer the list is the old one plus `swallet` and
+  mouth on its valley wall) gets an outfall from the pool to the river when it stands more than half the river's
+  width plus 1 m off it. The outfall runs down the ground's fall line (1 m steps along the downhill gradient over 4 m,
+  0.2 momentum) to the river's edge, as spring water does; a straight chord crossed the side slope, so the flat water
+  stood deep on one bank and dry on the other, read as a cascade its whole length and drew as hard white strips. Back
+  to the chord only if the fall line misses the river; its water is already in the river below. With no producer the list is the old one plus `swallet` and
   `resurgence` at -1. Waterfall and river-site indices refer to the list without karst.
 - **Rebuild.** `karst_changed` over the map lays the auto water again (one deferred rebuild per frame).
 - **Tests.** Generator alone: landscape bench `--karst-stub=auto --map=out.png` (or sx,sz,cap,rx,rz[,lag,base]): one

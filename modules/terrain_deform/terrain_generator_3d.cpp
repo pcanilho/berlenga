@@ -8865,6 +8865,59 @@ Array TerrainGenerator3D::_rivers(real_t p_min_area, bool p_cells, bool p_karst)
 // part months) and its own base flow. A reach left with no water is dry (the blind valley below a sink in the dry
 // months), so each river is cut into its wet runs; a spring off every river gets a river of its own down the drainage
 // to the first wet one. Heights and channels stay as they are: the dry valley keeps the channel the water cut.
+// A spring's outfall to the river below its mouth: water leaving a spring runs down the ground's fall line
+// (steepest descent, as the drainage itself is routed), so it lies in the hollow the slope gives it, level across,
+// instead of along a straight chord over a side slope. Steps of 1 m along the smoothed downhill gradient until it
+// reaches the river's edge, then the river's nearest point; a straight line if the fall line wanders off.
+PackedVector3Array TerrainGenerator3D::_outfall_path(const Vector3 &p_mouth, const PackedVector3Array &p_river, int p_a, int p_b, const PackedFloat32Array &p_widths) const {
+	auto nearest = [&](const Vector3 &p, real_t &r_d) -> int {
+		int best = p_a;
+		r_d = 1e30f;
+		for (int k = p_a; k <= p_b; k++) {
+			const real_t dd = Vector2(p_river[k].x - p.x, p_river[k].z - p.z).length();
+			if (dd < r_d) {
+				r_d = dd;
+				best = k;
+			}
+		}
+		return best;
+	};
+	real_t d0;
+	const int k0 = nearest(p_mouth, d0);
+	PackedVector3Array path;
+	path.push_back(p_mouth);
+	const real_t step = 1.0;
+	const real_t e = 2.0; // the gradient over 4 m, so the ground's fine grain does not steer it
+	Vector3 p = p_mouth;
+	Vector2 dir = Vector2(p_river[k0].x - p.x, p_river[k0].z - p.z).normalized();
+	bool reached = false;
+	const int max_steps = int(3.0 * d0 / step) + 20;
+	for (int i = 0; i < max_steps; i++) {
+		const real_t hx = get_height(Vector3(p.x + e, 0, p.z)) - get_height(Vector3(p.x - e, 0, p.z));
+		const real_t hz = get_height(Vector3(p.x, 0, p.z + e)) - get_height(Vector3(p.x, 0, p.z - e));
+		Vector2 down(-hx, -hz);
+		if (down.length() > 1e-4f) {
+			// Mostly the fall line, a little momentum so it does not zigzag across a flat.
+			dir = (down.normalized() * 0.8f + dir * 0.2f).normalized();
+		}
+		p = Vector3(p.x + dir.x * step, 0, p.z + dir.y * step);
+		p.y = get_height(p);
+		real_t dd;
+		const int k = nearest(p, dd);
+		const real_t half = 0.5f * (k < p_widths.size() ? real_t(p_widths[k]) : real_t(0.0));
+		if (dd <= half + 0.5f) {
+			path.push_back(p_river[k]);
+			reached = true;
+			break;
+		}
+		path.push_back(p);
+	}
+	if (!reached) {
+		return PackedVector3Array({ p_mouth, p_river[k0] });
+	}
+	return path;
+}
+
 Array TerrainGenerator3D::_karst_rivers(const Array &p_raw) const {
 	Array out;
 	const int n = nx * ny;
@@ -9108,7 +9161,7 @@ Array TerrainGenerator3D::_karst_rivers(const Array &p_raw) const {
 		int spring = -1;
 		LocalVector<int32_t> cells;
 		int joins = -1;
-		Vector3 outfall_to; // an outfall: straight from the spring to this point of the run it joins
+		PackedVector3Array outfall_points; // an outfall: down the fall line from the spring to the run it joins
 		bool outfall = false;
 	};
 	LocalVector<SpringRiver> spring_rivers;
@@ -9139,7 +9192,7 @@ Array TerrainGenerator3D::_karst_rivers(const Array &p_raw) const {
 				sr.cells.push_back(springs[q].cell);
 				sr.joins = *ri;
 				sr.outfall = true;
-				sr.outfall_to = pts[best];
+				sr.outfall_points = _outfall_path(rs[q].position, pts, run.a, run.b, ws);
 				spring_rivers.push_back(sr);
 			}
 			continue;
@@ -9217,10 +9270,17 @@ Array TerrainGenerator3D::_karst_rivers(const Array &p_raw) const {
 		if (sr.outfall) {
 			const double *dl = springs[sr.spring].delivered;
 			Dictionary o;
-			o["points"] = PackedVector3Array({ q.position, sr.outfall_to });
+			o["points"] = sr.outfall_points;
 			const float w = float(river_width_coefficient * Math::sqrt(dl[mi]));
-			o["widths"] = PackedFloat32Array({ w, w });
-			o["areas"] = PackedFloat32Array({ river_area[sr.cells[0]], river_area[sr.cells[0]] });
+			PackedFloat32Array ow, oa;
+			ow.resize(sr.outfall_points.size());
+			oa.resize(sr.outfall_points.size());
+			for (int k = 0; k < sr.outfall_points.size(); k++) {
+				ow.set(k, w);
+				oa.set(k, river_area[sr.cells[0]]);
+			}
+			o["widths"] = ow;
+			o["areas"] = oa;
 			o["discharge"] = dl[mi];
 			PackedFloat32Array monthly;
 			monthly.resize(12);

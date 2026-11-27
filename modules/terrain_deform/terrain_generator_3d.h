@@ -597,6 +597,7 @@ private:
 	void _notification(int p_what);
 	Vector3 _cell_position(int p_cell) const;
 	Array _rivers(real_t p_min_area, bool p_cells, bool p_karst = false) const;
+	PackedVector3Array _outfall_path(const Vector3 &p_mouth, const PackedVector3Array &p_river, int p_a, int p_b, const PackedFloat32Array &p_widths) const;
 	Array _karst_rivers(const Array &p_raw) const; // the rivers with the karst's sinks and springs (WorldCaves)
 	bool karst_rebuild_queued = false;
 	void _on_karst_changed(const Rect2 &p_rect);

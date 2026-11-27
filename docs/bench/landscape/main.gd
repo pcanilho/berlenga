@@ -8059,10 +8059,20 @@ func _karst_spring_cam() -> void:
 	c3.global_position = cp
 	c3.look_at(Vector3(la.x, height_at(la.x, la.z), la.z))
 	_log("karst spring: mouth %s, down (%.2f, %.2f), camera %s" % [str(m.round()), down.x, down.z, str(cp.round())])
+	# The spring's own river (the one starting nearest the mouth): its sections, for the outfall's water.
+	if args.has("ks-sections"):
+		for r in rivers:
+			if r is PhysXRiver3D and r.curve != null and r.curve.point_count > 0 and (r.global_transform * r.curve.get_point_position(0)).distance_to(m) < 30.0:
+				_log("karst spring river %s: %d sections, discharge %.3f" % [r.name, r.get_section_count(), r.discharge])
+				for i in mini(r.get_section_count(), 40):
+					var sc: Dictionary = r.get_section(i)
+					_log("  s %.1f w %.2f slope %.3f speed %.2f fr %.2f foam %.2f casc %s plunge %.2f" % [sc["s"], sc["width"], sc["slope"], sc["speed"], sc["froude"], sc["foam"], sc["cascade"], sc["plunge"]] + " depths " + str(sc["depths"]))
 	if rocks != null:
 		rocks.build_area(Rect2(cp.x - 50.0, cp.z - 50.0, 100.0, 100.0))
 		var w := 0
-		while rocks.has_method("get_ground_detail_pending") and int(rocks.get_ground_detail_pending()) > 0 and w < 1200:
+		# --ks-wait=N: frames to wait at most for the rocks' detail round the camera (1200; fewer on a slow renderer).
+		var wmax := int(args.get("ks-wait", "1200"))
+		while rocks.has_method("get_ground_detail_pending") and int(rocks.get_ground_detail_pending()) > 0 and w < wmax:
 			await get_tree().process_frame
 			w += 1
 
