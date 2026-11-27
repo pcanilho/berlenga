@@ -7657,17 +7657,26 @@ func _hut_icicles() -> void:
 	var inv := root.global_transform.affine_inverse()
 	var pts := PackedVector3Array()
 	var snowed := 0
-	for mi in root.find_children("*", "MeshInstance3D", true, false):
+	var at_hut: Array[Node] = root.find_children("*", "MeshInstance3D", true, false)
+	for pile in find_children("firewood_pile*", "Node3D", true, false):
+		at_hut.append_array(pile.find_children("*", "MeshInstance3D", true, false))
+	for mi in at_hut:
 		var m := mi as MeshInstance3D
-		if m.mesh == null or not String(m.name).begins_with("Hut"):
+		if m.mesh == null:
 			continue
+		# Everything at the hut takes the weather's snow (its roof, and the firewood piles' tin lids beside it).
 		for si in m.mesh.get_surface_count():
 			var mat := m.get_active_material(si)
 			if mat is BaseMaterial3D and "snow_enabled" in mat:
 				var mm := (mat as BaseMaterial3D).duplicate() as BaseMaterial3D
 				mm.set("snow_enabled", true)
-				m.set_surface_override_material(si, mm)
+				if m.material_override == mat:
+					m.material_override = mm # an override (the Tripo props') wins over the surface's
+				else:
+					m.set_surface_override_material(si, mm)
 				snowed += 1
+		if not String(m.name).begins_with("Hut"):
+			continue
 		var xf := inv * m.global_transform
 		for v in m.mesh.get_faces():
 			pts.append(xf * v)
