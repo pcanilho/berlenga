@@ -8126,6 +8126,8 @@ func _block_field_cam() -> void:
 	var n_dry := 0
 	var n_slope := 0
 	var n_rough := 0
+	var rough_min := INF
+	var rough_p := Vector3.INF
 	var xx := wr.position.x + 100.0
 	while xx < wr.end.x - 100.0:
 		var zz := wr.position.y + 100.0
@@ -8154,6 +8156,10 @@ func _block_field_cam() -> void:
 						rough = maxf(rough, absf(height_at(q.x, q.z) - (h0 + gp.x * (q.x - xx) + gp.y * (q.z - zz))))
 					if rough > float(args.get("bf-rough", "3")):
 						n_rough += 1
+						# (keep the least rough as a fallback, so a world with only rough fields still gets a frame)
+						if rough < rough_min:
+							rough_min = rough
+							rough_p = Vector3(xx, gen.get_height(p), zz)
 						zz += 16.0
 						continue
 					# (no ring passing: the field round the point still ranks it, below every point whose ring passes)
@@ -8163,6 +8169,9 @@ func _block_field_cam() -> void:
 						bp = Vector3(xx, gen.get_height(p), zz)
 			zz += 16.0
 		xx += 16.0
+	if bp == Vector3.INF and rough_p != Vector3.INF and args.get("bf-rough-fallback", "1") != "0":
+		_log("block field: every point too rough; taking the least rough (%.1f m off its plane) at %s" % [rough_min, str(rough_p.round())])
+		bp = rough_p
 	if bp == Vector3.INF:
 		_log("block field: none found (strongest gate %.2f; %d points over %.2f, %d of them dry and above the sea, %d on %.0f..%.0f deg, %d too rough)" % [gmax, n_gate, bmin, n_dry, n_slope, dmin, dmax, n_rough])
 		return
