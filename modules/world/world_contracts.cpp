@@ -3105,6 +3105,8 @@ void WorldContracts::_bind_methods() {
 	// A WorldExclusion3D came, went or changed over area (world x, z): placers lay what sits there again.
 	ADD_SIGNAL(MethodInfo("exclusions_changed", PropertyInfo(Variant::RECT2, "area")));
 	ClassDB::bind_static_method("WorldContracts", D_METHOD("climate_precipitation_factor_at", "position"), &WorldContracts::climate_precipitation_factor_at);
+	ClassDB::bind_static_method("WorldContracts", D_METHOD("varnish_at", "position"), &WorldContracts::varnish_at);
+	ClassDB::bind_static_method("WorldContracts", D_METHOD("varnish_for_precipitation", "mm"), &WorldContracts::varnish_for_precipitation);
 	ClassDB::bind_method(D_METHOD("set_weather", "stub"), &WorldContracts::set_weather);
 	ClassDB::bind_method(D_METHOD("get_weather"), &WorldContracts::get_weather);
 	ClassDB::bind_method(D_METHOD("set_ground", "stub"), &WorldContracts::set_ground);

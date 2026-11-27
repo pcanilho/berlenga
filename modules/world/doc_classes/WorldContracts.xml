@@ -127,6 +127,20 @@
 				Replaces the weather for every system with [param stub], a script extending [WorldWeather]; what it does not override still comes from the producer.
 			</description>
 		</method>
+		<method name="varnish_at" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Rock varnish (0..1) at the point from the weather's season climate and the climate's precipitation factor there ([method varnish_for_precipitation]); 0 with no climate.
+			</description>
+		</method>
+		<method name="varnish_for_precipitation" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="mm" type="float" />
+			<description>
+				Rock varnish (0..1) for a year's precipitation: none over 400 mm, full under 180 mm (Dorn 2009). The stones and the terrain's cliffs share it.
+			</description>
+		</method>
 	</methods>
 	<signals>
 		<signal name="exclusions_changed">

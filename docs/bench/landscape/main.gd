@@ -2429,6 +2429,10 @@ func _generate() -> void:
 	climate.temperature_january += float(args.get("climate-shift", "0"))
 	climate.temperature_july += float(args.get("climate-shift", "0"))
 	climate.precipitation = float(args.get("precip", "1100"))
+	# --wet-fraction=F: the share of the year's hours with precipitation (default 0.12). A desert has far fewer
+	# (about 0.02): the orographic part of the linear model scales with it, so a dry climate needs both.
+	if args.has("wet-fraction"):
+		climate.wet_fraction = float(args["wet-fraction"])
 	climate.wind_from = 190.0
 	gen.climate_recipe = climate
 	gen.river_month = int(args.get("month", "4")) # spring: the snowmelt flood
@@ -3958,6 +3962,13 @@ func _build_vegetation() -> void:
 	data_map.geology_source = data_map.get_path_to(gen)
 	data_map.climate_recipe = climate
 	data_map.baked.connect(func(): _log("data map baked (frame %d)" % Engine.get_process_frames()))
+	if args.has("varnish-probe"):
+		# --varnish-probe: the climate the cliff varnish reads at the look point (data map precipitation, the weather's
+		# varnish_at) once the data map's climate bakes.
+		data_map.climate_baked.connect(func():
+			var lp: PackedStringArray = str(args.get("look", "0,0,0")).split(",")
+			var q := Vector3(float(lp[0]), float(lp[1]), float(lp[2]))
+			_log("varnish probe at %s: data map precipitation %.0f mm, factor %.2f, varnish_at %.2f, recipe %.0f mm" % [str(q), data_map.get_precipitation_at(q), WorldContracts.climate_precipitation_factor_at(q), WorldContracts.varnish_at(q), climate.precipitation]))
 	data_map.climate_baked.connect(func(): _log("data map climate baked (frame %d)" % Engine.get_process_frames()))
 	data_map.bake()
 	if not data_map.has_climate():

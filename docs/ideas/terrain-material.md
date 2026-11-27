@@ -575,3 +575,7 @@ orange-brown varnish sits low on the face, in the band the talus and soil keep m
   faces went black with neon red and blue specks. Write `1.0 - smoothstep(e1, e0, x)`.
 - **Bench:** rocks bench `--world --world-size=1024 --view=cliff --cam=-16.4,97.5,8.4 --look=18,122,-14 --no-rocks
   --rain-climate=150`, and `--mat-prop=tm_varnish:0` for the before frame.
+- **Desert climate needs few wet hours:** the orographic part of the linear rain model (Smith and Barstad 2004) does
+  not scale with the recipe's precipitation, only with `ClimateRecipe.wet_fraction`. At the default 0.12 a windward wall
+  in a 60 mm climate still got 367 mm (no varnish); real deserts rain on about 2% of hours, and at 0.02 it gets 110 mm
+  (full varnish). Landscape bench: `--precip=60 --wet-fraction=0.02`; `--varnish-probe` logs the climate at `--look`.
