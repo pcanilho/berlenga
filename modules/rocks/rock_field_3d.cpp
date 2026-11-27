@@ -1444,16 +1444,21 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_cell_rect, uint32_t p_see
 			// outfall below, convex downstream, closer and smaller near the spring, each holding a pool behind it.
 			// Lumpy, pale limestone stones half sunk in their own deposit; the dams wet.
 			if (karst && !rf_far) {
+				// Each spring's deposit reaches some 30 m from its mouth: every cell it crosses lays its own share (the
+				// same seed in each, so the pieces meet).
 				LocalVector<WorldResurgence> springs;
-				contract_resurgences(p_rect, springs);
+				contract_resurgences(p_rect.grow(32.0), springs);
 				for (const WorldResurgence &sp : springs) {
-					RandomPCG trng(hash_murmur3_one_32(uint32_t(sp.id), uint32_t(p_seed) ^ 0x7f4au));
+					RandomPCG trng(hash_murmur3_one_32(uint32_t(sp.id), uint32_t(seed) ^ 0x7f4au));
 					Vector3 dir = Vector3(sp.direction.x, 0, sp.direction.z);
 					dir = dir.length() > 1e-3f ? dir.normalized() : Vector3(1, 0, 0);
 					const Vector3 across(-dir.z, 0, dir.x);
 					const real_t flow_yaw = Math::atan2(-dir.x, -dir.z);
 					const uint32_t key = _library_key(RockGenerator::ROCK_LIMESTONE, RockGenerator::FAMILY_TUFA, 0);
 					auto put = [&](const Vector3 &p_at, float p_size, float p_sink, float p_film, real_t p_yaw, real_t p_tilt) {
+						if (!p_rect.has_point(Vector2(p_at.x, p_at.z))) {
+							return;
+						}
 						Pending pd;
 						pd.xz = Vector3(p_at.x, 0, p_at.z);
 						pd.size = p_size;
@@ -1462,31 +1467,53 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_cell_rect, uint32_t p_see
 						pd.tilt_axis = across;
 						pd.tilt = p_tilt;
 						pd.sink = p_sink;
-						pd.follow = 0.8f;
+						pd.follow = 0.85f;
 						pd.film = p_film;
 						pending.push_back(pd);
 					};
-					// The mound: lumps round the back and sides of the mouth, set in their own deposit (a fifth of their height).
-					const int mound = 7 + int(trng.randf() * 5.0f);
-					for (int k = 0; k < mound; k++) {
-						const float a = float(Math::PI) * (0.35f + 1.3f * (float(k) + trng.randf()) / float(mound));
-						const Vector3 at = sp.position + (-dir * Math::cos(a) + across * Math::sin(a)) * (0.9f + 0.8f * trng.randf());
-						put(at, 0.45f + 0.5f * trng.randf(), 0.15f + 0.1f * trng.randf(), 0.3f, trng.randf() * Math::TAU, Math::deg_to_rad(10.0f) * trng.randf());
+					// The outfall: from the mouth toward the channel until it reaches the water (or 30 m).
+					float reach = 30.0f;
+					for (float d = 1.0f; d < 30.0f; d += 0.5f) {
+						if (gen->get_water_depth(sp.position + dir * d) > 0.05) {
+							reach = d;
+							break;
+						}
 					}
-					// The dams down the outfall: 3 to 6, each a row of lumps across the flow, bowed downstream.
-					const int dams = 3 + int(trng.randf() * 4.0f);
-					float along = 1.2f;
-					for (int k = 0; k < dams; k++) {
-						along += 0.9f + 0.5f * float(k) + 0.6f * trng.randf();
-						const float half = 0.45f + 0.18f * float(k) + 0.2f * trng.randf();
-						const float lump = 0.22f + 0.06f * float(k) + 0.08f * trng.randf();
+					reach = MAX(reach, 4.0f);
+					// The mound framing the mouth: lumps round its back and sides, set a fifth of their height in their own
+					// deposit.
+					const int mound = 12 + int(trng.randf() * 6.0f);
+					for (int k = 0; k < mound; k++) {
+						const float a = float(Math::PI) * (0.3f + 1.4f * (float(k) + trng.randf()) / float(mound));
+						const Vector3 at = sp.position + (-dir * Math::cos(a) + across * Math::sin(a)) * (0.8f + 1.4f * trng.randf());
+						put(at, 0.6f + 0.7f * trng.randf(), 0.15f + 0.1f * trng.randf(), 0.4f, trng.randf() * Math::TAU, Math::deg_to_rad(12.0f) * trng.randf());
+					}
+					// The apron the water spreads over below the mouth (a tufa cascade: Pedley 1990), widening down the
+					// outfall, wet.
+					for (float d = 0.8f; d < reach; d += 0.55f) {
+						const float w = 0.7f + 0.12f * d;
+						const int m = 1 + int(w / 0.5f);
+						for (int i = 0; i < m; i++) {
+							const float t = m > 1 ? (float(i) / float(m - 1)) * 2.0f - 1.0f : 0.0f;
+							const Vector3 at = sp.position + dir * (d + 0.25f * (trng.randf() - 0.5f)) + across * (t * w + 0.2f * (trng.randf() - 0.5f));
+							put(at, 0.35f + 0.3f * trng.randf(), 0.35f, 0.9f, trng.randf() * Math::TAU, Math::deg_to_rad(8.0f) * trng.randf());
+						}
+					}
+					// The barrages across the apron: crescent rims of close-set lumps, convex downstream, each holding a
+					// pool behind it, wider and further apart down the outfall (Arenas et al. 2014; Plitvice and Pamukkale
+					// terraces in small).
+					float along = 1.6f;
+					while (along < reach - 0.5f) {
+						const float half = 0.8f + 0.12f * along + 0.3f * trng.randf();
+						const float lump = 0.3f + 0.02f * along + 0.1f * trng.randf();
 						const Vector3 c = sp.position + dir * along;
-						const int m = MAX(2, int(Math::ceil(2.0f * half / (0.8f * lump))));
+						const int m = MAX(3, int(Math::ceil(2.0f * half / (0.6f * lump))));
 						for (int i = 0; i < m; i++) {
 							const float t = (float(i) + 0.5f) / float(m) * 2.0f - 1.0f;
-							const Vector3 at = c + across * (t * half) + dir * (0.3f * half * (1.0f - t * t));
+							Vector3 at = c + across * (t * half) + dir * (0.35f * half * (1.0f - t * t));
 							put(at, lump * (0.85f + 0.3f * trng.randf()), 0.12f, 0.9f, flow_yaw + (trng.randf() - 0.5f) * 0.6f, Math::deg_to_rad(6.0f) * trng.randf());
 						}
+						along += 1.3f + 0.08f * along + 0.8f * trng.randf();
 					}
 				}
 			}

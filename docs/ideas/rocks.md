@@ -1651,9 +1651,11 @@ boulder bed. Bench: `--world --world-size=2048 --karst-report` (2 sinks, 2 sprin
 ### Tufa at the springs (26 Nov)
 Spring water loses its carbon dioxide as it leaves the rock and tumbles, so calcite comes out of it as tufa, laid
 round mosses and algae (Pentecost 2005, "Travertine"; Ford and Pedley 1996; Arenas et al. 2014 on barrage tufa). Each
-WorldCaves resurgence gets a mound of 7 to 11 lumps (0.45 to 0.95 m) round the back and sides of its mouth, set a fifth
-of their height in their own deposit, and 3 to 6 low crescent dams (barrages) across the outfall below, convex
-downstream, closer and smaller near the spring, wet. The lumps are their own family, RockGenerator::FAMILY_TUFA: a
+WorldCaves resurgence gets a mound of 12 to 17 lumps (0.6 to 1.3 m) round the back and sides of its mouth, set a fifth
+of their height in their own deposit; a wet apron of lumps down the outfall to the stream (a tufa cascade, Pedley
+1990), widening as it goes; and crescent barrages across the apron every 1.3 to 3 m, close-set lumps convex
+downstream, each holding a pool, wider and further apart down the outfall. The deposit reaches up to 30 m: every
+cell it crosses lays its share from the spring's own seed (27 Nov; at first it was a few lumps cut at cell edges). The lumps are their own family, RockGenerator::FAMILY_TUFA: a
 cluster of 7 to 11 rounded lobes joined by a smooth minimum (botryoidal), a knobbly skin and holed by vugs where the
 plants rotted out; cream-buff, porous, no beds or dark minerals, mossier than the rock round it. The cliff kit leaves
 its pillars out within 2.5 m of a spring mouth, so the water comes out of an open face. Bench:
