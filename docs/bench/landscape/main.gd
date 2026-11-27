@@ -978,6 +978,23 @@ func _ready() -> void:
 		if sw % 10 == 0:
 			_log("cover settle: %d frames, %d s, %s" % [sw, (Time.get_ticks_msec() - tw) / 1000, str(cover.get_stream_stats())])
 	get_viewport().disable_3d = false
+	if args.has("grazing") and cover != null and cover.has_method("get_instances_near") and ClassDB.class_has_integer_constant("PlantGenerator", "PRESET_COW_PAT"):
+		# The dung the grazing set placed within --graze-count-r (20) m of the disc's centre (vegetation's check).
+		var gc3: Camera3D = get_viewport().get_camera_3d()
+		var gfw := -gc3.global_basis.z
+		gfw.y = 0.0
+		var gpc := gc3.global_position + gfw.normalized() * float(args.get("graze-dist", "10"))
+		var kinds := {ClassDB.class_get_integer_constant("PlantGenerator", "PRESET_COW_PAT"): "pats"}
+		if ClassDB.class_has_integer_constant("PlantGenerator", "PRESET_DUNG_ROUGH"):
+			kinds[ClassDB.class_get_integer_constant("PlantGenerator", "PRESET_DUNG_ROUGH")] = "roughs"
+		var counts := {}
+		var csp: Array = cover.biome.species if cover.biome != null else []
+		for i in csp.size():
+			var sp = csp[i]
+			if sp != null and sp.has_meta("plant_preset") and kinds.has(int(sp.get_meta("plant_preset"))):
+				var kn: String = kinds[int(sp.get_meta("plant_preset"))]
+				counts[kn] = int(counts.get(kn, 0)) + cover.get_instances_near(i, gpc, float(args.get("graze-count-r", "20"))).size()
+		_log("grazing count within %s m of %s: %s" % [args.get("graze-count-r", "20"), str(gpc.round()), str(counts)])
 	# Every capture waits for the grass far colours to bake (a SubViewport render, ~30 frames, restarted by any data
 	# map change) and for the cover to settle again, not for a fixed frame count.
 	var layers_bake: Array = sward if not sward.is_empty() else ([grass] if grass != null else [])
@@ -5722,13 +5739,17 @@ func _build_cover() -> void:
 		_log("dew webs: %d species" % dw.size())
 	if args.has("grazing") and ClassDB.class_has_method("PlantGenerator", "make_grazing"):
 		# --grazing=cattle|horse|deer: dung and the ungrazed roughs round it over the open ground (PlantGenerator.
-		# make_grazing, vegetation fbc92404), listed after the stand's species; called by name for older binaries.
+		# make_grazing, vegetation fbc92404), listed before the meadow species; called by name for older binaries.
 		var gk := _arg_str("grazing", "cattle")
 		var gset := {"cattle": 0, "horse": 1, "deer": 2}.get(gk, 0) as int
 		var graze: Array = ClassDB.class_call_static("PlantGenerator", "make_grazing", gset, 3, true, season)
-		for gsp in graze:
-			b.species.append(gsp)
-		_log("grazing %s: %d species" % [gk, graze.size()])
+		# Before the meadow herbs and grasses (earlier species win footprints: listed after them, the dense flowers
+		# left the pats no room), after the floor's woody lead.
+		var at := b.species.find(meadow_sp[0]) if not meadow_sp.is_empty() else -1
+		if at < 0:
+			at = 0
+		b.species = b.species.slice(0, at) + graze + b.species.slice(at)
+		_log("grazing %s: %d species, listed at %d" % [gk, graze.size(), at])
 	if gen.dunes_enabled and args.get("dune-plants", "1") != "0":
 		# The dunes' own plants (marram, lyme grass, sea holly), placed by distance to the water on the sand.
 		for st in [PlantGenerator.DUNES_EMBRYO, PlantGenerator.DUNES_MOBILE, PlantGenerator.DUNES_FIXED]:
