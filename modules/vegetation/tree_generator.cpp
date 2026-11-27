@@ -1753,6 +1753,7 @@ TreeGenerator::ForkRule TreeGenerator::_fork_rule() const {
 
 void TreeGenerator::_grow_year(int p_year) {
 	_build_shadow_grid(p_year);
+	const bool ground_shrub = preset == PRESET_GORSE || preset == PRESET_BROOM;
 	{
 		// The leader split (trees.md 5z): the terminal bud of a stem due to fork dies and a few
 		// buds of the stem's own rank open around it.
@@ -1832,6 +1833,32 @@ void TreeGenerator::_grow_year(int p_year) {
 	const float a = params[PARAM_SHADOW_STRENGTH];
 	const int node_count = int(nodes.size());
 
+	// A gorse or broom bush in the open is about one shadow cell wide: the grid shades its whole lower half as the
+	// cells under its top, though its sides stand in the sky's light (the browse case below, for the whole bush). A bud
+	// out toward the bush's rim gets the side light its place there gives (open sky to the side and below the dome's
+	// edge), so the bush keeps growing and leafing at its foot, as real gorse and broom do in the open.
+	// The bush's radius in height bands: a bud's side light goes by how far out it is at its own height, so the
+	// lower flanks of a dome and the sides of an erect broom count as outside too.
+	float shrub_rim[8] = {};
+	float shrub_top = 0.0f;
+	const bool shrub_side = ground_shrub && forest_shade <= 0.0f;
+	if (shrub_side) {
+		for (const Node &n : nodes) {
+			if (!n.removed && !n.dead) {
+				shrub_top = MAX(shrub_top, n.end().y - nodes[0].start.y);
+			}
+		}
+		for (const Node &n : nodes) {
+			if (!n.removed && !n.dead) {
+				const int band = CLAMP(int((n.end().y - nodes[0].start.y) / MAX(shrub_top, 0.05f) * 8.0f), 0, 7);
+				shrub_rim[band] = MAX(shrub_rim[band], Vector2(n.end().x - nodes[0].start.x, n.end().z - nodes[0].start.z).length());
+			}
+		}
+		// A band's rim is at least the bands' widest below it over half: the dome's flank, not a stray twig.
+		for (int k = 1; k < 8; k++) {
+			shrub_rim[k] = MAX(shrub_rim[k], 0.5f * shrub_rim[k - 1]);
+		}
+	}
 	// Light reaching each bud; buds in deep shade die (Stava's light-dependent bud fate).
 	for (Bud &b : buds) {
 		if (!b.alive) {
@@ -1844,6 +1871,11 @@ void TreeGenerator::_grow_year(int p_year) {
 		}
 		const Vector3 p = n.end() + b.dir * (cell * 0.5f);
 		b.light = CLAMP(1.0f + a - _shadow_at(p), 0.0f, 1.0f);
+		if (shrub_side && shrub_top > 0.3f) {
+			const int band = CLAMP(int((p.y - nodes[0].start.y) / shrub_top * 8.0f), 0, 7);
+			const float out = Vector2(p.x - nodes[0].start.x, p.z - nodes[0].start.z).length() / MAX(shrub_rim[band], 0.1f);
+			b.light = MAX(b.light, 0.5f * Math::smoothstep(0.4f, 0.9f, out));
+		}
 		if (browse_now && p.y - nodes[0].start.y < browse_height) {
 			// A hedged bush (trees.md 5aw) is smaller than the shadow grid's cells, its buds crowded on short stubs: the
 			// grid shades them all as one dark cell, though the bush stands lit on its outside.
@@ -1853,7 +1885,10 @@ void TreeGenerator::_grow_year(int p_year) {
 		// keep spreading along the ground; stems and basal sprouts are exempt.
 		// A krummholz mat spreads along the ground and roots where its limbs touch (layering;
 		// Marr 1977): only buds in the soil die.
-		if (b.node != 0 && n.order > 0 && p.y < (krummholz > 0.0f ? Math::lerp(0.3f, 0.02f, krummholz) : 0.3f)) {
+		// Gorse and broom branch to the ground: their low shoots are what makes the bush leafy to its foot (Clements
+		// et al. 2001; Peterson and Prasad 1998); only buds in the soil die.
+		const float bud_floor = krummholz > 0.0f ? Math::lerp(0.3f, 0.02f, krummholz) : (ground_shrub ? 0.02f : 0.3f);
+		if (b.node != 0 && n.order > 0 && p.y < bud_floor) {
 			b.alive = false;
 			continue;
 		}
@@ -21650,7 +21685,9 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			// in the branch plane, each a bottle brush of needles pointing forward.
 			Vector3 plane_side = n.dir.cross(Vector3(0, 1, 0));
 			plane_side = plane_side.length_squared() > 1e-6f ? plane_side.normalized() : perp;
-			const int sides = n.order == 0 ? 0 : 4;
+			// Gorse: two side spines' brushes, not four. Leafy to its foot (trees.md 5u) it carries some three times the
+			// shoots; the bush reads as dense at half the brushes and the old bush keeps near its old triangle count.
+			const int sides = n.order == 0 ? 0 : (preset == PRESET_GORSE ? 2 : 4);
 			const int brushes = sides + 1;
 			// Calligonum's twiglets come two or three to a node, not a needle brush.
 			const int per_brush = MAX(preset == PRESET_CALLIGONUM ? 2 : 4, per / brushes);

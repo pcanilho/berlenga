@@ -20,6 +20,20 @@ func _check(ok: bool, what: String) -> void:
 	if not ok:
 		fails += 1
 
+func _low_foliage(m: Mesh, p_frac: float) -> float:
+	var b := m.get_aabb()
+	var cut := b.position.y + b.size.y * p_frac
+	var low := 0
+	var all := 0
+	for s in m.get_surface_count():
+		if not (m.surface_get_name(s) in ["leaves", "needles"]):
+			continue
+		for v in m.surface_get_arrays(s)[Mesh.ARRAY_VERTEX]:
+			all += 1
+			if v.y < cut:
+				low += 1
+	return float(low) / maxf(all, 1.0)
+
 func _aabb(m: Mesh) -> AABB:
 	return m.get_aabb()
 
@@ -159,6 +173,15 @@ func _test() -> void:
 			_check(sp.footprint > 0.0 and sp.canopy_radius > 0.0, "%s form %d: footprint %.2f m, canopy %.2f m" % [sp.get_name(), f, sp.footprint, sp.canopy_radius])
 			# No climate or terrain rules: vegetation sets them.
 			_check(sp.get_rule_range(PlantSpecies.RULE_TEMPERATURE) == PlantSpecies.new().get_rule_range(PlantSpecies.RULE_TEMPERATURE), "%s form %d: no climate rules" % [sp.get_name(), f])
+	# Gorse and broom are many-stemmed from the base and leafy to the ground (Stace 2019; Clements et al. 2001,
+	# Ulex europaeus biology; Peterson and Prasad 1998, Cytisus scoparius): not a crown on a bare stem. Share of the
+	# foliage vertices in the lower 40% of the height (the lollipops had 0-6%).
+	for p in [31, 32]:
+		for f in [1, 2]:
+			var low := _low_foliage(TreeGenerator.make_shrub_species(p, f, 1, aug).meshes[0], 0.4)
+			# A dome leafy to the ground has some 40% of its shell there; erect broom's old stems are bare green
+			# switches low down, its leaves on the year's shoots, so less.
+			_check(low > (0.3 if p == 31 else 0.1), "%s form %d: %.0f%% of the foliage in the lower 40%% of the height" % [["gorse", "broom"][p - 31], f, low * 100.0])
 	_check(heights[[31, 4]] < 0.6, "gorse cushion under 60 cm (%.2f m)" % heights[[31, 4]])
 	_check(heights[[31, 0]] < heights[[31, 1]] and heights[[32, 0]] < heights[[32, 1]], "young shrubs smaller than mature")
 	_check(heights[[31, 1]] > 0.9 and heights[[31, 1]] < 2.6 and heights[[32, 1]] > 1.0 and heights[[32, 1]] < 2.6, "mature gorse %.2f m and broom %.2f m in 1-2.5 m" % [heights[[31, 1]], heights[[32, 1]]])

@@ -1553,6 +1553,18 @@ Gorse and broom come first, then gum rockrose, kermes oak and lentisk, then the 
 - Raster vs path-traced 100% crop (gorse in flower, April): spines and flowers both present;
   PT is darker inside the bush from occlusion, no detail lost.
 
+- Leafy to the foot (27 Nov; vegetation's probe and the karst scout: mature and old gorse read as a crown on bare
+  stems, under 1% of the foliage in the lower 40% of the height). Gorse and broom are many-stemmed from the base and
+  leafy to the ground in the open; old gorse sprawls and is never a single trunk (Stace, New Flora 2019; Clements et
+  al. 2001, Ulex europaeus biology; Peterson and Prasad 1998, Cytisus scoparius). Cause: the shadow grid's cells are
+  about as wide as the bush, so the cells under its top shaded the whole lower half as the inside of a crown, though
+  its sides stand in the open sky; the lower buds got no vigour and the bush only grew at the top (the browsed-bush
+  code has the same work-round). Fix: in the open, a gorse or broom bud gets side light by how far out it sits at
+  its own height (the bush's radius in eight height bands, each at least half the band's below), 0.55 at the rim;
+  their low buds no longer die under 30 cm (only in the soil). Gorse 44% of the foliage in the lower 40% (mature),
+  56% (old); broom 13% (from 2-6%), erect as it should be. Gorse draws two side brushes of spines, not four: mature 2.05M
+  triangles (was 1.53M), old 4.8M (was 2.2M). Bench: shrubs --test, "foliage in the lower 40% of the height".
+
 ### 5v. Gum rockrose, kermes oak and lentisk (17 Nov; Mediterranean scrub with vegetation)
 
 **Research** (Flora iberica, Castroviejo et al. 1986-, vols. 2 Cistaceae, 2 Fagaceae, 9

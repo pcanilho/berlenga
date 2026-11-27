@@ -1,0 +1,1 @@
+- Trees: mature and old gorse and broom are leafy to the ground, not a crown on bare stems.
