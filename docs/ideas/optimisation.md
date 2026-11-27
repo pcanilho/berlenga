@@ -672,3 +672,8 @@ sites of each callee's size); the remedy is one call site per heavy function.
   pixel across; the bush's mean colour moves 0.3 of 255 and the stochastic pattern no more than at the existing
   switch at 30 m. Frame primitives for one bush at 12-17 m: 13.3M to 8.9M. The path tracer draws full detail
   (rendering/pathtracing/mesh_lod off), so it is unchanged. Shrubs bench: --lod-report, frame primitives on --out.
+- Gorse half level at 28 m (tried, not taken): moving GORSE_LODS' 0.5 level from 0.05 to 0.019 (flowers a pixel)
+  kept the outline (coverage against sky and ground within 1%, as the 0.7 level) but the bush read lighter: mean
+  colour +9 of 255 with TAA at 32 m against 1.7 for the 0.7 level, its dark gaps between shoots thinner. Half the
+  spines and flowers, grown to keep their area, shade each other less. The same step happens today at the 60 m
+  near-far handover (near at the 0.7 level, far from the 0.5). Shrubs bench: --taa, --no-plant (outline masks).

@@ -14,6 +14,8 @@ extends Node3D
 #   --near            the near mesh (full detail) in place of the far one
 #   --lod-report      triangles of each surface and of its LOD levels
 #   --lod_threshold=T the mesh LOD threshold in pixels (0: full detail)
+#   --taa [--frames=N] TAA (settled over N frames, 32) in place of MSAA 8x
+#   --no-plant        the background without the shrubs (outline masks)
 #   CAM="x,y,z,lx,ly,lz,fov" camera
 
 var fails := 0
@@ -99,6 +101,8 @@ func _place(sp: PlantSpecies, vi: int, x: float, z: float, args: Dictionary, t0:
 					for l in sd.get("lods", []):
 						ls.append(l.index_data.size() / ib / 3)
 					print("  %s: %d verts, %d tris, lods %s" % [m.surface_get_name(s), sd.vertex_count, m.surface_get_array_index_len(s) / 3, str(ls)])
+			if args.has("no-plant"):
+				return x + bb.size.x + float(args.get("gap", "0.8")) # --no-plant: the background alone (outline masks)
 			var mi := MeshInstance3D.new()
 			mi.mesh = m
 			mi.position = Vector3(x - bb.position.x, 0, z)
@@ -122,7 +126,11 @@ func _after_place(args: Dictionary, width: float, z: float) -> void:
 	else:
 		cam.position = Vector3(width * 0.5, 2.2, width * 0.75 + 2.0)
 		cam.look_at(Vector3(width * 0.5, 0.6, z * 0.5 + 1.75))
-	for i in 4:
+	if args.has("taa"):
+		# --taa: TAA in place of MSAA, settled over --frames (32) frames.
+		get_viewport().msaa_3d = Viewport.MSAA_DISABLED
+		get_viewport().use_taa = true
+	for i in (int(args.get("frames", "32")) if args.has("taa") else 4):
 		await RenderingServer.frame_post_draw
 	if args.has("pt"):
 		for k in int(args.get("spp", "16")) / 4 + 2:
