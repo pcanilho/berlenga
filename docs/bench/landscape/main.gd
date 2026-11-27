@@ -1408,7 +1408,7 @@ func _ready() -> void:
 			_log("aerosol haze %s /m at the camera, volumetric fog %s, length %.0f m" % [str(weather.get_precipitation_extinction_at(cam4.global_position)), env.volumetric_fog_enabled, env.volumetric_fog_length])
 			for fv in weather.get_children(true):
 				if fv is FogVolume:
-					_log("haze volume at %s size %s density %s falloff %s cam %s" % [str(fv.global_position), str(fv.size), str(fv.material.density), str(fv.material.height_falloff), str(cam4.global_position)])
+					_log("haze volume at %s size %s density %s falloff %s cam %s" % [str(fv.global_position), str(fv.size), str(fv.material.get("density")), str(fv.material.get("height_falloff")), str(cam4.global_position)])
 		if gen != null:
 			_log("sky light update %.1f ms" % gen.get_last_sky_light_msec())
 		if args.has("geo-dump"):
