@@ -8047,6 +8047,9 @@ func _karst_spring_cam() -> void:
 	var m: Vector3 = sp["position"]
 	var gr := _fs_grad(m)
 	var down := Vector3(-gr.x, 0, -gr.y).normalized() if gr.length() > 0.001 else Vector3(0, 0, 1)
+	var sd: Vector3 = sp.get("direction", Vector3.ZERO)
+	if sd.length() > 0.5 and args.get("ks-dir", "spring") == "spring":
+		down = Vector3(sd.x, 0, sd.z).normalized() # the spring's own outfall heading (--ks-dir=slope: the fall line)
 	var side := down.cross(Vector3.UP)
 	var cp := m + down * float(args.get("ks-back", "30")) + side * float(args.get("ks-side", "12"))
 	cp.y = height_at(cp.x, cp.z) + float(args.get("ks-up", "6"))
