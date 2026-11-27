@@ -8115,6 +8115,59 @@ func _block_field_cam() -> void:
 	if rocks == null or not rocks.has_method("get_block_field_at"):
 		_log("block field: no RockField3D block fields")
 		return
+	if args.has("bf-report") and rocks.has_method("get_block_factors"):
+		# --bf-report: on even 4 to 20 degree ground (within 1.5 m of its plane over a 10 m ring, 16 m grid), which
+		# factor of the block field gate (RockField3D.get_block_factors) closes it; then quits.
+		var wr0: Rect2 = gen.get_world_rect()
+		var st := {"even": 0, "cold": 0, "alpine": 0, "excluded": 0, "ground": 0, "pass": 0}
+		var types := {}
+		var maat_min := INF
+		var maat_at := Vector3.ZERO
+		var x0 := wr0.position.x + 100.0
+		while x0 < wr0.end.x - 100.0:
+			var z0 := wr0.position.y + 100.0
+			while z0 < wr0.end.y - 100.0:
+				var p := Vector3(x0, 0, z0)
+				z0 += 16.0
+				var h0 := gen.get_height(p)
+				if h0 < gen.sea_level + 5.0:
+					continue
+				var gx := (gen.get_height(p + Vector3(4, 0, 0)) - gen.get_height(p - Vector3(4, 0, 0))) / 8.0
+				var gz := (gen.get_height(p + Vector3(0, 0, 4)) - gen.get_height(p - Vector3(0, 0, 4))) / 8.0
+				var sl := rad_to_deg(atan(Vector2(gx, gz).length()))
+				if sl < 4.0 or sl > 20.0:
+					continue
+				var ok := true
+				for k in 8:
+					var o := Vector3(cos(k * PI / 4.0), 0, sin(k * PI / 4.0))
+					if absf(gen.get_height(p + o * 10.0) - (h0 + gx * o.x * 10.0 + gz * o.z * 10.0)) > 1.5:
+						ok = false
+						break
+				if not ok:
+					continue
+				st["even"] += 1
+				var f: Dictionary = rocks.call("get_block_factors", p)
+				if f.is_empty():
+					continue
+				var rt := int(f.get("rock_type", -1))
+				types[rt] = int(types.get(rt, 0)) + 1
+				if float(f.get("maat", 99.0)) < maat_min:
+					maat_min = float(f.get("maat", 99.0))
+					maat_at = Vector3(x0, h0, p.z)
+				if float(f.get("cold", 0.0)) < 0.5:
+					st["cold"] += 1
+				elif float(f.get("alpine", 0.0)) < 0.5:
+					st["alpine"] += 1
+				elif bool(f.get("excluded", false)):
+					st["excluded"] += 1
+				elif float(f.get("gate", 0.0)) < 0.8:
+					st["ground"] += 1
+				else:
+					st["pass"] += 1
+			x0 += 16.0
+		_log("block field report: even ground %s; rock types (0 granite 1 limestone 2 sandstone 3 basalt 4 slate) %s; coldest even point %s MAAT %.1f C" % [str(st), str(types), str(maat_at.round()), maat_min])
+		get_tree().quit()
+		return
 	var wr: Rect2 = gen.get_world_rect()
 	var bmin := float(args.get("bf-min", "0.8"))
 	var dmin := float(args.get("bf-min-deg", "4"))

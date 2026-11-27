@@ -227,6 +227,13 @@
 				How many stones are rigid bodies now (see [member stones_react]).
 			</description>
 		</method>
+		<method name="get_block_factors" qualifiers="const">
+			<return type="Dictionary" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				For benches: each factor of the block field gate at [param position]: [code]maat[/code] and [code]warm[/code] (mean annual and warmest month air there, C), [code]cold[/code], [code]alpine[/code], [code]excluded[/code] (water, sand, ice or sea), [code]slope[/code], [code]gentle[/code], [code]soil_depth[/code], [code]rock_exposure[/code], [code]thin[/code], [code]sorts[/code] (the frost sorting's claim), [code]coarse[/code] (the rock's), [code]rock_type[/code] and [code]gate[/code] (as [method get_block_field_at]'s x).
+			</description>
+		</method>
 		<method name="get_block_field_at" qualifiers="const">
 			<return type="Vector2" />
 			<param index="0" name="position" type="Vector3" />

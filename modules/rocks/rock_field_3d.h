@@ -972,6 +972,7 @@ public:
 	bool is_block_fields() const { return block_fields; }
 	// The block field at a point: x the gate (0..1), y the block streams' stripe share there (1 on a stripe).
 	Vector2 get_block_field_at(const Vector3 &p_position) const;
+	Dictionary get_block_factors(const Vector3 &p_position) const; // for benches: each factor of the block field gate
 	struct BlockClimate {
 		bool on = false;
 		float maat = 99.0f, warm = 99.0f; // mean annual and warmest month air at the reference height, C
@@ -980,7 +981,7 @@ public:
 		float wet = 0.0f; // the frost sorting's water (_frost_climate's wet): where deep fine soil sorts instead
 	};
 	static void _block_climate(BlockClimate &r_climate);
-	float _block_gate(const TerrainGenerator3D *p_gen, const BlockClimate &p_climate, const Vector3 &p_at, float &r_slope_deg, Vector3 &r_fall) const;
+	float _block_gate(const TerrainGenerator3D *p_gen, const BlockClimate &p_climate, const Vector3 &p_at, float &r_slope_deg, Vector3 &r_fall, Dictionary *r_factors = nullptr) const;
 	void set_cliff_kit(bool p_enabled) {
 		cliff_kit = p_enabled;
 		_kit_reset(true);

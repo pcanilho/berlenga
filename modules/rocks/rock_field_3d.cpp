@@ -3940,7 +3940,7 @@ void RockField3D::_block_climate(BlockClimate &r_climate) {
 	r_climate.wet = Math::smoothstep(250.0f, 500.0f, cl.precipitation);
 }
 
-float RockField3D::_block_gate(const TerrainGenerator3D *p_gen, const BlockClimate &p_climate, const Vector3 &p_at, float &r_slope_deg, Vector3 &r_fall) const {
+float RockField3D::_block_gate(const TerrainGenerator3D *p_gen, const BlockClimate &p_climate, const Vector3 &p_at, float &r_slope_deg, Vector3 &r_fall, Dictionary *r_factors) const {
 	r_slope_deg = 0.0f;
 	r_fall = Vector3();
 	if (!p_climate.on || !block_fields) {
@@ -3950,20 +3950,27 @@ float RockField3D::_block_gate(const TerrainGenerator3D *p_gen, const BlockClima
 	const float dz = (h - p_climate.reference) / 1000.0f;
 	const float cold = Math::smoothstep(-1.0f, -3.0f, p_climate.maat - p_climate.lapse * dz);
 	const float alpine = Math::smoothstep(11.0f, 8.0f, p_climate.warm - p_climate.lapse_warm * dz);
-	if (cold * alpine <= 0.0f) {
+	if (r_factors) {
+		(*r_factors)["maat"] = p_climate.maat - p_climate.lapse * dz;
+		(*r_factors)["warm"] = p_climate.warm - p_climate.lapse_warm * dz;
+		(*r_factors)["cold"] = cold;
+		(*r_factors)["alpine"] = alpine;
+	}
+	if (cold * alpine <= 0.0f && !r_factors) {
 		return 0.0f;
 	}
 	const Vector3 at(p_at.x, h, p_at.z);
-	if (p_gen->get_water_depth(at) > 0.03 || p_gen->get_sand_depth_at(at) > 0.05 || p_gen->get_glacier_depth(at) > 0.5) {
-		return 0.0f;
+	const bool wet_ground = p_gen->get_water_depth(at) > 0.03 || p_gen->get_sand_depth_at(at) > 0.05 || p_gen->get_glacier_depth(at) > 0.5 || (p_gen->has_sea_result() && h < float(p_gen->get_sea_level()) + 2.5f);
+	if (r_factors) {
+		(*r_factors)["excluded"] = wet_ground; // water, sand, ice or the sea
 	}
-	if (p_gen->has_sea_result() && h < float(p_gen->get_sea_level()) + 2.5f) {
+	if (wet_ground && !r_factors) {
 		return 0.0f;
 	}
 	const Vector3 n = ground_normal(p_gen, p_at.x, p_at.z, 3.0);
 	r_slope_deg = Math::rad_to_deg(Math::acos(CLAMP(float(n.y), -1.0f, 1.0f)));
 	const float gentle = 1.0f - Math::smoothstep(20.0f, 26.0f, r_slope_deg);
-	if (gentle <= 0.0f) {
+	if (gentle <= 0.0f && !r_factors) {
 		return 0.0f;
 	}
 	const Vector2 f(float(n.x), float(n.z));
@@ -3993,6 +4000,19 @@ float RockField3D::_block_gate(const TerrainGenerator3D *p_gen, const BlockClima
 			coarse = 0.0f;
 			break;
 	}
+	if (r_factors) {
+		(*r_factors)["slope"] = r_slope_deg;
+		(*r_factors)["gentle"] = gentle;
+		(*r_factors)["soil_depth"] = float(p_gen->get_soil_depth(at));
+		(*r_factors)["rock_exposure"] = float(p_gen->get_rock_exposure(at));
+		(*r_factors)["thin"] = thin;
+		(*r_factors)["sorts"] = sorts;
+		(*r_factors)["coarse"] = coarse;
+		(*r_factors)["rock_type"] = int(_type_at(p_gen, at));
+		if (wet_ground) {
+			return 0.0f;
+		}
+	}
 	return cold * alpine * gentle * MAX(thin, coarse * (1.0f - sorts));
 }
 
@@ -4010,6 +4030,21 @@ Vector2 RockField3D::get_block_field_at(const Vector3 &p_position) const {
 	Vector3 fall;
 	const float g = _block_gate(gen, bc, p_position, slope, fall);
 	return Vector2(g, g > 0.0f ? rf_block_stripe(float(p_position.x), float(p_position.z), fall, slope) : 0.0f);
+}
+
+Dictionary RockField3D::get_block_factors(const Vector3 &p_position) const {
+	Dictionary d;
+	const TerrainGenerator3D *gen = _get_generator();
+	if (!gen) {
+		return d;
+	}
+	BlockClimate bc;
+	_block_climate(bc);
+	d["climate"] = bc.on;
+	float slope = 0.0f;
+	Vector3 fall;
+	d["gate"] = _block_gate(gen, bc, p_position, slope, fall, &d);
+	return d;
 }
 
 // WorldGround.frost_sorted_at: the gate and the stone share at a point, for CPU placers (cover plants keep off the
@@ -11711,6 +11746,7 @@ void RockField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_block_fields", "enabled"), &RockField3D::set_block_fields);
 	ClassDB::bind_method(D_METHOD("is_block_fields"), &RockField3D::is_block_fields);
 	ClassDB::bind_method(D_METHOD("get_block_field_at", "position"), &RockField3D::get_block_field_at);
+	ClassDB::bind_method(D_METHOD("get_block_factors", "position"), &RockField3D::get_block_factors);
 	ClassDB::bind_method(D_METHOD("set_frost_sorting", "enabled"), &RockField3D::set_frost_sorting);
 	ClassDB::bind_method(D_METHOD("is_frost_sorting"), &RockField3D::is_frost_sorting);
 	ClassDB::bind_method(D_METHOD("get_frost_at", "position"), &RockField3D::get_frost_at);
