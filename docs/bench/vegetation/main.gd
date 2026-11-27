@@ -102,6 +102,9 @@ func _ready() -> void:
 		elif a == "--test=bare":
 			test = true
 			only_bare = true
+		elif a == "--test=grazing":
+			test = true
+			only_graze = true
 		elif a == "--test=deer":
 			test = true
 			only_deer = true
@@ -340,6 +343,11 @@ func _physics_process(_d: float) -> void:
 		print("VEG_RESULT ", "PASS" if fails == 0 else "FAIL (%d)" % fails)
 		get_tree().quit(1 if fails > 0 else 0)
 		return
+	if test and only_graze:
+		await _grazing_stream_check()
+		print("VEG_RESULT ", "PASS" if fails == 0 else "FAIL (%d)" % fails)
+		get_tree().quit(1 if fails > 0 else 0)
+		return
 	if test and only_bare:
 		await _climate_bare_check()
 		print("VEG_RESULT ", "PASS" if fails == 0 else "FAIL (%d)" % fails)
@@ -371,6 +379,7 @@ func _physics_process(_d: float) -> void:
 		await _sod_fall_check()
 		await _sod_land_check()
 		await _hay_bale_check()
+		await _grazing_stream_check()
 		print("VEG_RESULT ", "PASS" if fails == 0 else "FAIL (%d)" % fails)
 	if out.is_empty():
 		get_tree().quit(1 if fails > 0 else 0)
@@ -2082,6 +2091,7 @@ var only_blowing := false # --test=blowing: the blowing-leaves check alone
 var only_sod := false # --test=sod: the sod lip checks alone
 var only_rocks := false # --test=rocks: the rock_field check alone
 var only_bare := false # --test=bare: the climate_bare check alone
+var only_graze := false # --test=grazing: the streamed pasture check alone
 var only_deer := false # --test=deer: the deer bed check alone
 var grass_walk := 0.0 # --grass-walk[=M]: main-thread cost of a GrassField3D (defaults) walked M metres a frame
 
@@ -2216,6 +2226,55 @@ func _terracette_check() -> void:
 # Drylands (VegetationField3D.climate_bare, WorldContracts::bare_patch): under a 300 mm climate the cover plants keep to
 # the clumps, about the share the rain leaves covered (0.9 * (1 - smoothstep(200, 700, 300)) = 0.81 bare); trees stay;
 # a 900 mm climate leaves the placements as they were; climate_bare off, as without a climate.
+# A streamed cover field with the cattle set, as the landscape's pasture: the grazing disc (WorldStand.add_browse)
+# comes after the field has streamed, and the pats and roughs must appear inside it once the tiles settle.
+func _grazing_stream_check() -> void:
+	var st: WorldStand = WorldContracts.get_stand()
+	st.clear_browse()
+	var cattle: Array = PlantGenerator.make_grazing(PlantGenerator.GRAZE_CATTLE, 1, false)
+	var b := Biome.new()
+	b.species.assign(cattle)
+	var anchor := Node3D.new()
+	add_child(anchor)
+	anchor.global_position = Vector3(-40, 0, -40)
+	var f := VegetationField3D.new()
+	f.far_volume = false
+	f.populate_on_ready = false
+	f.bark_detail = false
+	f.biome = b
+	f.tile_size = 8.0
+	f.stream_radius = 80.0
+	add_child(f)
+	f.data_map = f.get_path_to(dm)
+	f.stream_target = f.get_path_to(anchor)
+	f.streaming = true
+	var waited := 0
+	while waited < 600 and (waited < 10 or not f.is_stream_idle()):
+		await get_tree().process_frame
+		waited += 1
+	var before := 0
+	for s in cattle.size():
+		before += f.get_instances_near(s, anchor.global_position, 20.0).size()
+	st.add_browse(anchor.global_position, 30.0, 0.9, 1.5)
+	waited = 0
+	var t0 := Time.get_ticks_msec()
+	while waited < 900 and (Time.get_ticks_msec() - t0 < 1500 or f.get_stream_pending() > 0 or not f.is_stream_idle()): # the stand is looked at twice a second
+		await get_tree().process_frame
+		waited += 1
+	var kinds := {}
+	var after := 0
+	for s in cattle.size():
+		var n: int = f.get_instances_near(s, anchor.global_position, 20.0).size()
+		after += n
+		kinds[int((cattle[s] as PlantSpecies).get_meta("plant_preset", -1))] = kinds.get(int((cattle[s] as PlantSpecies).get_meta("plant_preset", -1)), 0) + n
+	f.queue_free()
+	anchor.queue_free()
+	st.clear_browse()
+	await get_tree().process_frame
+	# About one standing pat per 10 m2 (MacDiarmid and Watkin 1972): 60 to 250 in the 1257 m2 counted.
+	var pats: int = kinds.get(PlantGenerator.PRESET_COW_PAT, 0)
+	_check("grazing: a pasture disc added after a streamed field has settled brings its pats (about one per 10 m2) and roughs (none before)", before == 0 and pats >= 60 and pats <= 250 and kinds.get(PlantGenerator.PRESET_DUNG_ROUGH, 0) > 10, [before, after, kinds, waited])
+
 func _climate_bare_check() -> void:
 	var counts := {}
 	var b := Biome.new()

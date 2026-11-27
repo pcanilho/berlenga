@@ -260,10 +260,12 @@ TypedArray<Resource> PlantGenerator::make_grazing(GrazeSet p_set, int p_variants
 		case GRAZE_CATTLE:
 			// Pats of every age, a rough round the older ones (the rough outlasts the pat); docks and nettles here and
 			// there on the richest spots. About one pat per 10 m2 over a season (MacDiarmid and Watkin 1972).
-			set = LocalVector<Spec>({ { P::PRESET_DUNG_ROUGH, 0.4f, 0.4f, 4.5f, 0.45f, 0.8f, 1.3f, 0.0f, 0.0f, 60.0f },
-					{ P::PRESET_COW_PAT, 0.005f, 0.12f, 6.0f, 0.25f, 0.85f, 1.2f, 0.0f, 0.0f, 35.0f },
-					{ P::PRESET_COW_PAT, 0.06f, 0.12f, 5.0f, 0.35f, 0.85f, 1.2f, 0.0f, 0.0f, 35.0f },
-					{ P::PRESET_COW_PAT, 0.4f, 0.12f, 5.0f, 0.3f, 0.85f, 1.2f, 0.0f, 0.0f, 30.0f },
+			// The spacings give that standing count under full pressure (the three ages together, about one in eight
+			// to fifteen m2 once shade, slope and wet ground take their share), the roughs about half as many.
+			set = LocalVector<Spec>({ { P::PRESET_DUNG_ROUGH, 0.4f, 0.4f, 3.0f, 0.5f, 0.8f, 1.3f, 0.0f, 0.0f, 60.0f },
+					{ P::PRESET_COW_PAT, 0.005f, 0.12f, 3.5f, 0.35f, 0.85f, 1.2f, 0.0f, 0.0f, 35.0f },
+					{ P::PRESET_COW_PAT, 0.06f, 0.12f, 3.0f, 0.45f, 0.85f, 1.2f, 0.0f, 0.0f, 35.0f },
+					{ P::PRESET_COW_PAT, 0.4f, 0.12f, 3.0f, 0.4f, 0.85f, 1.2f, 0.0f, 0.0f, 30.0f },
 					{ P::PRESET_DOCK, 0.0f, 0.0f, 3.0f, 0.5f, 0.8f, 1.3f, 16.0f, 0.12f, 60.0f },
 					{ P::PRESET_NETTLE, 0.0f, 0.0f, 0.8f, 0.6f, 0.8f, 1.2f, 22.0f, 0.06f, 60.0f } });
 			break;
