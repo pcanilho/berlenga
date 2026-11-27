@@ -286,11 +286,19 @@ static float snow_melted_diameter(float p_flake_mm) {
 	return p_flake_mm >= 1.414f ? Math::pow(2.0f * p_flake_mm, 1.0f / 3.0f) : p_flake_mm;
 }
 
+// Gunn and Marshall's intercept, per m3 per mm. Their fit holds down to about 0.01 mm/h (where flake_size_slope stops
+// too); below it the spectrum keeps that shape and the number scales with the rate. Read on down, R^-0.87 grew without
+// bound: a trace of snow from a storm tens of km off (1e-20 mm/h) hazed the whole view.
+static float snow_intercept(float p_rate_mm_h) {
+	static constexpr float FIT_MIN = 0.01f;
+	return p_rate_mm_h >= FIT_MIN ? 3.8e3f * Math::pow(p_rate_mm_h, -0.87f) : 3.8e3f * Math::pow(FIT_MIN, -0.87f) * p_rate_mm_h / FIT_MIN;
+}
+
 float SnowFall3D::flake_number_density(float p_rate_mm_h, float p_min_size_mm) {
 	if (p_rate_mm_h <= 0.0f) {
 		return 0.0f;
 	}
-	const float n0 = 3.8e3f * Math::pow(p_rate_mm_h, -0.87f); // per m3 per mm
+	const float n0 = snow_intercept(p_rate_mm_h); // per m3 per mm
 	const float lambda = flake_size_slope(p_rate_mm_h);
 	return n0 / lambda * Math::exp(-lambda * snow_melted_diameter(p_min_size_mm));
 }
@@ -302,7 +310,7 @@ float SnowFall3D::snowfall_extinction(float p_rate_mm_h) {
 	if (p_rate_mm_h <= 0.0f) {
 		return 0.0f;
 	}
-	const float n0 = 3.8e3f * Math::pow(p_rate_mm_h, -0.87f);
+	const float n0 = snow_intercept(p_rate_mm_h);
 	const float lambda = flake_size_slope(p_rate_mm_h);
 	double sigma = 0.0;
 	const float step = 0.02f;
