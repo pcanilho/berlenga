@@ -345,6 +345,7 @@ func _physics_process(_d: float) -> void:
 		return
 	if test and only_graze:
 		await _grazing_stream_check()
+		await _grazing_order_check()
 		print("VEG_RESULT ", "PASS" if fails == 0 else "FAIL (%d)" % fails)
 		get_tree().quit(1 if fails > 0 else 0)
 		return
@@ -380,6 +381,7 @@ func _physics_process(_d: float) -> void:
 		await _sod_land_check()
 		await _hay_bale_check()
 		await _grazing_stream_check()
+		await _grazing_order_check()
 		print("VEG_RESULT ", "PASS" if fails == 0 else "FAIL (%d)" % fails)
 	if out.is_empty():
 		get_tree().quit(1 if fails > 0 else 0)
@@ -2258,7 +2260,7 @@ func _grazing_stream_check() -> void:
 	st.add_browse(anchor.global_position, 30.0, 0.9, 1.5)
 	waited = 0
 	var t0 := Time.get_ticks_msec()
-	while waited < 900 and (Time.get_ticks_msec() - t0 < 1500 or f.get_stream_pending() > 0 or not f.is_stream_idle()): # the stand is looked at twice a second
+	while waited < 3000 and (Time.get_ticks_msec() - t0 < 1500 or f.get_stream_pending() > 0 or not f.is_stream_idle()): # the stand is looked at twice a second
 		await get_tree().process_frame
 		waited += 1
 	var kinds := {}
@@ -2274,6 +2276,48 @@ func _grazing_stream_check() -> void:
 	# About one standing pat per 10 m2 (MacDiarmid and Watkin 1972): 60 to 250 in the 1257 m2 counted.
 	var pats: int = kinds.get(PlantGenerator.PRESET_COW_PAT, 0)
 	_check("grazing: a pasture disc added after a streamed field has settled brings its pats (about one per 10 m2) and roughs (none before)", before == 0 and pats >= 60 and pats <= 250 and kinds.get(PlantGenerator.PRESET_DUNG_ROUGH, 0) > 10, [before, after, kinds, waited])
+
+# A pasture under a meadow's herbs: the stock's set is listed before the sward's herbs (earlier species are placed
+# first, later ones keep clear of their footprints), so a pat lies where it fell and the herbs keep off it. Listed
+# after a dense herb layer, nearly every spot is already taken.
+func _grazing_order_check() -> void:
+	var st: WorldStand = WorldContracts.get_stand()
+	st.clear_browse()
+	var at := Vector3(-40, 0, -40)
+	st.add_browse(at, 30.0, 0.9, 1.5)
+	var herb := PlantSpecies.new()
+	var sm := SphereMesh.new()
+	sm.radius = 0.06
+	sm.height = 0.12
+	herb.meshes = [_mesh(sm, 0.06, Color(0.9, 0.9, 0.3))]
+	herb.spacing = 0.25
+	herb.footprint = 0.12
+	herb.density = 0.9
+	herb.visibility_range = 15.0
+	var pats := []
+	for first in [false, true]:
+		var cattle: Array = PlantGenerator.make_grazing(PlantGenerator.GRAZE_CATTLE, 1, false)
+		var b := Biome.new()
+		b.species.assign(cattle + [herb] if first else [herb] + cattle)
+		var f := VegetationField3D.new()
+		f.far_volume = false
+		f.populate_on_ready = false
+		f.bark_detail = false
+		f.biome = b
+		add_child(f)
+		f.data_map = f.get_path_to(dm)
+		f.populate()
+		var n := 0
+		for s in b.species.size():
+			if int((b.species[s] as PlantSpecies).get_meta("plant_preset", -1)) == PlantGenerator.PRESET_COW_PAT:
+				for p in f.get_placements(s):
+					if Vector2(p.x, p.z).distance_to(Vector2(at.x, at.z)) < 20.0:
+						n += 1
+		pats.append(n)
+		f.queue_free()
+		await get_tree().process_frame
+	st.clear_browse()
+	_check("grazing: listed before a dense herb layer the pats lie on the sward (about one per 10 m2), listed after it the herbs crowd them out", pats[1] >= 60 and pats[0] < pats[1] / 2, pats)
 
 func _climate_bare_check() -> void:
 	var counts := {}

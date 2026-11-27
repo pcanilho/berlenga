@@ -7020,6 +7020,12 @@ void VegetationField3D::_stream_update(double p_delta) {
 		busy = true;
 		why |= 8;
 	}
+	if (_stream_change_waiting()) {
+		// A burn, the holes or the stand changed and the tiles under it are not yet placed again (or the change is
+		// not yet looked at): not settled, so a still taken now would miss it (a pasture disc's dung and roughs).
+		busy = true;
+		why |= 64;
+	}
 
 	// The maps (canopy, stand, floor, far colour), a couple of times a second at most.
 	stream_maps_wait -= p_delta;
@@ -7297,6 +7303,16 @@ void VegetationField3D::_follow_holes(TerrainDataMap3D *p_map) {
 
 // Streamed tiles still to be placed or swapped in (a burn, the holes, the stand or a flood changed under them, or the
 // camera moved on), plus one for each change waiting to mark its tiles; 0 once the field shows its current state.
+// A change waiting to mark its tiles: a burn, the holes or the stand changed over the streamed area, or the stand moved
+// on and _follow_stand has not yet looked (it looks twice a second).
+bool VegetationField3D::_stream_change_waiting() const {
+	if (burn_dirty.has_area() || holes_dirty.has_area() || stand_dirty.has_area()) {
+		return true;
+	}
+	const WorldStand *stand = stand_follow ? WorldContracts::stand() : nullptr;
+	return stand && stream_setup_valid && stand->get_stand_generation() != stand_seen;
+}
+
 int VegetationField3D::get_stream_pending() const {
 	if (!streaming) {
 		return 0;
@@ -7308,6 +7324,7 @@ int VegetationField3D::get_stream_pending() const {
 	n += burn_dirty.has_area() ? 1 : 0;
 	n += holes_dirty.has_area() ? 1 : 0;
 	n += stand_dirty.has_area() ? 1 : 0;
+	n += (!stand_dirty.has_area() && _stream_change_waiting() && !burn_dirty.has_area() && !holes_dirty.has_area()) ? 1 : 0; // the stand moved on, not yet looked at
 	n += removal_dirty.has_area() ? 1 : 0;
 	const WorldFire *fire = WorldContracts::fire();
 	n += (burn_follow && fire && fire->get_burn_generation() != burn_seen) ? 1 : 0;

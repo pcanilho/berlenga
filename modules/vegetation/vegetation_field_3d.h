@@ -695,6 +695,7 @@ private:
 	// Stand ages and disturbances (WorldStand.stand_changed): checked twice a second like burns; only tiles where a
 	// species crosses its stand range are placed again (advance_years ages every stand without replacing them all).
 	mutable uint64_t stand_seen = 0;
+	bool _stream_change_waiting() const;
 	mutable bool stand_follow = false;
 	mutable bool strike_follow = false; // A species carries struck variants: strikes re-place their tiles.
 	mutable bool browse_follow = false; // A species carries browsed variants: browse changes re-place their tiles.
