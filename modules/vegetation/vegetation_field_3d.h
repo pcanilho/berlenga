@@ -268,6 +268,7 @@ private:
 		bool far_widen = false; // Meta "far_widen" (trees, trees.md 9a): the far tail's survivors widened in their transforms per tile.
 		float clone_scale = 0.0f; // Meta "clone_scale" (m; aspen, trees.md 5bf): one variant per clone, clones as jittered cells this wide.
 		bool bare_cover = false; // A plant of the cover (herb, grass, shrub; not a tree, not a bare-ground species): none on the climate's bare soil.
+		bool graze_crop = false; // A herb the stock bite to the stubble under grazing pressure (not the grazing set, not docks, nettles or thistles).
 		bool hay_cut = false; // A herb taller than a hay meadow's stubble (PlantGenerator species over 12 cm): cut when mown.
 		int base_variants = 0; // hay_cut: meshes [0, base_variants) as grown, [base_variants, 2 base_variants) cut at the stubble.
 		LocalVector<float> face_slopes; // Per variant, mesh meta "bank_face_slope" (radians; bank roots); empty: none.
@@ -705,6 +706,7 @@ private:
 	bool variants_waiting = false;
 	double variants_check = 0.0;
 	static float _burn_recovery_of(const PlantSpecies *p_sp);
+	static bool _graze_croppable(const PlantSpecies *p_sp);
 	static int _deferred_kinds(const Ref<PlantSpecies> &p_sp) { return p_sp.is_valid() ? int(p_sp->get_meta(SNAME("tree_variants_deferred"), 0)) : 0; }
 	void _read_browse(PlaceSetup &r_setup) const;
 	double stand_check = 0.0;

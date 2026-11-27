@@ -850,6 +850,22 @@ float VegetationField3D::PlaceSetup::sea_depth_at(const Vector2 &p_xz) const {
 // (PlantGenerator.get_burn_recovery, from the species' plant_preset meta or its first mesh's preset meta, as hand-built
 // species carry it); else, for any other mesh of the plant shader without a canopy, the herbs' 1.5 years. Fire reaches
 // every plant: a species is blind to it only when its preset says so (water plants, the burn presets themselves).
+// Grazed pasture (docs/ideas/vegetation.md, "Grazing roughs and dung"): stock bite the herbs and flowering grasses down
+// to the sward, so a grazed pasture hardly flowers (Rook et al. 2004), but leave the plants they refuse: docks,
+// nettles and thistles, and what the grazing set itself places (the roughs, dung and the weeds of enriched spots).
+bool VegetationField3D::_graze_croppable(const PlantSpecies *p_sp) {
+	if (!p_sp || p_sp->get_canopy_radius() > 0.0f || p_sp->has_meta(SNAME("grazing"))) {
+		return false;
+	}
+	const int preset = int(p_sp->get_meta(SNAME("plant_preset"), -1));
+	if (preset == PlantGenerator::PRESET_DOCK || preset == PlantGenerator::PRESET_NETTLE || preset == PlantGenerator::PRESET_THISTLE) {
+		return false;
+	}
+	const TypedArray<Mesh> ms = p_sp->get_meshes();
+	const Ref<Mesh> m0 = ms.is_empty() ? Ref<Mesh>() : Ref<Mesh>(ms[0]);
+	return preset >= 0 ? !PlantGenerator::is_ground_feature(preset) : (m0.is_valid() && PlantGenerator::is_plant_mesh(m0));
+}
+
 float VegetationField3D::_burn_recovery_of(const PlantSpecies *p_sp) {
 	if (!p_sp) {
 		return 0.0f;
@@ -1126,7 +1142,7 @@ void VegetationField3D::_read_browse(PlaceSetup &r_setup) const {
 		const TypedArray<PlantSpecies> list = biome->get_species();
 		for (int i = 0; i < list.size() && !wanted; i++) {
 			const Ref<PlantSpecies> sp = list[i];
-			wanted = (_deferred_kinds(sp) & 4) != 0;
+			wanted = (_deferred_kinds(sp) & 4) != 0 || _graze_croppable(sp.ptr()); // browsed trees, or herbs the stock crop
 			const TypedArray<Mesh> ms = sp.is_valid() ? sp->get_meshes() : TypedArray<Mesh>();
 			for (int m = 0; m < ms.size() && !wanted; m++) {
 				const Ref<Mesh> mesh = ms[m];
@@ -1765,6 +1781,7 @@ void VegetationField3D::_setup_species(PlaceSetup &r_setup, int s, const Ref<Pla
 		// Bare-ground species (crusts, desert annuals, those tagged bare_ground) live between the clumps; the rest are
 		// the clumps.
 		ps.bare_cover = herb && !mound && p_sp->get_canopy_radius() <= 0.0f && preset != PlantGenerator::PRESET_SOIL_CRUST && preset != PlantGenerator::PRESET_DESERT_ANNUALS && !bool(p_sp->get_meta(SNAME("bare_ground"), false));
+		ps.graze_crop = ps.hay_cut && _graze_croppable(p_sp.ptr());
 		ps.base_variants = int(ps.meshes.size());
 		if (ps.hay_cut) {
 			// Always, so a meadow mown later needs no new setup. The same plants cut at the stubble (7.5 to 10 cm; GrassField3D.hay_meadows): their stalks stand in the
@@ -2859,6 +2876,20 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 								continue;
 							}
 							hay_stalk = true;
+						}
+					}
+					if (ps.graze_crop && !hay_stalk && suit > 0.0f && !p_setup.browse.is_empty()) {
+						// Grazed (WorldStand browse, as GrassField3D's lawn: smoothstep(0.3, 0.8) of the pressure): most
+						// herbs and flowering grasses bitten to the stubble, a few missed.
+						const float g = Math::smoothstep(0.3f, 0.8f, p_setup.browse_at(xz));
+						if (g > 0.0f) {
+							const float roll = float(hash_murmur3_one_float(xz.x, hash_murmur3_one_float(xz.y, uint32_t(p_setup.seed) ^ 0x6772617au)) & 0xFFFFFF) / float(0x1000000);
+							if (roll < 0.95f * g) {
+								if (int(ps.meshes.size()) < 2 * ps.base_variants) {
+									continue;
+								}
+								hay_stalk = true;
+							}
 						}
 					}
 					if (sp->get_mask_channel() >= 0 && suit > 0.0f) {

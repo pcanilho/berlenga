@@ -2007,7 +2007,8 @@ func _grazing_check() -> void:
 	f.populate_on_ready = false
 	f.bark_detail = false
 	f.biome = Biome.new()
-	f.biome.species.assign(deer + cattle)
+	var heads: Array = PlantGenerator.make_flowering_grasses(1, false, {"day_of_year": 170})
+	f.biome.species.assign(deer + cattle + heads)
 	add_child(f)
 	f.data_map = f.get_path_to(dm)
 	f.populate()
@@ -2024,9 +2025,21 @@ func _grazing_check() -> void:
 			elif d > 14.0:
 				if s < deer.size(): off += 1
 				else: c_off += 1
+	# The flowering grasses: bitten to the stubble on the pasture (mesh meta hay_cut_of), standing off it.
+	var bit_on := [0, 0]
+	var bit_off := [0, 0]
+	for s in heads.size():
+		var si: int = deer.size() + cattle.size() + s
+		for d in f.get_instances_near(si, Vector3(c.x, 0, c.y), 8.0):
+			bit_on[0] += 1
+			if (d["mesh"] as Mesh).has_meta("hay_cut_of"): bit_on[1] += 1
+		for d in f.get_instances_near(si, Vector3(c.x + 40.0, 0, c.y + 40.0), 8.0):
+			bit_off[0] += 1
+			if (d["mesh"] as Mesh).has_meta("hay_cut_of"): bit_off[1] += 1
 	f.free()
 	st.clear_browse()
 	_check("grazing: deer pellet groups on the browsed lawn only", on > 3 and off == 0, [on, off])
+	_check("grazing: flowering grasses bitten to the stubble on the pasture, standing off it", bit_on[0] > 5 and bit_on[1] > bit_on[0] * 0.8 and bit_off[0] > 5 and bit_off[1] == 0, [bit_on, bit_off])
 	# The pasture is one grazing disc (WorldStand.add_browse): it crops the sward to a lawn and holds the cattle's
 	# pats and roughs; none off it.
 	_check("grazing: cattle pats and roughs on the grazed pasture only", c_on > 2 and c_off == 0, [c_on, c_off])
