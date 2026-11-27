@@ -11,6 +11,9 @@ extends Node3D
 #   --row=M            metres between species rows (default 3.5)
 #   --sand             sand-coloured ground (desert shrubs)
 #   --pt --spp=N       path traced
+#   --near            the near mesh (full detail) in place of the far one
+#   --lod-report      triangles of each surface and of its LOD levels
+#   --lod_threshold=T the mesh LOD threshold in pixels (0: full detail)
 #   CAM="x,y,z,lx,ly,lz,fov" camera
 
 var fails := 0
@@ -87,6 +90,15 @@ func _place(sp: PlantSpecies, vi: int, x: float, z: float, args: Dictionary, t0:
 			for s in m.get_surface_count():
 				tris += m.surface_get_array_index_len(s) / 3
 			print("%s: %.2f m tall, %.2f x %.2f m, canopy %.2f m, %d tris, far %s, %d ms" % [sp.resource_name if sp.resource_name != "" else sp.get_name(), bb.end.y, bb.size.x, bb.size.z, sp.canopy_radius, tris, sp.far_color, Time.get_ticks_msec() - t0])
+			if args.has("lod-report"):
+				# --lod-report: each surface's vertices, triangles and the triangles of its LOD levels.
+				for s in m.get_surface_count():
+					var sd: Dictionary = RenderingServer.mesh_get_surface(m.get_rid(), s)
+					var ib := 4 if sd.vertex_count > 65535 else 2
+					var ls: Array = []
+					for l in sd.get("lods", []):
+						ls.append(l.index_data.size() / ib / 3)
+					print("  %s: %d verts, %d tris, lods %s" % [m.surface_get_name(s), sd.vertex_count, m.surface_get_array_index_len(s) / 3, str(ls)])
 			var mi := MeshInstance3D.new()
 			mi.mesh = m
 			mi.position = Vector3(x - bb.position.x, 0, z)
@@ -117,7 +129,7 @@ func _after_place(args: Dictionary, width: float, z: float) -> void:
 			await RenderingServer.frame_post_draw
 	var out := String(args.get("out", "/tmp/shrubs.png"))
 	get_viewport().get_texture().get_image().save_png(out)
-	print("saved ", out)
+	print("saved ", out, " (", RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_TOTAL_PRIMITIVES_IN_FRAME), " primitives in the frame)")
 	get_tree().quit(0)
 
 func _world(args: Dictionary) -> void:

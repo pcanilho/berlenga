@@ -17377,7 +17377,23 @@ static const TreeLod SHRUB_LODS[] = {
 	{ 0.2f, 0.15f, 0.03f },
 	{ 0.8f, 0.04f, 0.08f },
 };
-static Span<TreeLod> tree_lods(bool p_shrub) {
+// Gorse (trees.md 5u): its foliage is spines 1.5-4 cm long and under 2 mm thick, and flowers under 2 cm, some half
+// million of them on a mature bush (4.4 million triangles at full detail). Godot compares a level's error against
+// the pixel threshold over the screen's width, so SHRUB_LODS' first level comes in at 18 m at 1080p (40 degree
+// field), not the 8 m it was meant for; gorse takes it at that 8 m (5.4 mm, a pixel there). At 8 m a spine is a
+// third of a pixel across and a flower three, so thinning 30% of them and growing the rest by 1/sqrt(0.7) keeps the
+// bush's coverage and colour (Cook et al. 2007): at 100% crop the two read the same (optimisation.md). Its other
+// levels match the far mesh's (split off at the 0.05 level), so they stay.
+static const TreeLod GORSE_LODS[] = {
+	{ 0.0054f, 0.7f, 0.0015f },
+	{ 0.05f, 0.5f, 0.01f },
+	{ 0.2f, 0.15f, 0.03f },
+	{ 0.8f, 0.04f, 0.08f },
+};
+static Span<TreeLod> tree_lods(bool p_shrub, bool p_gorse = false) {
+	if (p_shrub && p_gorse) {
+		return Span<TreeLod>(GORSE_LODS, sizeof(GORSE_LODS) / sizeof(TreeLod));
+	}
 	return p_shrub ? Span<TreeLod>(SHRUB_LODS, sizeof(SHRUB_LODS) / sizeof(TreeLod)) : Span<TreeLod>(TREE_LODS, sizeof(TREE_LODS) / sizeof(TreeLod));
 }
 static bool is_shrub(TreeGenerator::Preset p_preset);
@@ -22135,7 +22151,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 					// survivors grown about their base by 1/sqrt(keep) (Cook et al. 2007); the other
 					// parts before big_end stay whole, those after it are LOD 0 only.
 					const int full = b.indices.size();
-					for (const TreeLod &level : tree_lods(is_shrub(preset) && !far_leaves)) {
+					for (const TreeLod &level : tree_lods(is_shrub(preset) && !far_leaves, preset == PRESET_GORSE)) {
 						const float grow = 1.0f / Math::sqrt(level.keep);
 						PackedInt32Array idx;
 						for (uint32_t i = 0; i < b.parts.size(); i++) {
@@ -22749,7 +22765,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 Dictionary TreeGenerator::_bark_lods(const Builder &p_bark) const {
 	Dictionary lods;
 	const int s_full_count = p_bark.indices.size();
-	for (const TreeLod &level : tree_lods(is_shrub(preset) && !far_leaves)) {
+	for (const TreeLod &level : tree_lods(is_shrub(preset) && !far_leaves, preset == PRESET_GORSE)) {
 		PackedInt32Array idx;
 		for (uint32_t i = 0; i < p_bark.parts.size(); i++) {
 			if (p_bark.part_size[i] < level.min_radius || p_bark.part_role[i] == Builder::ROLE_RELIEF) {
@@ -24173,7 +24189,7 @@ Dictionary TreeGenerator::_leaf_lods(Builder &r_leaves, bool p_twins) const {
 		flat.flat_only = true;
 		levels.push_back(flat);
 	}
-	for (const TreeLod &level : tree_lods(is_shrub(preset) && !far_leaves)) {
+	for (const TreeLod &level : tree_lods(is_shrub(preset) && !far_leaves, preset == PRESET_GORSE)) {
 		levels.push_back(level);
 	}
 	for (const TreeLod &level : levels) {

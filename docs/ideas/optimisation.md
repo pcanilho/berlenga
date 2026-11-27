@@ -664,3 +664,11 @@ sites of each callee's size); the remedy is one call site per heavy function.
   the grass sway and clouds otherwise follow the wall clock). The tiles still run one at a time on a four-core machine:
   they are low-priority tasks, held to 30% of the workers. Raising the bench's low_priority_thread_ratio settles the
   cover in 97 frames but lays the tiles in another order and moves a few pixels, so it is left as it was.
+- Gorse LOD (trees.md 5u): a mature gorse is 4.4M triangles at full detail (spines 1.5M, flowers 2.4M, some half
+  million elements under 2 cm), and the shrubs' first LOD level (1.2 cm of error: plain stems, the finest twigs out,
+  70% of the leaves and flowers kept and grown by 1/sqrt(0.7), Cook et al. 2007) was meant to come in at 8 m but
+  comes in at 18 m: Godot compares the error with the pixel threshold over the screen's width (1483 px a metre over
+  the distance at 1080p, 40 degree field). Gorse now takes that level at 8 m (5.4 mm). There a spine is a third of a
+  pixel across; the bush's mean colour moves 0.3 of 255 and the stochastic pattern no more than at the existing
+  switch at 30 m. Frame primitives for one bush at 12-17 m: 13.3M to 8.9M. The path tracer draws full detail
+  (rendering/pathtracing/mesh_lod off), so it is unchanged. Shrubs bench: --lod-report, frame primitives on --out.
