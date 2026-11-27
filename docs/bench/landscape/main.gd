@@ -579,43 +579,6 @@ func _ready() -> void:
 	_build_camera()
 	if args.has("fov"):
 		get_viewport().get_camera_3d().fov = float(args["fov"]) # --fov=DEG: a wider or narrower lens
-	if args.has("storm-approach"):
-		# --storm-approach[=KM]: a storm cell KM (17) km ahead of the camera, upwind (clouds cd3dd60b): the wind blows
-		# from it toward the camera so its shelf faces us; --storm-radius (2500) m, --storm-rain (40) mm/h,
-		# --storm-outflow (15) m/s, grown --storm-grow (900) s. Shoot with --frames=24 or more.
-		var sc: Camera3D = get_viewport().get_camera_3d()
-		var sf := -sc.global_basis.z
-		var sf2 := Vector2(sf.x, sf.z).normalized()
-		var skm := _arg_num("storm-approach", 17.0)
-		var sp := Vector2(sc.global_position.x, sc.global_position.z) + sf2 * skm * 1000.0
-		weather.wind_direction = -sf2
-		if args.has("storm-wind-turn"):
-			# --storm-wind-turn=DEG: the wind turned DEG from toward the camera (90: across the view, a side-on tower
-			# with its anvil and cirrus shield spreading sideways).
-			weather.wind_direction = (-sf2).rotated(deg_to_rad(float(args["storm-wind-turn"])))
-		# The cell rides the steering wind while it grows (WeatherMap3D.get_cloud_steering, some 10 to 25 m/s): added
-		# there, it stood behind the camera after 900 s. So it starts that far upwind and grows into place, the wind
-		# snapped to the settings first so the drift is the one measured.
-		weather.snap_to_settings()
-		var grow := float(args.get("storm-grow", "900"))
-		var steer: Vector2 = weather.get_cloud_steering()
-		var start := sp - steer * grow
-		weather.add_storm(start, float(args.get("storm-radius", "2500")), float(args.get("storm-rain", "40")), float(args.get("storm-outflow", "15")), 0.0)
-		weather.advance(grow)
-		_log("storm approach: cell at %s, %.1f km ahead, wind toward the camera %s; started %.1f km upwind (steering %.1f m/s)" % [str(sp.round()), skm, str(-sf2), start.distance_to(sp) / 1000.0, steer.length()])
-		# Where the grown cell stands now: the cloud base along the view (WeatherMap3D.get_cloud_base_at), every 2 km
-		# ahead; the storm's base sags under it (lowered toward the rain), so the dip marks the cell.
-		var c2 := Vector2(sc.global_position.x, sc.global_position.z)
-		var line := "storm approach: cloud base along the view (km ahead: m):"
-		for k in range(0, 31, 2):
-			var q := c2 + sf2 * k * 1000.0
-			line += " %d: %.0f," % [k, weather.get_cloud_base_at(Vector3(q.x, 0.0, q.y))]
-		_log(line + " %d storm(s)" % int(weather.get_storm_count()))
-		# Whether the frame holds it: the view's pitch and how far above the horizon its top edge and the cell's base are.
-		var pitch := rad_to_deg(asin(clampf(sf.y, -1.0, 1.0)))
-		var half_v := 0.5 * sc.fov
-		var base_el := rad_to_deg(atan2(weather.get_cloud_base_at(Vector3(sp.x, 0.0, sp.y)) - sc.global_position.y, skm * 1000.0))
-		_log("storm approach: view pitch %.1f deg, frame top %.1f deg above the horizon, the cell's base %.1f deg%s" % [pitch, pitch + half_v, base_el, "" if pitch + half_v > base_el + 3.0 else " (above the frame: raise --pitch)"])
 	if args.has("deer-lawn"):
 		# --deer-lawn[=P]: deer browse a disc --lawn-dist (25) m ahead of the camera, --lawn-radius (22) m, pressure P
 		# (0.9) through WorldStand.add_browse (cef8dbd7): grass grazes to a lawn there, bramble bitten at its edge,
@@ -720,6 +683,8 @@ func _ready() -> void:
 			var ct: Texture2D = veg.get_cover_texture()
 			_log("far cover map %s in %d ms (forest placed again)" % [str(ct.get_size()) if ct else "missing", Time.get_ticks_msec() - tc])
 	_run_weather()
+	if args.has("storm-approach"):
+		_storm_approach()
 	if veg != null and veg.streaming:
 		# A streamed forest settles round the camera; the views on its trees are framed again on what it placed.
 		await _forest_settle()
@@ -3956,6 +3921,46 @@ func _run_weather() -> void:
 	_log("weather + snow %.0f h in %d ms" % [hours, Time.get_ticks_msec() - t])
 	# Snowfall beyond the particle box is haze: SnowFall3D pushes it into the weather map's precipitation
 	# extinction, which the volumetric fog reads; nothing is wired here.
+
+
+func _storm_approach() -> void:
+	# --storm-approach[=KM]: a storm cell KM (17) km ahead of the camera, upwind (clouds cd3dd60b): the wind blows
+	# from it toward the camera so its shelf faces us; --storm-radius (2500) m, --storm-rain (40) mm/h,
+	# --storm-outflow (15) m/s, grown --storm-grow (900) s. Shoot with --frames=24 or more. Set up after the weather run: its
+	# 12 hours (--hours) on the steering wind carried a cell added before it some 300 km off.
+	var sc: Camera3D = get_viewport().get_camera_3d()
+	var sf := -sc.global_basis.z
+	var sf2 := Vector2(sf.x, sf.z).normalized()
+	var skm := _arg_num("storm-approach", 17.0)
+	var sp := Vector2(sc.global_position.x, sc.global_position.z) + sf2 * skm * 1000.0
+	weather.wind_direction = -sf2
+	if args.has("storm-wind-turn"):
+		# --storm-wind-turn=DEG: the wind turned DEG from toward the camera (90: across the view, a side-on tower
+		# with its anvil and cirrus shield spreading sideways).
+		weather.wind_direction = (-sf2).rotated(deg_to_rad(float(args["storm-wind-turn"])))
+	# The cell rides the steering wind while it grows (WeatherMap3D.get_cloud_steering, some 10 to 25 m/s): added
+	# there, it stood behind the camera after 900 s. So it starts that far upwind and grows into place, the wind
+	# snapped to the settings first so the drift is the one measured.
+	weather.snap_to_settings()
+	var grow := float(args.get("storm-grow", "900"))
+	var steer: Vector2 = weather.get_cloud_steering()
+	var start := sp - steer * grow
+	weather.add_storm(start, float(args.get("storm-radius", "2500")), float(args.get("storm-rain", "40")), float(args.get("storm-outflow", "15")), 0.0)
+	weather.advance(grow)
+	_log("storm approach: cell at %s, %.1f km ahead, wind toward the camera %s; started %.1f km upwind (steering %.1f m/s)" % [str(sp.round()), skm, str(-sf2), start.distance_to(sp) / 1000.0, steer.length()])
+	# Where the grown cell stands now: the cloud base along the view (WeatherMap3D.get_cloud_base_at), every 2 km
+	# ahead; the storm's base sags under it (lowered toward the rain), so the dip marks the cell.
+	var c2 := Vector2(sc.global_position.x, sc.global_position.z)
+	var line := "storm approach: cloud base along the view (km ahead: m):"
+	for k in range(0, 31, 2):
+		var q := c2 + sf2 * k * 1000.0
+		line += " %d: %.0f," % [k, weather.get_cloud_base_at(Vector3(q.x, 0.0, q.y))]
+	_log(line + " %d storm(s)" % int(weather.get_storm_count()))
+	# Whether the frame holds it: the view's pitch and how far above the horizon its top edge and the cell's base are.
+	var pitch := rad_to_deg(asin(clampf(sf.y, -1.0, 1.0)))
+	var half_v := 0.5 * sc.fov
+	var base_el := rad_to_deg(atan2(weather.get_cloud_base_at(Vector3(sp.x, 0.0, sp.y)) - sc.global_position.y, skm * 1000.0))
+	_log("storm approach: view pitch %.1f deg, frame top %.1f deg above the horizon, the cell's base %.1f deg%s" % [pitch, pitch + half_v, base_el, "" if pitch + half_v > base_el + 3.0 else " (above the frame: raise --pitch)"])
 
 
 # --- Vegetation --------------------------------------------------------------------------------------------------
