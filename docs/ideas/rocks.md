@@ -1620,6 +1620,15 @@ and dipping upslope (imbrication; Boelhouwers and Sumner 2003). The climate join
 `--no-block-fields` for the before frame. Not yet: a second tier of blocks perched on the first, far cover maps
 (the far tier's big blocks only), lichen-dark tops by age (the shared lichen terms apply as on other stones).
 
+Ground (27 Nov): thin soil or bare rock shatters to blocks in place; deeper regolith is blocky too where the rock
+breaks coarse (granite 1, basalt 0.85, sandstone 0.7; slate and limestone weather to fines), the blockfields that
+mantle whole plateaus and gentle upper slopes and the block streams on 5 to 20 degrees (Ballantyne 2018, ch. 9;
+Goodfellow 2012; Rea et al. 1996), except where the frost sorting claims the ground (deep fine soil, wet, under 10 to
+15 degrees: _frost_gate's own factors, so the two stay complementary). At first only thin soil counted, which in the
+generator's worlds is ledges and gully walls. Bench: `--world --world-size=1024 --uplift=0.2 --frost=-6 --view=scree
+--block-spot=even --eye=1.7 --dist=10` (a field on an even 4 to 20 degree slope, the ground within 10 m off its plane
+by under 1 m; spot 104, 80).
+
 ## Desert varnish, built (26 Nov)
 `desert_varnish` (on). The amount follows the climate's precipitation at the field (with the terrain's rain pattern):
 none over about 400 mm a year, full under about 180 mm (Dorn 2009: thick dark varnish in arid lands, patchy and thin

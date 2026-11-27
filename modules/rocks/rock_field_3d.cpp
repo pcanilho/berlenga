@@ -3937,6 +3937,7 @@ void RockField3D::_block_climate(BlockClimate &r_climate) {
 	r_climate.warm = july ? cl.temperature_july : cl.temperature_january;
 	r_climate.lapse_warm = july ? cl.lapse_rate_july : cl.lapse_rate_january;
 	r_climate.reference = cl.reference_height;
+	r_climate.wet = Math::smoothstep(250.0f, 500.0f, cl.precipitation);
 }
 
 float RockField3D::_block_gate(const TerrainGenerator3D *p_gen, const BlockClimate &p_climate, const Vector3 &p_at, float &r_slope_deg, Vector3 &r_fall) const {
@@ -3967,11 +3968,32 @@ float RockField3D::_block_gate(const TerrainGenerator3D *p_gen, const BlockClima
 	}
 	const Vector2 f(float(n.x), float(n.z));
 	r_fall = f.length() > 1e-4f ? Vector3(f.x, 0.0f, f.y).normalized() : Vector3();
-	// Regolith over bedrock: thin soil, or the rock itself at the surface (shattered in place). The complement of the
-	// frost sorting's soil gates (deep, fine soil sorts into circles and stripes; thin or rocky ground stays blocks).
+	// Regolith over bedrock. Thin soil, or the rock itself at the surface, shatters in place to blocks. Deeper regolith
+	// is blocky too where the rock breaks coarse (granite, basalt, quartz sandstone: the blockfields that mantle whole
+	// plateaus and gentle upper slopes, and the block streams on 5 to 20 degrees; Ballantyne 2018, ch. 9; Goodfellow
+	// 2012; Rea et al. 1996), but not where the frost sorting claims it: deep fine soil, wet, flat to 10 to 15 degrees
+	// (_frost_gate's own factors, so the two stay complementary), nor on rock that weathers to fines (slate,
+	// limestone: solifluction sheets and sorted ground instead).
 	const float deep = Math::smoothstep(0.1f, 0.4f, float(p_gen->get_soil_depth(at)));
 	const float soil = 1.0f - Math::smoothstep(0.4f, 0.7f, float(p_gen->get_rock_exposure(at)));
-	return cold * alpine * gentle * (1.0f - MIN(deep, soil));
+	const float thin = 1.0f - MIN(deep, soil);
+	const float sorts = frost_sorting ? deep * soil * (1.0f - Math::smoothstep(10.0f, 15.0f, r_slope_deg)) * p_climate.wet : 0.0f;
+	float coarse = 0.0f;
+	switch (_type_at(p_gen, at)) {
+		case RockGenerator::ROCK_GRANITE:
+			coarse = 1.0f;
+			break;
+		case RockGenerator::ROCK_BASALT:
+			coarse = 0.85f;
+			break;
+		case RockGenerator::ROCK_SANDSTONE:
+			coarse = 0.7f;
+			break;
+		default:
+			coarse = 0.0f;
+			break;
+	}
+	return cold * alpine * gentle * MAX(thin, coarse * (1.0f - sorts));
 }
 
 Vector2 RockField3D::get_block_field_at(const Vector3 &p_position) const {

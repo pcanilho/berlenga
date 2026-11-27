@@ -858,6 +858,9 @@ func _world() -> void:
 		# --block-spot[=stream] (with --frost): the nearest block field (RockField3D.block_fields) open 6 m round, gentle
 		# (under 8 degrees) or a block stream on 8 to 18 degrees.
 		var stream: bool = args["block-spot"] == "stream"
+		# --block-spot=even: a field on an even 4 to 20 degree slope (the ground within 10 m off the slope's plane by
+		# under 1 m), full field 12 m round: a block field where a smooth hillside reads.
+		var even: bool = args["block-spot"] == "even"
 		var best_b := INF
 		var found_b := spot
 		var tried_b := 0
@@ -868,11 +871,21 @@ func _world() -> void:
 					continue
 				tried_b += 1
 				var sl := rad_to_deg(atan(Vector2(gen.get_height(p + Vector3(4, 0, 0)) - gen.get_height(p - Vector3(4, 0, 0)), gen.get_height(p + Vector3(0, 0, 4)) - gen.get_height(p - Vector3(0, 0, 4))).length() / 8.0))
-				if (sl < 8.0 or sl > 18.0) if stream else sl > 8.0:
+				if even:
+					if sl < 4.0 or sl > 20.0:
+						continue
+				elif (sl < 8.0 or sl > 18.0) if stream else sl > 8.0:
 					continue
 				var open := true
+				var gx := (gen.get_height(p + Vector3(4, 0, 0)) - gen.get_height(p - Vector3(4, 0, 0))) / 8.0
+				var gz := (gen.get_height(p + Vector3(0, 0, 4)) - gen.get_height(p - Vector3(0, 0, 4))) / 8.0
+				var h0 := gen.get_height(p)
 				for k in 8:
-					if rocks.get_block_field_at(p + Vector3(cos(k * PI / 4.0), 0, sin(k * PI / 4.0)) * 6.0).x < 0.5:
+					var o := Vector3(cos(k * PI / 4.0), 0, sin(k * PI / 4.0))
+					if rocks.get_block_field_at(p + o * 6.0).x < 0.5 or (even and rocks.get_block_field_at(p + o * 12.0).x < 0.5):
+						open = false
+						break
+					if even and absf(gen.get_height(p + o * 10.0) - (h0 + gx * o.x * 10.0 + gz * o.z * 10.0)) > 1.0:
 						open = false
 						break
 				if open and Vector2(xx, zz).length() < best_b:

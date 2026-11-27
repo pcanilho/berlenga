@@ -977,6 +977,7 @@ public:
 		float maat = 99.0f, warm = 99.0f; // mean annual and warmest month air at the reference height, C
 		float lapse = 5.5f, lapse_warm = 5.5f; // K/km
 		float reference = 0.0f;
+		float wet = 0.0f; // the frost sorting's water (_frost_climate's wet): where deep fine soil sorts instead
 	};
 	static void _block_climate(BlockClimate &r_climate);
 	float _block_gate(const TerrainGenerator3D *p_gen, const BlockClimate &p_climate, const Vector3 &p_at, float &r_slope_deg, Vector3 &r_fall) const;
