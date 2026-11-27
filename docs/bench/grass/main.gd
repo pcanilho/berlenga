@@ -1589,6 +1589,11 @@ func _cover_biome() -> Biome:
 		for sp in [flowers, tussock, yarrow, dry, tall, tall_dry]:
 			(sp as PlantSpecies).set_rule_range(PlantSpecies.RULE_BROWSE, Vector2(0.0, 0.45))
 			(sp as PlantSpecies).set_rule_fade(PlantSpecies.RULE_BROWSE, 0.25)
+	if graze >= 0.0 and OS.get_environment("GRASS_STOCK") != "":
+		# GRASS_STOCK=cattle|horse|deer: the stock's dung and roughs (PlantGenerator.make_grazing) on the browse disc,
+		# listed before the herbs so the herbs keep off them.
+		var gset := {"cattle": PlantGenerator.GRAZE_CATTLE, "horse": PlantGenerator.GRAZE_HORSE, "deer": PlantGenerator.GRAZE_DEER}.get(OS.get_environment("GRASS_STOCK"), PlantGenerator.GRAZE_CATTLE) as int
+		b.species = Array(PlantGenerator.make_grazing(gset, 3, not notex, bench_season)) + b.species
 	if forest:
 		for sp in b.species:
 			(sp as PlantSpecies).set_rule_range(PlantSpecies.RULE_SHADE, Vector2(0.0, 0.4))
@@ -3066,6 +3071,13 @@ func _process(dt: float) -> void:
 				_seed_down_view()
 			if pollen_cloud and season_map:
 				_pollen_cloud_view()
+			if OS.get_environment("GRASS_STOCK") != "":
+				for k in 4:
+					var sc: Array = []
+					for q in cover.get_placements(k):
+						var sp2 := cam.unproject_position(q) if cam and not cam.is_position_behind(q) else Vector2(-1, -1)
+						sc.append("%s->%s" % [str(Vector3(q).snapped(Vector3.ONE * 0.1)), str(sp2.round())])
+					print("GRASS_STOCK %d (%d): %s" % [k, int((cover.biome.species[k] as PlantSpecies).get_meta("plant_preset", -1)), ", ".join(sc)])
 			print("GRASS_COVER %s = %s ms=%.1f" % ["(tree, bramble, bracken, foxglove) flowers, sedge, plantain, clover, nettle, dock, thistle, tussock, yarrow, dry grass, tall flowers, tall dry flowers (fern, bilberry, moss, litter)", str(counts), cover.get_populate_time_msec()])
 			if ug_field:
 				ug_field.populate()

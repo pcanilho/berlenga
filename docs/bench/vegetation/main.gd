@@ -2274,8 +2274,10 @@ func _grazing_stream_check() -> void:
 	st.clear_browse()
 	await get_tree().process_frame
 	# About one standing pat per 10 m2 (MacDiarmid and Watkin 1972): 60 to 250 in the 1257 m2 counted.
+	# The roughs (about 0.5 m2 each) some 15 % of the sward (Crosse and Fitzgerald 1989: 15 to 45 %): 10 to 30 % here.
 	var pats: int = kinds.get(PlantGenerator.PRESET_COW_PAT, 0)
-	_check("grazing: a pasture disc added after a streamed field has settled brings its pats (about one per 10 m2) and roughs (none before)", before == 0 and pats >= 60 and pats <= 250 and kinds.get(PlantGenerator.PRESET_DUNG_ROUGH, 0) > 10, [before, after, kinds, waited])
+	var rough_share: float = kinds.get(PlantGenerator.PRESET_DUNG_ROUGH, 0) * PI * 0.4 * 0.4 * 1.05 * 1.05 / (PI * 20.0 * 20.0)
+	_check("grazing: a pasture disc added after a streamed field has settled brings its pats (about one per 10 m2) and roughs (10 to 30 % of the sward; none before)", before == 0 and pats >= 60 and pats <= 250 and rough_share >= 0.1 and rough_share <= 0.3, [before, after, kinds, snappedf(rough_share, 0.01), waited])
 
 # A pasture under a meadow's herbs: the stock's set is listed before the sward's herbs (earlier species are placed
 # first, later ones keep clear of their footprints), so a pat lies where it fell and the herbs keep off it. Listed
